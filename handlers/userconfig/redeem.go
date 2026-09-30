@@ -12,7 +12,7 @@ import (
 
 	"loomproxy-go/db"
 	"loomproxy-go/handlers/auth"
-	"loomproxy-go/handlers/common"
+	"loomproxy-go/handlers/catalog"
 	"loomproxy-go/models"
 )
 
@@ -192,7 +192,7 @@ func Redeem(c *gin.Context) {
 		return
 	}
 	// 兑换后套餐已变更：失效 /datasources 缓存视图，用户立即看到新套餐的数据源
-	common.InvalidateDatasourcesCache()
+	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, gin.H{
 		"message":   "兑换成功",
 		"plan_name": planName,

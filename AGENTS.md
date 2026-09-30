@@ -18,7 +18,7 @@
 - 安全：SSRF 防护、IP 黑名单与滑动窗口自动拉黑、登录防爆破、场景化验证码（默认全关）、pprof 管理端点
 - 内嵌 Vue 3 管理面板（`/panel`），随二进制 `go:embed` 发布
 
-**接入一个书源 = 新建 handler 包（自注册）+ `handlers/all/all.go` 加一行空白导入 + `make build`**；`app.go` 与 `db/seed.go` 不需要改动（路由对账与 seed 播种都以源包声明为准）。
+**接入一个书源 = 新建 `sources/<源>` 包（自注册）+ `sources/all.go` 加一行空白导入 + `make build`**；`app.go` 与 `db/seed.go` 不需要改动（路由对账与 seed 播种都以源包声明为准）。`handlers/` 此后专指控制面端点，数据面一律落 `sources/`。
 
 ## 2. 技术栈
 
@@ -71,8 +71,9 @@ base/               核心：Handler 接口与泛型注册表、BaseHandler（�
                     metrics.go（调用监控内存计数 + 明细环形缓冲）、proxy.go / proxy_api.go（IP 代理池）
 base/pool/          通用号池框架（见 §6）
 base/legado/        Legado 响应 DTO 与五个基础处理器（Search/Detail/Chapter/Content/Explore）
-handlers/           平台侧 HTTP 端点：auth/ admin/ quota/（额度面板与用量流水）userconfig/
-                    apikey/ verify/ common/（/datasources 与 /data）+ all/all.go（数据源导入集合，底座为空）
+handlers/           控制面 HTTP 端点：auth/ admin/ quota/（额度面板与用量流水）userconfig/
+                    apikey/ verify/ catalog/（/datasources 与 /data，能力发现端点）
+sources/            数据面：各源包目录 + all.go（数据源导入集合，即「本部署携带哪些源」；底座为空）
 gate/               数据源请求链路上的管控闸门：访问控制 / 额度计费 / 速率限制 + 限额解析
                     （是被穿过的一环，不是被调用的端点，故不放在 handlers/）
 models/             GORM 模型（User/Role/SystemSetting/Quota*/DataSource/PoolDevice/…）
@@ -93,20 +94,20 @@ scripts/ deploy/    部署脚本与 systemd 单元
 
 **新增数据源必须遵循：**
 
-1. 源包在 `init()` 中：
+1. 源包落在 `sources/<源>`，在 `init()` 中：
    - `base.RegisterSource(base.SourceMeta{Code, Display, Category, Description, SortOrder, Status, Actions, FixedBaseURL, SearchTabs, LegacyGroups, DataFiles})` 声明数据源身份——这是路由对账、seed 播种（`data_sources` / `quota_costs` / `quota_limits` / 套餐关联）的**唯一事实来源**；
    - 每个动作一次 `base.Register(name, factory, priority, metadata)`；
    - `FixedBaseURL: true` 表示上游地址写死在源实现内：该源路由不接收 `baseUrl` 参数、不做用户/平台配置回落，也跳过 SSRF 校验。
-   - `SearchTabs` 声明自有搜索分类（多媒介/多站点形态）；不声明则 `/datasources` 下发底座通用 tab。**底座不按分类名做分支**，需要新形态请补声明而不是改 `handlers/common`。
+   - `SearchTabs` 声明自有搜索分类（多媒介/多站点形态）；不声明则 `/datasources` 下发底座通用 tab。**底座不按分类名做分支**，需要新形态请补声明而不是改 `handlers/catalog`。
    - `LegacyGroups` 声明该源历史所属的平台组码（组概念 2026-08-09 已移除）；seed 据此把存量按组码配置的行展开为本源码并清理组行。
    - `DataFiles` 声明该源附属的静态数据字典（文件名 + 说明）；`/data` 列表的说明列取自声明，底座不内置任何具体文件名。
 2. 处理器实现 `base.Handler`：`Handle(ctx, params)`、`GetPath/GetMethods/GetName/GetDescription/GetQueryParams/AuthRequired`；通常内嵌 `base/legado` 的基础处理器（复用 DTO 与上游缓存 TTL），或内嵌 `base.BaseHandler`（`NewBaseHandler()` 默认 GET、Auth 开、QueryParams 含 `api_key`）。
-3. `handlers/all/all.go` 加一行空白导入。
+3. `sources/all.go` 加一行空白导入——这份清单即「本部署携带哪些源」，`app.go` 只空白导入 `sources` 包本身，不因新源而改。
 4. 路由全部是根级 `/{source}/{action}`，无版本前缀。单路由中间件链：
    `authMiddleware（若 AuthRequired）→ monitorMiddleware（置于最前以覆盖 403/429）→ baseURLCheckMiddleware（resolve baseUrl：请求参数 → 用户配置 → 平台默认）→ gate.DataSourceAccessMiddleware → gate.BillingMiddleware → gate.RateLimitMiddleware → handler`。
 5. 需要凭证池的源在 §6 登记自己的号池，不要另写一套生命周期管理。
 
-**测试夹具**：`test/fakesource_test.go` 在 test 包 `init()` 里注册三个假源（`fake_a`/`fake_b`/`fake_c`，动作集 search/detail/chapter/content/explore），处理器只做「按解析出的 baseUrl 取上游并原样返回」。集成测试覆盖路由管线与 seed 播种全靠这三个假源——**它们只在测试二进制里存在，不属于产品功能**。新增管线类用例请继续用假源，不要引入真实书源依赖。
+**测试夹具**：假源本体在 `testkit/fakesource`（三个假源 `fake_a`/`fake_b`/`fake_c`，动作集 search/detail/chapter/content/explore），处理器只做「按解析出的 baseUrl 取上游并原样返回」；`test/fakesource_test.go` 只在 test 包 `init()` 里调 `fakesource.Register()`，跨进程用例经 `cmd/fakegateway` 起同一套声明。集成测试覆盖路由管线与 seed 播种全靠这三个假源——**它们只在测试二进制里存在，不属于产品功能**。新增管线类用例请继续用假源，不要引入真实书源依赖。
 
 ## 6. 通用号池（base/pool）
 

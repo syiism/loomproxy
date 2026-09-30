@@ -10,7 +10,7 @@ import (
 
 	"loomproxy-go/db"
 	"loomproxy-go/handlers/auth"
-	"loomproxy-go/handlers/common"
+	"loomproxy-go/handlers/catalog"
 	"loomproxy-go/models"
 )
 
@@ -194,7 +194,7 @@ func UpdateUserPlan(c *gin.Context) {
 			}
 		}
 		// 套餐决定 /datasources 的可见数据源列表，变更后需立即失效其缓存视图
-		common.InvalidateDatasourcesCache()
+		catalog.InvalidateDatasourcesCache()
 	}
 	auth.Ok(c, gin.H{"message": "套餐已更新"})
 }

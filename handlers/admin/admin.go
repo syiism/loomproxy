@@ -13,7 +13,7 @@ import (
 
 	"loomproxy-go/db"
 	"loomproxy-go/handlers/auth"
-	"loomproxy-go/handlers/common"
+	"loomproxy-go/handlers/catalog"
 	"loomproxy-go/models"
 )
 
@@ -686,7 +686,7 @@ func CreateDataSource(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "创建数据源失败")
 		return
 	}
-	common.InvalidateDatasourcesCache()
+	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, ds)
 }
 
@@ -742,7 +742,7 @@ func UpdateDataSource(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
 		return
 	}
-	common.InvalidateDatasourcesCache()
+	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, ds)
 }
 
@@ -768,7 +768,7 @@ func DeleteDataSource(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "删除失败")
 		return
 	}
-	common.InvalidateDatasourcesCache()
+	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, gin.H{"message": "已删除"})
 }
 
@@ -856,7 +856,7 @@ func AddPlanDataSource(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "关联失败")
 		return
 	}
-	common.InvalidateDatasourcesCache()
+	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, link)
 }
 
@@ -899,7 +899,7 @@ func BatchAddPlanDataSources(c *gin.Context) {
 		created = append(created, link)
 	}
 	if len(created) > 0 {
-		common.InvalidateDatasourcesCache()
+		catalog.InvalidateDatasourcesCache()
 	}
 	auth.Ok(c, gin.H{"created": len(created)})
 }
@@ -920,6 +920,6 @@ func RemovePlanDataSource(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "移除失败")
 		return
 	}
-	common.InvalidateDatasourcesCache()
+	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, gin.H{"message": "已移除"})
 }

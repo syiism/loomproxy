@@ -15,7 +15,7 @@ LoomProxy（网络小说书源 API 代理/聚合服务）的 **Go 底座项目**
 ## 接入一个数据源
 
 ```go
-// handlers/mynovel/mynovel.go
+// sources/mynovel/mynovel.go
 func init() {
     base.RegisterSource(base.SourceMeta{
         Code: "mynovel", Display: "我的小说源", Category: "novel",
@@ -27,7 +27,7 @@ func init() {
 ```
 
 1. 新建源包，内嵌 `base/legado` 的基础处理器（或 `base.BaseHandler`）实现 `base.Handler`；
-2. `handlers/all/all.go` 加一行空白导入；
+2. `sources/all.go` 加一行空白导入；
 3. `make build`。
 
 路由对账与 seed 播种（`data_sources` / `quota_costs` / `quota_limits` / 套餐关联）全部以源包声明为准，`app.go` 与 `db/seed.go` 免改。需要凭证池的源用 `pool.Register(pool.New(provider, cfg))` 登记自己的号池。详见 [AGENTS.md](AGENTS.md) §5、§6。
@@ -124,7 +124,8 @@ main.go            入口：信号处理，优雅停机
 app/               gin 引擎装配、路由注册、IP 自动拉黑、监控中间件
 base/              核心：Handler 接口与注册表、HTTP 客户端、缓存/熔断/singleflight、代理池
 base/legado/       Legado 响应 DTO 与五个基础处理器
-handlers/          平台侧处理器（auth / admin / common / quota / userconfig / apikey / verify）+ all/（数据源导入集合，底座为空）
+handlers/          控制面 HTTP 端点（auth / admin / catalog / quota / userconfig / apikey / verify）
+sources/           数据面：各源包目录 + all.go（数据源导入集合，底座为空）
 base/pool/         通用号池框架（冷热分离状态机 + Provider 接口，见 AGENTS.md §6）
 models/            GORM 模型
 db/                数据库初始化与 seed（角色/设置/套餐/管理员引导）
