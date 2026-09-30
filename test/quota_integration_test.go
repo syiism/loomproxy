@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"loomproxy-go/db"
-	"loomproxy-go/handlers/quota"
+	"loomproxy-go/gate"
 	"loomproxy-go/models"
 	"loomproxy-go/utils"
 )
@@ -563,17 +563,17 @@ func TestRateLimitWindowPlanUpsert(t *testing.T) {
 // 1 次）的限流器会在闲置 10 分钟后被清掉，下一次请求因限流器重建而被提前放行。
 func TestLimiterIdleReclaimPreservesLowRate(t *testing.T) {
 	// 普通速率（interval=2 / window=60）：闲置 11 分钟应判定可回收（避免 map 无限增长）
-	if expired, winExpired := quota.LimiterIdleExpiredForTest(2, 60, 11*time.Minute); !expired || !winExpired {
+	if expired, winExpired := gate.LimiterIdleExpiredForTest(2, 60, 11*time.Minute); !expired || !winExpired {
 		t.Fatalf("普通速率配置闲置 11 分钟应可回收：interval=%v window=%v", expired, winExpired)
 	}
 
 	// 低速率（3600 秒周期）：闲置 11 分钟绝不可回收
-	if expired, winExpired := quota.LimiterIdleExpiredForTest(3600, 3600, 11*time.Minute); expired || winExpired {
+	if expired, winExpired := gate.LimiterIdleExpiredForTest(3600, 3600, 11*time.Minute); expired || winExpired {
 		t.Fatalf("低速率配置（3600s）闲置 11 分钟不应被回收：interval=%v window=%v", expired, winExpired)
 	}
 
 	// 超过 2×周期（安全余量）后仍应回收，否则低速率配置的 key 永不释放
-	if expired, _ := quota.LimiterIdleExpiredForTest(3600, 0, 2*time.Hour+time.Minute); !expired {
+	if expired, _ := gate.LimiterIdleExpiredForTest(3600, 0, 2*time.Hour+time.Minute); !expired {
 		t.Fatal("低速率配置闲置超过 2×interval 后应可回收")
 	}
 }

@@ -71,8 +71,10 @@ base/               核心：Handler 接口与泛型注册表、BaseHandler（�
                     metrics.go（调用监控内存计数 + 明细环形缓冲）、proxy.go / proxy_api.go（IP 代理池）
 base/pool/          通用号池框架（见 §6）
 base/legado/        Legado 响应 DTO 与五个基础处理器（Search/Detail/Chapter/Content/Explore）
-handlers/           平台侧处理器：auth/ admin/ quota/ userconfig/ apikey/ verify/ common/
-                    all/all.go（数据源自注册导入集合——底座为空）
+handlers/           平台侧 HTTP 端点：auth/ admin/ quota/（额度面板与用量流水）userconfig/
+                    apikey/ verify/ common/（/datasources 与 /data）+ all/all.go（数据源导入集合，底座为空）
+gate/               数据源请求链路上的管控闸门：访问控制 / 额度计费 / 速率限制 + 限额解析
+                    （是被穿过的一环，不是被调用的端点，故不放在 handlers/）
 models/             GORM 模型（User/Role/SystemSetting/Quota*/DataSource/PoolDevice/…）
 db/                 三方言初始化、AutoMigrate、seed.go（角色/设置/额度计划/套餐关联/管理员引导）
 utils/              auth.go jwt.go cache.go（LRU+TTL + Redis）network.go（SSRF）norm.go（字段兼容
@@ -98,7 +100,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 2. 处理器实现 `base.Handler`：`Handle(ctx, params)`、`GetPath/GetMethods/GetName/GetDescription/GetQueryParams/AuthRequired`；通常内嵌 `base/legado` 的基础处理器（复用 DTO 与上游缓存 TTL），或内嵌 `base.BaseHandler`（`NewBaseHandler()` 默认 GET、Auth 开、QueryParams 含 `api_key`）。
 3. `handlers/all/all.go` 加一行空白导入。
 4. 路由全部是根级 `/{source}/{action}`，无版本前缀。单路由中间件链：
-   `authMiddleware（若 AuthRequired）→ monitorMiddleware（置于最前以覆盖 403/429）→ baseURLCheckMiddleware（resolve baseUrl：请求参数 → 用户配置 → 平台默认）→ quota.DataSourceAccessMiddleware → quota.BillingMiddleware → quota.RateLimitMiddleware → handler`。
+   `authMiddleware（若 AuthRequired）→ monitorMiddleware（置于最前以覆盖 403/429）→ baseURLCheckMiddleware（resolve baseUrl：请求参数 → 用户配置 → 平台默认）→ gate.DataSourceAccessMiddleware → gate.BillingMiddleware → gate.RateLimitMiddleware → handler`。
 5. 需要凭证池的源在 §6 登记自己的号池，不要另写一套生命周期管理。
 
 **测试夹具**：`test/fakesource_test.go` 在 test 包 `init()` 里注册三个假源（`fake_a`/`fake_b`/`fake_c`，动作集 search/detail/chapter/content/explore），处理器只做「按解析出的 baseUrl 取上游并原样返回」。集成测试覆盖路由管线与 seed 播种全靠这三个假源——**它们只在测试二进制里存在，不属于产品功能**。新增管线类用例请继续用假源，不要引入真实书源依赖。
@@ -144,10 +146,10 @@ scripts/ deploy/    部署脚本与 systemd 单元
 
 ## 9. 管控：额度、限流、访问控制、监控
 
-- **计费**（`quota.BillingMiddleware`）：`quota_costs.status=0` 的接口对全员 403；未配置或 cost=0 不计费；匿名不计费；admin 不限不记；上游 200 后按 `quota_costs` 扣减并写 `quota_usage_logs`（口径为北京时间每日零点重置，并发下允许少量超扣）。`AUTH_ENABLED=false` 时计费关闭（接口禁用仍生效）。
-- **访问控制**（`quota.DataSourceAccessMiddleware`）：先查数据源 `status`，再按用户生效套餐查 `QuotaPlanDataSource` 关联，不满足 403。
+- **计费**（`gate.BillingMiddleware`）：`quota_costs.status=0` 的接口对全员 403；未配置或 cost=0 不计费；匿名不计费；admin 不限不记；上游 200 后按 `quota_costs` 扣减并写 `quota_usage_logs`（口径为北京时间每日零点重置，并发下允许少量超扣）。`AUTH_ENABLED=false` 时计费关闭（接口禁用仍生效）。
+- **访问控制**（`gate.DataSourceAccessMiddleware`）：先查数据源 `status`，再按用户生效套餐查 `QuotaPlanDataSource` 关联，不满足 403。
 - **限额解析优先级**：用户数据源级覆盖（`user_quota_overrides`，**追加语义**：生效额度 = 套餐限额 + 覆盖值）> 套餐限额（`quota_limits`）> 不限。
-- **速率限制**（`quota.RateLimitMiddleware`）两种口径并存，优先级：套餐级 > 全局，同级内 窗口计数（`limit_count` + `window_sec`，允许突发）> 固定间隔（`interval`，令牌桶容量 1，不可突发）；套餐级配了任一种即不回退全局。同时作用于 IP 维度与用户维度（key 含 planId），两者都放行才放行；管理员豁免全部；配置直查库，保存即生效。
+- **速率限制**（`gate.RateLimitMiddleware`）两种口径并存，优先级：套餐级 > 全局，同级内 窗口计数（`limit_count` + `window_sec`，允许突发）> 固定间隔（`interval`，令牌桶容量 1，不可突发）；套餐级配了任一种即不回退全局。同时作用于 IP 维度与用户维度（key 含 planId），两者都放行才放行；管理员豁免全部；配置直查库，保存即生效。
 - **监控**（`base/metrics.go` + `app/monitor.go`）：内存聚合 + 最近明细环形缓冲，缓冲满 250 条批量落 `api_call_logs`；清理前按 数据源/接口 聚合累加进 `api_call_stats` 永久归档；`GET /admin/monitor`、`/monitor/trend`（近 7 天按天×源，合并内存中未落库明细）、`/monitor/history`、`POST /monitor/reset`。
 - **自动拉黑**（`app/autoblock.go`）：滑动窗口统计数据源路由的 403/429，达阈值写黑名单（`source=auto`）；回环地址永不自动拉黑；开关与阈值走系统设置（`auto_block_enabled`·`auto_block_threshold`·`auto_block_window_sec`）。
 - 历史字段名注意：`quota_costs` / `quota_cost_plans` / `user_quota_overrides` 的 `group_code` 列**实际存的是数据源码**（组概念已移除，启动时按各源 `LegacyGroups` 声明把存量组码行展开为每源一行并删除组行；无声明则组行留在库中不生效）。同理，本部署下线的历史源由环境变量 `RETIRED_SOURCES` 声明，seed 据此清理其在各配置表的存量行（`db.cleanupRemovedSources`，历史用量流水保留）。

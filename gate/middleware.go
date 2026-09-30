@@ -1,4 +1,9 @@
-package quota
+// Package gate 数据源请求链路上的管控环节：访问控制、额度计费、速率限制，
+// 以及限额解析（用户覆盖 > 套餐限额 > 不限）。
+//
+// 与 handlers/ 的区别是方向性的：handlers 是被调用的端点，gate 是每条数据源请求
+// 都要穿过的闸门。数据源包因此不需要（也不应）自己实现计费或限流。
+package gate
 
 import (
 	"bufio"
@@ -24,8 +29,8 @@ func billingEnabled() bool {
 	return conf.Config.AuthEnabled
 }
 
-// startOfDay 北京时区当日零点（与 dashboard 的重置时间口径一致）
-func startOfDay() time.Time {
+// StartOfDay 北京时区当日零点（与 dashboard 的重置时间口径一致）
+func StartOfDay() time.Time {
 	loc := time.FixedZone("CST", 8*3600)
 	now := time.Now().In(loc)
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
@@ -35,33 +40,33 @@ func startOfDay() time.Time {
 func UsedToday(userID uint, sourceCode string) int64 {
 	var used int64
 	if err := db.DB.Model(&models.QuotaUsageLog{}).
-		Where("user_id = ? AND group_code = ? AND created_at >= ?", userID, sourceCode, startOfDay()).
+		Where("user_id = ? AND group_code = ? AND created_at >= ?", userID, sourceCode, StartOfDay()).
 		Select("COALESCE(SUM(cost), 0)").Scan(&used).Error; err != nil {
 		log.Printf("ERROR: usedToday query failed: %v", err)
 	}
 	return used
 }
 
-// usedTodayAll 当日全站某数据源已消耗的额度（管理员视角）
-func usedTodayAll(sourceCode string) int64 {
+// UsedTodayAll 当日全站某数据源已消耗的额度（管理员视角）
+func UsedTodayAll(sourceCode string) int64 {
 	var used int64
 	if err := db.DB.Model(&models.QuotaUsageLog{}).
-		Where("group_code = ? AND created_at >= ?", sourceCode, startOfDay()).
+		Where("group_code = ? AND created_at >= ?", sourceCode, StartOfDay()).
 		Select("COALESCE(SUM(cost), 0)").Scan(&used).Error; err != nil {
-		log.Printf("ERROR: usedTodayAll query failed: %v", err)
+		log.Printf("ERROR: UsedTodayAll query failed: %v", err)
 	}
 	return used
 }
 
-// activeUsersToday 当日有消耗的去重用户数；sourceCode 为空时统计全部数据源
-func activeUsersToday(sourceCode string) int64 {
+// ActiveUsersToday 当日有消耗的去重用户数；sourceCode 为空时统计全部数据源
+func ActiveUsersToday(sourceCode string) int64 {
 	var n int64
-	q := db.DB.Model(&models.QuotaUsageLog{}).Where("created_at >= ?", startOfDay())
+	q := db.DB.Model(&models.QuotaUsageLog{}).Where("created_at >= ?", StartOfDay())
 	if sourceCode != "" {
 		q = q.Where("group_code = ?", sourceCode)
 	}
 	if err := q.Distinct("user_id").Count(&n).Error; err != nil {
-		log.Printf("ERROR: activeUsersToday query failed: %v", err)
+		log.Printf("ERROR: ActiveUsersToday query failed: %v", err)
 	}
 	return n
 }
@@ -69,7 +74,7 @@ func activeUsersToday(sourceCode string) int64 {
 // callsToday 当日调用次数（流水行数）；sourceCode 为空时统计全部数据源
 func callsToday(sourceCode string) int64 {
 	var n int64
-	q := db.DB.Model(&models.QuotaUsageLog{}).Where("created_at >= ?", startOfDay())
+	q := db.DB.Model(&models.QuotaUsageLog{}).Where("created_at >= ?", StartOfDay())
 	if sourceCode != "" {
 		q = q.Where("group_code = ?", sourceCode)
 	}
@@ -79,8 +84,8 @@ func callsToday(sourceCode string) int64 {
 	return n
 }
 
-// resolvePlan 返回用户生效的套餐：优先用户绑定套餐，未绑定则使用免费版（code=free）
-func resolvePlan(user *models.User) models.QuotaPlan {
+// ResolvePlan 返回用户生效的套餐：优先用户绑定套餐，未绑定则使用免费版（code=free）
+func ResolvePlan(user *models.User) models.QuotaPlan {
 	if user.PlanID != nil && user.Plan != nil {
 		// 套餐到期惰性回退 free（不回写数据库；PlanExpireAt 为空=永久，兼容存量）
 		if user.PlanExpireAt == nil || time.Now().Before(*user.PlanExpireAt) {
@@ -96,18 +101,18 @@ func resolvePlan(user *models.User) models.QuotaPlan {
 
 // ResolvePlanForUser 导出供外部使用
 func ResolvePlanForUser(user *models.User) models.QuotaPlan {
-	return resolvePlan(user)
+	return ResolvePlan(user)
 }
 
-// planSourceLimits 套餐 source 维度的额度覆盖表（仅 limit >= 0 生效）
-func planSourceLimits(planID uint) map[string]int64 {
+// PlanSourceLimits 套餐 source 维度的额度覆盖表（仅 limit >= 0 生效）
+func PlanSourceLimits(planID uint) map[string]int64 {
 	m := make(map[string]int64)
 	if planID == 0 {
 		return m
 	}
 	var limits []models.QuotaLimit
 	if err := db.DB.Where("plan_id = ? AND scope = ?", planID, "source").Find(&limits).Error; err != nil {
-		log.Printf("ERROR: planSourceLimits query failed: %v", err)
+		log.Printf("ERROR: PlanSourceLimits query failed: %v", err)
 		return m
 	}
 	for _, l := range limits {
@@ -129,10 +134,10 @@ func userOverrideLimit(userID uint, code string) (int64, bool) {
 	return override.Limit, true
 }
 
-// effectiveSourceLimit 用户在某数据源的有效日额度。
+// EffectiveSourceLimit 用户在某数据源的有效日额度。
 // 有效额度 = 套餐限额 + 用户覆盖（覆盖为空视为 0，正值追加、负值扣减，结果下限 0）：
 // 优先用户级数据源覆盖，无覆盖时按套餐限额；套餐未限额则为 -1（不限，覆盖不再生效）。
-func effectiveSourceLimit(user *models.User, sourceName string, planLimits map[string]int64) int64 {
+func EffectiveSourceLimit(user *models.User, sourceName string, planLimits map[string]int64) int64 {
 	if user != nil && user.ID > 0 {
 		// 1) 用户级数据源覆盖：单数据源套餐限额 + 覆盖
 		if l, ok := userOverrideLimit(user.ID, sourceName); ok {
@@ -286,8 +291,8 @@ func BillingMiddleware(sourceName, action string) gin.HandlerFunc {
 		}
 
 		// 请求前额度检查（带缓存）
-		plan := resolvePlan(&user)
-		limit := effectiveSourceLimit(&user, sourceName, planSourceLimits(plan.ID))
+		plan := ResolvePlan(&user)
+		limit := EffectiveSourceLimit(&user, sourceName, PlanSourceLimits(plan.ID))
 		if limit >= 0 {
 			used := UsedToday(user.ID, sourceName)
 			if used+cost.Cost > limit {
@@ -389,7 +394,7 @@ func DataSourceAccessMiddleware(sourceName string) gin.HandlerFunc {
 			}
 
 			// 3. 获取用户生效套餐
-			plan := resolvePlan(&user)
+			plan := ResolvePlan(&user)
 			if plan.ID == 0 {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"code": conf.Config.ErrorCode,
@@ -440,7 +445,7 @@ func userHasDataSourceAccess(user *models.User, sourceName string) bool {
 		return false
 	}
 
-	plan := resolvePlan(user)
+	plan := ResolvePlan(user)
 	if plan.ID == 0 {
 		return false
 	}
@@ -781,7 +786,7 @@ func rateLimitMiddleware(sourceName, action string) gin.HandlerFunc {
 			if id, ok := uid.(uint); ok && id > 0 {
 				var user models.User
 				if err := db.DB.Preload("Plan").First(&user, id).Error; err == nil && user.Plan != nil {
-					plan := resolvePlan(&user)
+					plan := ResolvePlan(&user)
 					if plan.ID > 0 {
 						planID = plan.ID
 					}
@@ -794,7 +799,7 @@ func rateLimitMiddleware(sourceName, action string) gin.HandlerFunc {
 				if claims, err := utils.ParseToken(tokenStr); err == nil {
 					var user models.User
 					if err := db.DB.Preload("Plan").First(&user, claims.UserID).Error; err == nil {
-						plan := resolvePlan(&user)
+						plan := ResolvePlan(&user)
 						if plan.ID > 0 {
 							planID = plan.ID
 						}

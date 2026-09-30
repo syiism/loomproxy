@@ -6,8 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"loomproxy-go/db"
+	"loomproxy-go/gate"
 	"loomproxy-go/handlers/auth"
-	"loomproxy-go/handlers/quota"
 	"loomproxy-go/models"
 )
 
@@ -45,7 +45,7 @@ func ListSourceConfigs(c *gin.Context) {
 			}
 		}
 		if !isAdmin {
-			plan := quota.ResolvePlanForUser(&user)
+			plan := gate.ResolvePlanForUser(&user)
 			if plan.ID > 0 {
 				var allowedSourceIDs []uint
 				db.DB.Model(&models.QuotaPlanDataSource{}).

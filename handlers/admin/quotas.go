@@ -9,8 +9,8 @@ import (
 	"gorm.io/gorm"
 
 	"loomproxy-go/db"
+	"loomproxy-go/gate"
 	"loomproxy-go/handlers/auth"
-	"loomproxy-go/handlers/quota"
 	"loomproxy-go/models"
 )
 
@@ -413,7 +413,7 @@ func GetUserQuota(c *gin.Context) {
 			v := l
 			item.UserLimit = &v
 		}
-		item.Used = quota.UsedToday(user.ID, ds.Name)
+		item.Used = gate.UsedToday(user.ID, ds.Name)
 		// 生效额度 = 计划额度 + 用户覆盖（覆盖为空视为 0，可加可减，下限 0；
 		// 计划未配置或为负（不限）时生效额度为不限）
 		if item.PlanLimit != nil && *item.PlanLimit >= 0 {

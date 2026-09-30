@@ -20,6 +20,7 @@ import (
 	"loomproxy-go/base/pool"
 	"loomproxy-go/conf"
 	"loomproxy-go/db"
+	"loomproxy-go/gate"
 	"loomproxy-go/handlers/admin"
 	_ "loomproxy-go/handlers/all"
 	"loomproxy-go/handlers/apikey"
@@ -202,9 +203,9 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 		}
 		handlers = append(handlers, baseURLCheckMiddleware(source))
 		// 数据源访问控制中间件：检查数据源是否启用、用户套餐是否包含该数据源
-		handlers = append(handlers, quota.DataSourceAccessMiddleware(source))
-		handlers = append(handlers, quota.BillingMiddleware(source, action))
-		handlers = append(handlers, quota.RateLimitMiddleware(source, action))
+		handlers = append(handlers, gate.DataSourceAccessMiddleware(source))
+		handlers = append(handlers, gate.BillingMiddleware(source, action))
+		handlers = append(handlers, gate.RateLimitMiddleware(source, action))
 		handlers = append(handlers, handlerFunc)
 
 		for _, method := range info.Methods {
@@ -401,7 +402,7 @@ func CreateApp() *gin.Engine {
 		if userID > 0 {
 			var user models.User
 			if err := db.DB.Preload("Plan").First(&user, userID).Error; err == nil {
-				plan := quota.ResolvePlanForUser(&user)
+				plan := gate.ResolvePlanForUser(&user)
 				if plan.ID > 0 {
 					var planDS []models.QuotaPlanDataSource
 					db.DB.Where("plan_id = ?", plan.ID).Find(&planDS)

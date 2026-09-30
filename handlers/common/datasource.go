@@ -9,7 +9,7 @@ import (
 	"loomproxy-go/base"
 	"loomproxy-go/conf"
 	"loomproxy-go/db"
-	"loomproxy-go/handlers/quota"
+	"loomproxy-go/gate"
 	"loomproxy-go/models"
 	"loomproxy-go/utils"
 )
@@ -111,7 +111,7 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 	if userID > 0 {
 		var user models.User
 		if err := db.DB.Preload("Plan").First(&user, userID).Error; err == nil {
-			plan := quota.ResolvePlanForUser(&user)
+			plan := gate.ResolvePlanForUser(&user)
 			if plan.ID > 0 {
 				var planDS []models.QuotaPlanDataSource
 				db.DB.Where("plan_id = ?", plan.ID).Find(&planDS)

@@ -9,6 +9,7 @@ import (
 
 	"loomproxy-go/base"
 	"loomproxy-go/db"
+	"loomproxy-go/gate"
 	"loomproxy-go/handlers/auth"
 	"loomproxy-go/models"
 )
@@ -82,7 +83,7 @@ func Dashboard(c *gin.Context) {
 	}
 
 	// 优先使用用户自己绑定的套餐，否则回退全局默认套餐
-	plan := resolvePlan(&user)
+	plan := gate.ResolvePlan(&user)
 	planID := plan.ID
 
 	// 获取所有启用的数据源
@@ -91,10 +92,10 @@ func Dashboard(c *gin.Context) {
 
 	// 如果用户非管理员，按套餐过滤
 	if !isAdmin {
-		planLimits := planSourceLimits(planID)
+		planLimits := gate.PlanSourceLimits(planID)
 		filtered := make([]models.DataSource, 0, len(dataSources))
 		for _, ds := range dataSources {
-			limit := effectiveSourceLimit(&user, ds.Name, planLimits)
+			limit := gate.EffectiveSourceLimit(&user, ds.Name, planLimits)
 			if limit != 0 { // limit == 0 表示该套餐未包含该数据源（通过 override=0 表示不限制，但此处逻辑需确认）
 				// 实际上 effectiveSourceLimit 返回 -1 表示不限制，>=0 表示具体限额
 				// 套餐包含的数据源在 QuotaPlanDataSource 中有记录
@@ -113,7 +114,7 @@ func Dashboard(c *gin.Context) {
 		dataSources = filtered
 	}
 
-	planLimits := planSourceLimits(planID)
+	planLimits := gate.PlanSourceLimits(planID)
 
 	sources := make([]DashboardSource, 0, len(dataSources))
 	for _, ds := range dataSources {
@@ -181,17 +182,17 @@ func Dashboard(c *gin.Context) {
 		// 计算额度
 		quota := int64(-1)
 		if !isAdmin {
-			quota = effectiveSourceLimit(&user, ds.Name, planLimits)
+			quota = gate.EffectiveSourceLimit(&user, ds.Name, planLimits)
 		}
 
 		// 当日真实用量
 		used := int64(0)
 		activeUsers := int64(0)
 		if isAdmin {
-			used = usedTodayAll(ds.Name)
-			activeUsers = activeUsersToday(ds.Name)
+			used = gate.UsedTodayAll(ds.Name)
+			activeUsers = gate.ActiveUsersToday(ds.Name)
 		} else {
-			used = UsedToday(uid, ds.Name)
+			used = gate.UsedToday(uid, ds.Name)
 		}
 
 		remaining := quota
@@ -233,7 +234,7 @@ func Dashboard(c *gin.Context) {
 		PlanExpireAt: user.PlanExpireAt,
 	}
 	if isAdmin {
-		resp.ActiveUsers = activeUsersToday("")
+		resp.ActiveUsers = gate.ActiveUsersToday("")
 		// 今日调用次数取接口监控口径（今日落库明细 + 内存环中今日记录），
 		// 覆盖全部调用；原流水行数只统计计费调用，口径过窄。
 		// 归档表只含 7 天前数据，与今日无关
@@ -247,6 +248,6 @@ func Dashboard(c *gin.Context) {
 // 今日已落库明细 + 内存环形缓冲中今日的调用记录
 func monitorCallsToday() int64 {
 	var persisted int64
-	db.DB.Model(&models.ApiCallLog{}).Where("created_at >= ?", startOfDay()).Count(&persisted)
-	return persisted + base.CallsRecordedSince(startOfDay())
+	db.DB.Model(&models.ApiCallLog{}).Where("created_at >= ?", gate.StartOfDay()).Count(&persisted)
+	return persisted + base.CallsRecordedSince(gate.StartOfDay())
 }
