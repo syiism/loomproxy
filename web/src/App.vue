@@ -11,6 +11,7 @@
         </div>
         <nav class="hidden md:flex gap-6 md:gap-7 items-center">
           <router-link to="/dashboard" class="text-sm transition-colors" :class="navClass('/dashboard')">概览</router-link>
+          <router-link v-if="admin" to="/ranking" class="text-sm transition-colors" :class="navClass('/ranking')">排行榜</router-link>
           <router-link to="/datasources" class="text-sm transition-colors" :class="navClass('/datasources')">接入指南</router-link>
           <router-link to="/profile" class="text-sm transition-colors" :class="navClass('/profile')">个人中心</router-link>
           <router-link v-if="admin" to="/admin" class="text-sm transition-colors" :class="navClass('/admin', true)">管理</router-link>
@@ -49,7 +50,7 @@
           </button>
         </div>
         <div class="p-4 space-y-1">
-          <router-link v-for="t in userTabs" :key="t.to" :to="t.to" @click="mobileOpen = false" class="block px-3 py-2 rounded-lg text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">{{ t.label }}</router-link>
+          <router-link v-for="t in visibleUserTabs" :key="t.to" :to="t.to" @click="mobileOpen = false" class="block px-3 py-2 rounded-lg text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">{{ t.label }}</router-link>
           <template v-if="admin">
             <div class="mt-4 pt-4 border-t border-border">
               <div class="font-mono text-xs text-text-muted uppercase tracking-wider mb-2 px-3">管理</div>
@@ -157,6 +158,8 @@ const mobileOpen = ref(false)
 const sidebarCollapsed = ref(false)
 const userTabs = [
   { to: '/dashboard', label: '概览' },
+  // 排行榜取自 /admin/monitor/subjects（后端 AdminRequired），数据是用户阅读行为，只给管理员看
+  { to: '/ranking', label: '排行榜', adminOnly: true },
   { to: '/datasources', label: '接入指南' },
   { to: '/profile', label: '个人中心' },
 ]
@@ -196,6 +199,8 @@ const primaryRole = computed(() => {
 })
 
 const admin = computed(() => isAdmin())
+// 移动端抽屉与顶部导航同源：adminOnly 项只对管理员出现
+const visibleUserTabs = computed(() => userTabs.filter(t => !t.adminOnly || admin.value))
 
 const navClass = (path, prefix = false) => {
   const current = route.path

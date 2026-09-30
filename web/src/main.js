@@ -6,6 +6,7 @@ import Register from './pages/Register.vue'
 import ForgotPassword from './pages/ForgotPassword.vue'
 import Dashboard from './pages/Dashboard.vue'
 import Datasources from './pages/Datasources.vue'
+import Ranking from './pages/Ranking.vue'
 import Profile from './pages/Profile.vue'
 import Admin from './pages/Admin.vue'
 import AdminUsers from './pages/admin/Users.vue'
@@ -30,6 +31,7 @@ const routes = [
   { path: '/register', component: Register, meta: { public: true } },
   { path: '/forgot-password', component: ForgotPassword, meta: { public: true } },
   { path: '/dashboard', component: Dashboard },
+  { path: '/ranking', component: Ranking, meta: { admin: true } },
   { path: '/datasources', component: Datasources },
   { path: '/profile', component: Profile },
   { path: '/admin', component: Admin, meta: { admin: true } },

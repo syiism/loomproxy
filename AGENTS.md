@@ -195,6 +195,14 @@ scripts/ deploy/    部署脚本与 systemd 单元
   `AS empty_count`、`AS latency_sum`、`AS max_latency`（`handlers/admin/monitor_subjects.go` 即此教训）。
 - **可信代理**：`CreateApp` 中 `SetTrustedProxies(["127.0.0.1","::1"])`——只有本机 nginx 的 `X-Forwarded-For` 参与真实 IP 还原。套 CDN 部署时需同步配置 nginx real_ip（`set_real_ip_from` + `real_ip_header`），否则记录与限流/黑名单口径都会是边缘节点 IP。
 - **前端**（规范见 `.trae/skills/minimalist-ui`）：暖单色配色、衬线标题（Newsreader）+ 几何无衬线（Geist）、1px `#EAEAEA` 边框、Bento 网格、淡彩标签；**禁止** emoji、渐变、重阴影、Inter/Roboto/Lucide。分层：`api/client.js`（fetch 封装：token 注入、401 跳登录、`code!==0` 抛 ApiError）+ `api/index.js`（按域端点方法，页面不拼路径）+ `store.js`（reactive 会话态，路由守卫用 `meta.public`/`meta.admin`）+ `components/`（UiTag/UiModal/UiPagination/UiSpinner/UiEmpty/UiField/UiSwitch/UiTrendChart/VerifyCodeField/PageHeader，标签一律 UiTag）+ `styles.css` 的 `@layer components` 基样类（btn/input/card/tag/table）。新页面复用这些组件，不要再写一次性样式。
+- **设置项的 `type` 是行为声明，不是展示标签**：`string`·`bool`·`number`·`json`。
+  `json` 型在面板里用多行编辑器 + 「校验 / 格式化」，后端 `PUT`/`POST /admin/settings/:key` 保存前用
+  `json.Compact` 校验并压成单行（只吃 token 间空白，字符串内容与转义原样保留），非法即 400——
+  坏值在写入时拒绝，比在运行时（如发码静默失败）发现便宜。type 由 `db/seed.go` 声明并在启动时对账，
+  面板不提供改类型入口，所以老库的 `string` 行会跟着声明走。
+- **排行榜页**（`web/src/pages/Ranking.vue`，路由 `/ranking`，`meta.admin`）：顶部导航在「概览」与「接入指南」之间，
+  非管理员不显示。数据全部来自 `/admin/monitor/subjects`（`dim=keyword` 搜索热词榜、`dim=book` 阅读榜，各取 top20），
+  不新增后端端点——调用明细是用户阅读行为数据，按 §11 只经 `/admin/*` 暴露。
 - **系统设置页**（`web/src/pages/admin/Settings.vue`）是卡片聚合而非平铺列表：受管 key 按功能分 5 张卡，卡级 diff 保存（逐 key `PUT /admin/settings/:key`）；不在清单内的 key 落入「自定义配置」兜底卡。**seed 新增设置 key 时要同步把字段加进前端 GROUPS 的对应分组**（或确认走兜底卡）。
 - `web/vite.config.js` 已配 dev 代理（`/auth`·`/admin`·`/quota`·`/datasources`·`/data`·`/verify` → `localhost:8081`）。
 - **中间件**：新增一条 = 新建 `middleware/<职责>` 包（或进 `gate` 的对应轴文件）+ `init()` 里一次 `middleware.Register(Def{Scope, Order, Applies, Build})` + `middleware/all/all.go` 加一行空白导入；`app.go` 免改。顺序只改 `middleware/middleware.go` 的 Order 常量，`test/middleware_chain_test.go` 会失败以逼一次审查；同作用域内 Order 撞车或重名在 `Register` 期 `log.Fatalf`（宁启动失败不带病装配）。`middleware` 根包是叶子包，不要给它加子包或 gate 的导入（成环），装载清单只在 `middleware/all`。
