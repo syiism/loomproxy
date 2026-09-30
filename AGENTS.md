@@ -185,6 +185,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 
 - **统一响应格式** `{"code","msg","data"}`，`code === 0` 为成功，错误时 `code` 取 `ERROR_CODE`（默认 -1）。
 - **错误处理**：上游非 2xx 抛 `base.UpstreamError`（透传状态码，Message 附响应体前 256 字节摘要）；`app.handleError` 统一映射（超时→504；读/解析失败等 `StatusCode=0`→502；不安全 base_url 与参数缺失→400；DNS/连接拒绝→502）。**对下游的错误文案必须脱敏**：网络错误的 `err.Error()` 可能含完整签名 URL，详细信息只进服务端日志。
+  落地上收口在 `handleError`：① 所有出口文案过 `sanitizeUpstreamMsg`（含 `://` 一律换「上游请求失败，请稍后重试」）；② `*url.Error`/`net.Error` 判为传输层失败（`isTransportError`）走 502，不再落进「400 + 原文」的参数错误兜底——DNS 分支在前，保留「上游地址不可达/连接被拒绝」这类更具体的友好文案；③ 不含 URL 的本地错误（如参数缺失提示）原样给下游，排障要看得到。回归用例 `test/upstream_error_mask_test.go`。
 - **上游字段兼容**：解析上游响应禁止写死单一字段名，必须多字段兼容读取（`utils.FirstNonEmpty` / `utils.ToString`，数值 ID 一律用 `utils.ToString` 避免科学计数法），拼进 URL 的 ID 必须 `url.QueryEscape`。
 - 日志与界面文案用中文，代码标识符用英文。
 - **可信代理**：`CreateApp` 中 `SetTrustedProxies(["127.0.0.1","::1"])`——只有本机 nginx 的 `X-Forwarded-For` 参与真实 IP 还原。套 CDN 部署时需同步配置 nginx real_ip（`set_real_ip_from` + `real_ip_header`），否则记录与限流/黑名单口径都会是边缘节点 IP。

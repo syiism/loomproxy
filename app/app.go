@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -266,21 +268,21 @@ func handleError(c *gin.Context, err error) {
 				// 上游响应读取/解析失败等未知上游异常，属服务端网关问题而非客户端参数错误
 				c.JSON(http.StatusBadGateway, gin.H{
 					"code": conf.Config.ErrorCode,
-					"msg":  ue.Message,
+					"msg":  sanitizeUpstreamMsg(ue.Message),
 				})
 				return
 			}
 			if ue.StatusCode != 0 {
 				c.JSON(ue.StatusCode, gin.H{
 					"code": conf.Config.ErrorCode,
-					"msg":  ue.Message,
+					"msg":  sanitizeUpstreamMsg(ue.Message),
 				})
 				return
 			}
 		default:
 			c.JSON(ue.StatusCode, gin.H{
 				"code": conf.Config.ErrorCode,
-				"msg":  ue.Message,
+				"msg":  sanitizeUpstreamMsg(ue.Message),
 			})
 			return
 		}
@@ -310,10 +312,42 @@ func handleError(c *gin.Context, err error) {
 		return
 	}
 
+	// 传输层失败（连接被重置、TLS 握手失败、读超时等）：err.Error() 必带完整请求 URL，
+	// 且属网关侧问题——不能落到下面「400 + 原文」的兜底，那是给参数缺失类错误用的
+	if isTransportError(err) {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"code": conf.Config.ErrorCode,
+			"msg":  "上游请求失败，请稍后重试",
+		})
+		return
+	}
+
 	c.JSON(http.StatusBadRequest, gin.H{
 		"code": conf.Config.ErrorCode,
-		"msg":  err.Error(),
+		"msg":  sanitizeUpstreamMsg(err.Error()),
 	})
+}
+
+// sanitizeUpstreamMsg 对外文案脱敏：上游错误信息常内嵌完整请求 URL（签名站会带上
+// app_key/device_sn/sig 一类参数，也暴露自家上游域名），出现 URL 一律换成通用提示。
+// 完整错误已由 handleError 记入服务端日志，这里只影响下游看到什么。
+func sanitizeUpstreamMsg(msg string) string {
+	if strings.Contains(msg, "://") {
+		return "上游请求失败，请稍后重试"
+	}
+	return msg
+}
+
+// isTransportError 判定是否为上游传输层失败。*url.Error 是 http.Client 所有请求失败的
+// 包装形态，net.Error 兜住未经 client 的场景（如自持连接）。DNS 类已在上一步给出
+// 更具体的友好文案，故此处不再区分。
+func isTransportError(err error) bool {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne)
 }
 
 func isDNSError(err error) (string, bool) {

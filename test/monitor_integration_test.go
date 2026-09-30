@@ -171,13 +171,23 @@ func TestPoolStatusEndpoint(t *testing.T) {
 	if err := json.Unmarshal(env.Data, &pools); err != nil {
 		t.Fatalf("解析号池列表失败: %v", err)
 	}
-	if len(pools) != 1 {
-		t.Fatalf("号池数 = %d, want 1（%v）", len(pools), pools)
+	// 按池名取自己那一条：号池列表的全局数量取决于本部署携带哪些源
+	// （骨架不携带源时只有这个假池，携带数据源的部署还会有源自己登记的池），
+	// 断言数量会把用例与部署形态绑死
+	var entry map[string]interface{}
+	for _, pl := range pools {
+		if pl["name"] == p.Name() {
+			entry = pl
+			break
+		}
+	}
+	if entry == nil {
+		t.Fatalf("响应中缺少假池 %s（共 %d 个池：%v）", p.Name(), len(pools), pools)
 	}
 
-	counts, ok := pools[0]["counts"].(map[string]interface{})
+	counts, ok := entry["counts"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("响应缺少 counts: %v", pools[0])
+		t.Fatalf("响应缺少 counts: %v", entry)
 	}
 	want := map[string]int64{"hot": 1, "cold": 1, "spent": 2, "dead": 1}
 	for k, v := range want {
