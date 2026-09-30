@@ -1,0 +1,3 @@
+# pnpm 11 默认禁用依赖的 postinstall 构建脚本；esbuild 需要其安装脚本落盘平台二进制
+allowBuilds:
+  esbuild: true

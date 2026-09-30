@@ -1,0 +1,444 @@
+<template>
+  <div>
+    <PageHeader title="个人中心" subtitle="个人信息、密码、API 密钥与登录设备管理。" />
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 items-start">
+      <!-- 基本信息 -->
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">基本信息</h2>
+        <div class="card space-y-3 mb-6">
+          <div class="flex justify-between items-center"><span class="text-text-muted">用户名</span><span class="font-mono">{{ me.username }}</span></div>
+          <div class="flex justify-between items-center"><span class="text-text-muted">角色</span>
+            <span class="flex gap-1.5">
+              <UiTag v-for="r in (me.roles || [])" :key="r.code" :tone="roleTone(r.code)" :label="r.name || r.code" />
+              <span v-if="!(me.roles || []).length" class="text-text-muted">—</span>
+            </span>
+          </div>
+          <div class="flex justify-between items-center"><span class="text-text-muted">套餐</span>
+            <UiTag v-if="me.plan" tone="blue" :label="me.plan.name || me.plan.code" />
+            <span v-else class="text-text-muted">免费版</span>
+          </div>
+          <div v-if="me.plan_expire_at" class="flex justify-between items-center"><span class="text-text-muted">套餐到期</span>
+            <span class="font-mono text-sm" :style="expireSoon ? 'color:#956400' : ''">{{ fmtDate(me.plan_expire_at) }}<template v-if="expireSoon">（即将到期）</template></span>
+          </div>
+          <div class="flex justify-between items-center"><span class="text-text-muted">注册时间</span><span class="font-mono text-sm">{{ fmtDate(me.created_at) }}</span></div>
+          <div class="flex justify-between items-center"><span class="text-text-muted">最近登录</span><span class="font-mono text-sm">{{ fmtDate(me.last_login_at) }}</span></div>
+        </div>
+
+        <form @submit.prevent="onSaveProfile" class="space-y-5">
+          <UiField label="用户名" :hint="usernameHint">
+            <input v-model="profileForm.username" class="input font-mono" minlength="3" maxlength="64" :disabled="!!usernameNextAt" placeholder="3-64 个字符">
+          </UiField>
+          <UiField label="昵称">
+            <input v-model="profileForm.nickname" class="input" maxlength="64" placeholder="未设置">
+          </UiField>
+          <UiField label="邮箱" hint="必须填写">
+            <input v-model="profileForm.email" type="email" class="input" placeholder="未设置" required>
+          </UiField>
+          <UiField label="登录有效时长" hint="单位：小时；0 表示跟随系统默认，-1 表示永不过期，对下次及以后的登录生效">
+            <input v-model.number="profileForm.token_expire_hours" type="number" min="-1" max="8760" class="input font-mono" placeholder="0 = 跟随系统默认，-1 = 永不过期">
+          </UiField>
+          <button type="submit" class="btn-primary" :disabled="savingProfile">{{ savingProfile ? '保存中' : '保存资料' }}</button>
+        </form>
+      </section>
+
+      <!-- 右列：修改密码 + API 密钥 -->
+      <div class="space-y-12 md:space-y-16">
+        <!-- 修改密码 -->
+        <section class="reveal">
+          <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">修改密码</h2>
+          <form @submit.prevent="onChangePwd" class="space-y-5">
+            <UiField label="当前密码">
+              <input v-model="pwdForm.old_password" type="password" class="input" autocomplete="current-password" required>
+            </UiField>
+            <UiField label="新密码" hint="8–16 位，包含字母和数字">
+              <input v-model="pwdForm.new_password" type="password" class="input" minlength="8" maxlength="16" autocomplete="new-password" required>
+            </UiField>
+            <button type="submit" class="btn-primary" :disabled="savingPwd">{{ savingPwd ? '提交中' : '更新密码' }}</button>
+          </form>
+        </section>
+
+        <!-- API 密钥 -->
+        <section class="reveal">
+          <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">API 密钥</h2>
+          <div class="text-sm text-text-muted mb-4">用于书源或脚本以程序化方式调用数据源接口：请求头带 <code class="font-mono">X-API-Key</code> 或参数 <code class="font-mono">?api_key=</code>。调用按你的账号计费与限流。密钥可随时在列表中查看，泄露请立即撤销。</div>
+          <div class="flex justify-end mb-4">
+            <button class="btn-primary btn-sm" :disabled="keys.length >= 10" @click="createKeyOpen = true">{{ keys.length >= 10 ? '已达上限（10）' : '创建密钥' }}</button>
+          </div>
+          <UiSpinner v-if="keysLoading" />
+          <UiEmpty v-else-if="keys.length === 0" title="还没有 API 密钥" />
+          <div v-else class="card !p-0 divide-y divide-border">
+            <div v-for="k in keys" :key="k.id" class="flex items-center justify-between gap-3 px-5 md:px-6 py-4">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-medium text-sm">{{ k.name }}</span>
+                  <button class="text-xs text-text-muted hover:opacity-70 transition-opacity" @click="copyText(k.key)">复制</button>
+                </div>
+                <div class="font-mono text-xs break-all select-all">{{ k.key }}</div>
+                <div class="font-mono text-xs text-text-muted mt-1">
+                  创建于 {{ fmtDate(k.created_at) }} · 最后使用 {{ k.last_used_at ? fmtDate(k.last_used_at) : '从未' }}
+                </div>
+              </div>
+              <button class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity whitespace-nowrap" @click="onRevokeKey(k)">撤销</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- 阅读客户端 + 套餐升级（双列） -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 items-start mt-12 md:mt-16">
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">阅读客户端</h2>
+        <div class="card">
+          <div class="text-sm text-text-muted mb-4">在安装了「阅读」App 的设备上，点击下方按钮将自动拉起 App 并导入书源。若未拉起，可复制直链到 App 内手动导入（网络导入/粘贴）。</div>
+          <div class="flex gap-3">
+            <button class="btn-primary" :disabled="!legadoImportUrl" @click="onImportLegado">导入书源</button>
+            <button class="btn-ghost" :disabled="!legadoImportUrl" @click="copyImportUrl">复制直链</button>
+          </div>
+          <div v-if="!legadoImportUrl" class="text-xs text-text-muted mt-3">管理员尚未配置书源直链</div>
+        </div>
+      </section>
+
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">套餐升级</h2>
+        <div class="card">
+          <div class="text-sm text-text-muted mb-4">输入卡密兑换套餐或续费。同套餐兑换自动叠加时长。</div>
+          <form @submit.prevent="onRedeem" class="flex flex-col sm:flex-row gap-3">
+            <input v-model="redeemCode" class="input flex-1 font-mono" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" required>
+            <button type="submit" class="btn-primary whitespace-nowrap" :disabled="redeeming">{{ redeeming ? '兑换中' : '兑换' }}</button>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <!-- 登录设备 -->
+    <section class="mt-12 md:mt-16 reveal">
+      <div class="flex items-end justify-between mb-5 pb-3 border-b border-border">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">登录设备</h2>
+        <button v-if="otherCount > 0" class="btn-danger btn-sm" :disabled="revokingOthers" @click="revokeOthersOpen = true">退出其他设备</button>
+      </div>
+      <UiSpinner v-if="sessionsLoading" />
+      <UiEmpty v-else-if="sessions.length === 0" title="暂无登录设备" />
+      <div v-else class="card !p-0 divide-y divide-border">
+        <div v-for="s in sessions" :key="s.id" class="flex items-center justify-between gap-3 px-5 md:px-6 py-4">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-medium text-sm">{{ s.device }}</span>
+              <UiTag v-if="s.current" tone="green" label="当前设备" />
+            </div>
+            <div class="font-mono text-xs text-text-muted">
+              {{ s.ip || '未知 IP' }} · 最后活跃 {{ fmtDate(s.last_active_at) }} · 登录于 {{ fmtDate(s.created_at) }}
+            </div>
+          </div>
+          <button v-if="!s.current" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity whitespace-nowrap" @click="onRevoke(s)">退出</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 数据源 BaseURL 配置 -->
+    <section class="mt-12 md:mt-16 reveal">
+      <div class="flex items-end justify-between mb-5 pb-3 border-b border-border">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">数据源地址</h2>
+        <button v-if="sourceConfigDirty" class="btn-primary btn-sm" :disabled="savingSourceConfig" @click="onSaveSourceConfig">保存配置</button>
+      </div>
+      <UiSpinner v-if="sourceConfigs === null" />
+      <div v-else class="space-y-3">
+        <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="card !p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div class="font-mono text-sm min-w-[140px]">{{ cfg.source_display }}</div>
+          <div class="font-mono text-xs text-text-muted min-w-[100px]">{{ cfg.source_name }}</div>
+          <input v-model="cfg.base_url" class="input flex-1 font-mono text-sm" placeholder="留空则使用平台默认地址" @input="sourceConfigDirty = true">
+        </div>
+      </div>
+    </section>
+
+    <!-- 退出其他设备确认 -->
+    <UiModal :open="revokeOthersOpen" title="退出其他设备" @close="revokeOthersOpen = false" @confirm="onRevokeOthers" confirm-text="全部退出" :confirm-loading="revokingOthers">
+      <p class="text-text-muted text-sm">将退出除当前设备外的全部 {{ otherCount }} 个登录会话，其他设备上的书源与控制台访问会立即失效。确定继续？</p>
+    </UiModal>
+    <!-- 创建 API 密钥 -->
+    <UiModal :open="createKeyOpen" title="创建 API 密钥" confirm-text="创建" :confirm-loading="creatingKey" @close="createKeyOpen = false" @confirm="onCreateKey">
+      <UiField label="备注名" hint="便于识别用途，如「书源-手机」">
+        <input v-model="newKeyName" class="input" maxlength="64" placeholder="default" @keyup.enter="onCreateKey">
+      </UiField>
+    </UiModal>
+
+    <!-- 密钥明文（仅一次） -->
+    <UiModal :open="!!newKeyPlain" title="密钥已创建" confirm-text="我已保存" @close="newKeyPlain = ''" @confirm="newKeyPlain = ''">
+      <p class="text-text-muted text-sm mb-3">密钥已创建（可随时在下方列表查看或复制）：</p>
+      <div class="card !p-3 font-mono text-xs break-all select-all">{{ newKeyPlain }}</div>
+      <button class="btn-ghost btn-sm mt-3" @click="copyText(newKeyPlain)">复制密钥</button>
+    </UiModal>
+
+    <!-- 撤销 API 密钥确认 -->
+    <UiModal :open="!!revokeKeyTarget" title="撤销 API 密钥" @close="revokeKeyTarget = null" @confirm="onRevokeKeyConfirm" confirm-text="撤销" :confirm-loading="revokingKey">
+      <p class="text-text-muted text-sm">撤销后使用该密钥的请求将立即失效（{{ revokeKeyTarget ? revokeKeyTarget.prefix + '……' : '' }}）。确定继续？</p>
+    </UiModal>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, nextTick } from 'vue'
+import PageHeader from '../components/PageHeader.vue'
+import UiField from '../components/UiField.vue'
+import UiTag from '../components/UiTag.vue'
+import UiModal from '../components/UiModal.vue'
+import UiSpinner from '../components/UiSpinner.vue'
+import UiEmpty from '../components/UiEmpty.vue'
+import { authApi, userConfigApi, apikeyApi, clearToken } from '../api/index.js'
+import { session } from '../store.js'
+import { fmtDate, roleTone, toast, revealObserve } from '../utils.js'
+
+const me = ref({})
+const profileForm = ref({ username: '', nickname: '', email: '', token_expire_hours: 0 })
+const pwdForm = ref({ old_password: '', new_password: '' })
+const savingProfile = ref(false)
+const savingPwd = ref(false)
+const sessions = ref([])
+const sessionsLoading = ref(true)
+const revokingOthers = ref(false)
+const revokeOthersOpen = ref(false)
+const sourceConfigs = ref(null)
+const sourceConfigDirty = ref(false)
+const savingSourceConfig = ref(false)
+const legadoImportUrl = ref('')
+const redeemCode = ref('')
+const redeeming = ref(false)
+const keys = ref([])
+const keysLoading = ref(true)
+const createKeyOpen = ref(false)
+const newKeyName = ref('')
+const creatingKey = ref(false)
+const newKeyPlain = ref('')
+const revokeKeyTarget = ref(null)
+const revokingKey = ref(false)
+
+const otherCount = computed(() => sessions.value.filter(s => !s.current).length)
+
+// 套餐临期（3 天内）提示
+const expireSoon = computed(() => {
+  if (!me.value.plan_expire_at) return false
+  return new Date(me.value.plan_expire_at) - Date.now() < 3 * 24 * 3600 * 1000
+})
+
+// 用户名修改冷却：每 30 天限改一次，返回下次可修改时间（null 表示当前可改）
+const usernameNextAt = computed(() => {
+  if (!me.value.username_changed_at) return null
+  const next = new Date(me.value.username_changed_at).getTime() + 30 * 24 * 3600 * 1000
+  return next > Date.now() ? new Date(next) : null
+})
+const usernameHint = computed(() => {
+  return usernameNextAt.value
+    ? '每 30 天只能修改一次，下次可修改：' + fmtDate(usernameNextAt.value)
+    : '每 30 天只能修改一次，修改后立即生效'
+})
+
+const onRedeem = async () => {
+  if (redeeming.value) return
+  redeeming.value = true
+  try {
+    const data = await userConfigApi.redeem(redeemCode.value.trim())
+    toast('兑换成功：' + data.plan_name + (data.expire_at ? '，' + fmtDate(data.expire_at) + ' 到期' : '，永久有效'), 'success')
+    redeemCode.value = ''
+    // 刷新会话信息以更新套餐展示
+    try { me.value = await authApi.me(); session.user = me.value } catch (e) { /* 忽略 */ }
+  } catch (err) {
+    toast(err.message, 'error')
+  } finally {
+    redeeming.value = false
+  }
+}
+
+onMounted(() => { revealObserve() })
+
+const load = async () => {
+  try {
+    me.value = session.user || {}
+    profileForm.value = { username: me.value.username || '', nickname: me.value.nickname || '', email: me.value.email || '', token_expire_hours: me.value.token_expire_hours || 0 }
+  } catch (e) { /* 401 已由客户端处理 */ }
+  nextTick(revealObserve)
+}
+
+const onSaveProfile = async () => {
+  if (savingProfile.value) return
+  if (!profileForm.value.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profileForm.value.email)) {
+    toast('请输入有效的邮箱地址', 'error')
+    return
+  }
+  savingProfile.value = true
+  try {
+    const oldUsername = (me.value.username || '').toLowerCase()
+    const data = await authApi.updateMe({
+      username: profileForm.value.username.trim(),
+      nickname: profileForm.value.nickname.trim(),
+      email: profileForm.value.email.trim(),
+      token_expire_hours: Number(profileForm.value.token_expire_hours) || 0,
+    })
+    // 用户名即登录凭证：变更后后端已吊销全部会话，本地登出并引导重新登录
+    if (data.username && data.username.toLowerCase() !== oldUsername) {
+      toast('用户名已修改，请使用新用户名重新登录', 'success')
+      clearToken()
+      session.user = null
+      setTimeout(() => { location.href = '/panel/login' }, 800)
+      return
+    }
+    me.value = data
+    session.user = me.value
+    toast('资料已保存', 'success')
+  } catch (err) {
+    toast(err.message, 'error')
+  } finally {
+    savingProfile.value = false
+  }
+}
+
+const loadSessions = async () => {
+  sessionsLoading.value = true
+  try {
+    sessions.value = (await authApi.listSessions()) || []
+  } catch (e) { /* 加载失败不阻断页面 */ }
+  sessionsLoading.value = false
+  nextTick(revealObserve)
+}
+
+const onRevoke = async (s) => {
+  try {
+    await authApi.revokeSession(s.id)
+    toast('已退出该设备', 'success')
+    loadSessions()
+  } catch (err) {
+    toast(err.message, 'error')
+  }
+}
+
+const onRevokeOthers = async () => {
+  if (revokingOthers.value) return
+  revokingOthers.value = true
+  try {
+    const data = await authApi.revokeOtherSessions()
+    toast('已退出 ' + (data.count || 0) + ' 个设备', 'success')
+    revokeOthersOpen.value = false
+    loadSessions()
+  } catch (err) {
+    toast(err.message, 'error')
+  } finally {
+    revokingOthers.value = false
+  }
+}
+
+const loadKeys = async () => {
+  keysLoading.value = true
+  try {
+    keys.value = (await apikeyApi.list()) || []
+  } catch (e) { /* 加载失败不阻断页面 */ }
+  keysLoading.value = false
+  nextTick(revealObserve)
+}
+
+const onCreateKey = async () => {
+  if (creatingKey.value) return
+  creatingKey.value = true
+  try {
+    const data = await apikeyApi.create(newKeyName.value.trim())
+    newKeyPlain.value = data.key
+    createKeyOpen.value = false
+    newKeyName.value = ''
+    loadKeys()
+  } catch (err) {
+    toast(err.message, 'error')
+  } finally {
+    creatingKey.value = false
+  }
+}
+
+const copyText = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    toast('已复制', 'success')
+  } catch (e) {
+    toast('复制失败，请手动选择复制', 'error')
+  }
+}
+
+const onRevokeKey = (k) => { revokeKeyTarget.value = k }
+
+const onRevokeKeyConfirm = async () => {
+  if (revokingKey.value || !revokeKeyTarget.value) return
+  revokingKey.value = true
+  try {
+    await apikeyApi.revoke(revokeKeyTarget.value.id)
+    toast('密钥已撤销，相关请求立即失效', 'success')
+    revokeKeyTarget.value = null
+    loadKeys()
+  } catch (err) {
+    toast(err.message, 'error')
+  } finally {
+    revokingKey.value = false
+  }
+}
+
+const loadSourceConfigs = async () => {
+  try {
+    sourceConfigs.value = await userConfigApi.listSourceConfigs()
+    sourceConfigDirty.value = false
+  } catch (e) {
+    sourceConfigs.value = []
+  }
+}
+
+const onSaveSourceConfig = async () => {
+  if (savingSourceConfig.value) return
+  savingSourceConfig.value = true
+  try {
+    await userConfigApi.updateSourceConfigs(sourceConfigs.value)
+    toast('数据源地址已保存', 'success')
+    sourceConfigDirty.value = false
+  } catch (err) {
+    toast(err.message, 'error')
+  } finally {
+    savingSourceConfig.value = false
+  }
+}
+
+const onChangePwd = async () => {
+  if (savingPwd.value) return
+  savingPwd.value = true
+  try {
+    await authApi.changePassword(pwdForm.value.old_password, pwdForm.value.new_password)
+    toast('密码已更新', 'success')
+    pwdForm.value = { old_password: '', new_password: '' }
+  } catch (err) {
+    toast(err.message, 'error')
+  } finally {
+    savingPwd.value = false
+  }
+}
+
+const loadImportConfig = async () => {
+  try {
+    const data = await userConfigApi.getImportConfig()
+    legadoImportUrl.value = data.legado_import_url || ''
+  } catch (e) { /* 未配置时隐藏入口 */ }
+}
+
+const onImportLegado = () => {
+  if (!legadoImportUrl.value) return
+  window.location.href = 'legado://import/auto?src=' + encodeURIComponent(legadoImportUrl.value)
+}
+
+const copyImportUrl = async () => {
+  if (!legadoImportUrl.value) return
+  try {
+    await navigator.clipboard.writeText(legadoImportUrl.value)
+    toast('直链已复制，可到阅读 App 内手动导入', 'success')
+  } catch (e) {
+    toast('复制失败，请长按链接手动复制', 'error')
+  }
+}
+
+load()
+loadSessions()
+loadKeys()
+loadSourceConfigs()
+loadImportConfig()
+</script>

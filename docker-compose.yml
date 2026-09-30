@@ -1,0 +1,14 @@
+# loomproxy-go 单机编排（需 Docker Compose v2：docker compose up -d --build）
+# .env 注入配置，data/ 绑定挂载持久化 SQLite 与静态数据
+services:
+  loomproxy:
+    build: .
+    image: loomproxy-go:latest
+    container_name: loomproxy
+    ports:
+      - "8081:8081"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /* 按钮体系：主按钮纯色 #111，次按钮描边，危险按钮淡红 */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary { @apply btn bg-accent text-white hover:bg-[#333333]; }
+  .btn-ghost { @apply btn border border-border bg-surface hover:bg-surface-alt; }
+  .btn-danger { @apply btn border border-pale-red-bg text-pale-red-fg hover:bg-pale-red-bg; }
+  .btn-sm { @apply px-3 py-1.5 text-xs rounded-md; }
+
+  /* 表单控件 */
+  .input {
+    @apply w-full px-4 py-2.5 border border-border rounded-lg bg-surface text-sm transition-colors focus:outline-none focus:border-text disabled:opacity-60 disabled:bg-surface-alt;
+  }
+  .input-sm { @apply px-3 py-1.5 text-sm rounded-md; }
+
+  /* 卡片：1px 边框，无阴影，悬停仅有极淡阴影 */
+  .card {
+    @apply bg-surface border border-border rounded-xl p-5 md:p-6 transition-shadow duration-200;
+  }
+  .card-hover { @apply hover:shadow-[0_2px_8px_rgba(0,0,0,0.04)]; }
+
+  /* 淡彩标签 */
+  .tag {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wider whitespace-nowrap;
+  }
+
+  /* 表格 */
+  .table-wrap { @apply bg-surface border border-border rounded-xl overflow-hidden; }
+  .table-base { @apply w-full text-sm; }
+  .table-base thead { @apply bg-surface-alt; }
+  .table-base th { @apply font-mono text-xs uppercase tracking-wider text-text-muted px-3 md:px-5 py-3 md:py-4 text-left font-medium; }
+  .table-base td { @apply px-3 md:px-5 py-3 md:py-4; }
+  .table-base tbody tr { @apply border-b border-border last:border-b-0 hover:bg-surface-alt/50 transition-colors; }
+
+  /* 物理按键样式 */
+  .kbd {
+    @apply inline-flex items-center px-1.5 py-0.5 border border-border rounded bg-[#F7F6F3] font-mono text-xs text-text-muted;
+  }
+}
+
+/* 动效 */
+@keyframes drift { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(20px, -10px, 0); } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rise { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.animate-drift { animation: drift 24s ease-in-out infinite alternate; }
+.animate-fade { animation: fade 150ms ease; }
+.animate-rise { animation: rise 200ms cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-slide-in { animation: slideIn 200ms cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-spin-custom { animation: spin 600ms linear infinite; }
+
+/* 滚动渐入（IntersectionObserver 驱动，支持 --i 交错延迟） */
+.reveal {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 600ms cubic-bezier(0.16, 1, 0.3, 1), transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: calc(var(--i, 0) * 80ms);
+}
+.reveal.in { opacity: 1; transform: translateY(0); }
+
+/* 环境氛围光斑：固定层，极低透明度 */
+.ambient-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(17, 17, 17, 0.03) 0%, transparent 46%),
+    radial-gradient(circle at 82% 76%, rgba(149, 100, 0, 0.025) 0%, transparent 42%);
+}
+
+/* 滚动条与自动填充 */
+html { overflow-y: scroll; } /* 始终预留滚动条位置，避免长短页面切换时布局跳动 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #EAEAEA; border-radius: 3px; }
+input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 30px #FFFFFF inset !important;
+  -webkit-text-fill-color: #111111 !important;
+}

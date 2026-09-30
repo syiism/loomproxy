@@ -1,0 +1,26 @@
+[Unit]
+Description=LoomProxy - 小说书源 API 聚合代理
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 部署目录内含：loomproxy-go 二进制、.env、data/、favicon.svg
+WorkingDirectory=/opt/loomproxy
+ExecStart=/opt/loomproxy/loomproxy-go
+Restart=on-failure
+RestartSec=3
+
+# 优雅停机：服务处理 SIGTERM，内部 5s 停机 + 监控明细 Drain 落库，
+# 留足余量再 SIGKILL
+TimeoutStopSec=25
+
+LimitNOFILE=65536
+NoNewPrivileges=true
+
+# 如需非 root 运行，取消注释并 chown -R loomproxy /opt/loomproxy：
+# User=loomproxy
+# Group=loomproxy
+
+[Install]
+WantedBy=multi-user.target

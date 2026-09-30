@@ -1,0 +1,19 @@
+# docker build 上下文排除清单（镜像内自行构建前端，宿主产物不带入）
+.git
+.github
+
+# 前端依赖与产物（镜像内 pnpm install + build）
+web/node_modules
+web/dist
+
+# 构建产物与运行时数据
+/loomproxy
+/loomproxy-go
+data/*.db
+*.log
+
+# 文档与 IDE 产物
+docs
+.trae
+.agents
+.kimi

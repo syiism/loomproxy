@@ -1,0 +1,39 @@
+# 环境变量与密钥（含 API_KEYS / ADMIN_PASSWORD / JWT_SECRET）
+.env
+
+# Go 构建产物
+/loomproxy
+/loomproxy-go
+/loomproxy-go-release
+/web/loomproxy
+
+# 运行时数据（data/ 下各数据源目录的 JSON 配置如需入库，自行加 ! 例外）
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+
+# 前端依赖与构建产物（构建顺序见 AGENTS.md：先 pnpm build 再 go build）
+web/node_modules/
+web/dist/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log
+
+docs/
+/loomproxy-go-static
+
+# Python 测试
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# GUI 测试临时截图
+/gui-test-screenshots/
+*.log
+tools/migrate-cards/codes.txt
+data/state.json
+
+.workbuddy
