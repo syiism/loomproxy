@@ -29,6 +29,8 @@ import (
 	"loomproxy/handlers/userconfig"
 	"loomproxy/handlers/verify"
 	"loomproxy/lifecycle"
+	"loomproxy/middleware"
+	_ "loomproxy/middleware/all" // 本部署装载哪些中间件 = middleware/all/all.go
 	"loomproxy/models"
 	_ "loomproxy/sources"
 	"loomproxy/utils"
@@ -130,7 +132,7 @@ func buildParams(c *gin.Context, paramNames []string) map[string]interface{} {
 			params[p] = val
 		} else if p == "baseUrl" {
 			// 从中间件注入的用户配置中读取
-			if v, ok := c.Get("_resolved_baseUrl"); ok {
+			if v, ok := c.Get(middleware.CtxResolvedBaseURL); ok {
 				if s, ok := v.(string); ok && s != "" {
 					params[p] = s
 				}
@@ -188,25 +190,20 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 			c.JSON(http.StatusOK, result)
 		}
 
-		var handlers []gin.HandlerFunc
-		if h.AuthRequired() {
-			handlers = append(handlers, authMiddleware())
-		}
 		// 源名与动作：路径形如 /{source}/{action}
 		source, action := "", ""
 		if parts := strings.SplitN(strings.TrimPrefix(info.Path, "/"), "/", 2); len(parts) == 2 {
 			source, action = parts[0], parts[1]
 		}
-		// 调用监控（不计额度）：置于访问控制与计费之前，覆盖 403/429 等失败响应
-		if source != "" {
-			handlers = append(handlers, monitorMiddleware(source, action))
+		// 单路由链：成员与顺序全部来自各中间件包的 Def（Applies 过滤 + Order 排序），
+		// 这里不再逐行 append——加中间件不碰本文件，见 middleware/all/all.go
+		spec := middleware.Spec{
+			Source:       source,
+			Action:       action,
+			HandlerName:  info.Handler,
+			AuthRequired: h.AuthRequired(),
 		}
-		handlers = append(handlers, baseURLCheckMiddleware(source))
-		// 数据源访问控制中间件：检查数据源是否启用、用户套餐是否包含该数据源
-		handlers = append(handlers, gate.DataSourceAccessMiddleware(source))
-		handlers = append(handlers, gate.BillingMiddleware(source, action))
-		handlers = append(handlers, gate.RateLimitMiddleware(source, action))
-		handlers = append(handlers, handlerFunc)
+		handlers := append(middleware.RouteChain(spec), handlerFunc)
 
 		for _, method := range info.Methods {
 			switch strings.ToUpper(method) {
@@ -338,13 +335,10 @@ func CreateApp() *gin.Engine {
 		log.Printf("WARNING: 设置可信代理失败: %v", err)
 	}
 
-	r.Use(requestIDMiddleware())
-	r.Use(recoveryMiddleware())
-	r.Use(loggingMiddleware())
-	r.Use(corsMiddleware())
-	r.Use(cacheControlMiddleware())
-	// IP 黑名单全局拦截：置于 CORS 之后（不影响预检），先于一切业务路由
-	r.Use(ipBlockMiddleware())
+	for _, m := range middleware.Globals() {
+		r.Use(m)
+	}
+	log.Println("中间件链:", middleware.Describe())
 
 	auth.RegisterRoutes(r)
 	verify.RegisterRoutes(r)
@@ -382,7 +376,8 @@ func CreateApp() *gin.Engine {
 	})
 
 	// 端点列表（需认证，返回用户有权限访问的端点）
-	r.GET("/endpoints", authMiddleware(), func(c *gin.Context) {
+	apiAuth, _ := middleware.Build("apiauth", middleware.Spec{})
+	r.GET("/endpoints", apiAuth, func(c *gin.Context) {
 		uid, exists := c.Get("user_id")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "unauthorized"})

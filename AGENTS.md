@@ -60,8 +60,8 @@ docker compose up -d --build      # .env 注入 + ./data 绑定挂载
 
 ```
 main.go             入口：信号处理，调用 app.Run
-app/                装配：CreateApp 构建 gin 引擎、全局与单路由中间件链、路由对账；
-                    autoblock.go（IP 自动拉黑）、monitor.go（调用明细落库与归档）、pprof.go
+app/                装配：CreateApp 构建 gin 引擎、按注册表挂中间件链、路由对账；
+                    monitor.go（调用明细落库与归档）、pprof.go
 conf/               环境变量配置加载（envStr/envInt/envFloat/envBool/envList）
 base/               核心：Handler 接口与泛型注册表、BaseHandler（共享 HTTP 客户端 +
                     Fetch/FetchJSON/FetchText = 缓存 → singleflight → 熔断 → 过期缓存降级）、
@@ -74,8 +74,16 @@ base/legado/        Legado 响应 DTO 与五个基础处理器（Search/Detail/C
 handlers/           控制面 HTTP 端点：auth/ admin/ quota/（额度面板与用量流水）userconfig/
                     apikey/ verify/ catalog/（/datasources 与 /data，能力发现端点）
 sources/            数据面：各源包目录 + all.go（数据源导入集合，即「本部署携带哪些源」；底座为空）
-gate/               数据源请求链路上的管控闸门：访问控制 / 额度计费 / 速率限制 + 限额解析
-                    （是被穿过的一环，不是被调用的端点，故不放在 handlers/）
+middleware/         中间件注册表与链装配（叶子包：只依赖 gin，**不得导入子包或 gate**，否则成环）；
+                    Def{Scope,Order,Applies,Build} 自注册，Globals/RouteChain 出链，
+                    Order 常量是顺序的唯一事实来源，all/all.go 的空白导入清单决定「带哪些中间件」
+  transport/        全局链：requestid(10) / recovery(20) / logging(30) / cors(40) / cachecontrol(50)
+  ipblock/          全局链 ipblock(60)：黑名单拦截 + autoblock.go 自动拉黑滑动窗口计数
+  apiauth/          路由链 apiauth(100)：API 网关层鉴权（只挂 AuthRequired 的路由）
+  source/           路由链 monitor(200) + baseurl(300)：调用监控计数、baseUrl 解析与 SSRF 校验
+gate/               数据源请求链路上的管控闸门，按轴分文件：access.go(400) / billing.go(500) /
+                    ratelimit.go(600，含限流器状态机) / plan.go（限额与套餐解析）/ usage.go（用量统计）
+                    （是被穿过的一环，不是被调用的端点，故不放在 handlers/；三轴各自 init() 注册 Def）
 models/             GORM 模型（User/Role/SystemSetting/Quota*/DataSource/PoolDevice/…）
 db/                 三方言初始化、AutoMigrate、seed.go（角色/设置/额度计划/套餐关联/管理员引导）
 utils/              auth.go jwt.go cache.go（LRU+TTL + Redis）network.go（SSRF）norm.go（字段兼容
@@ -103,8 +111,11 @@ scripts/ deploy/    部署脚本与 systemd 单元
    - `DataFiles` 声明该源附属的静态数据字典（文件名 + 说明）；`/data` 列表的说明列取自声明，底座不内置任何具体文件名。
 2. 处理器实现 `base.Handler`：`Handle(ctx, params)`、`GetPath/GetMethods/GetName/GetDescription/GetQueryParams/AuthRequired`；通常内嵌 `base/legado` 的基础处理器（复用 DTO 与上游缓存 TTL），或内嵌 `base.BaseHandler`（`NewBaseHandler()` 默认 GET、Auth 开、QueryParams 含 `api_key`）。
 3. `sources/all.go` 加一行空白导入——这份清单即「本部署携带哪些源」，`app.go` 只空白导入 `sources` 包本身，不因新源而改。
-4. 路由全部是根级 `/{source}/{action}`，无版本前缀。单路由中间件链：
-   `authMiddleware（若 AuthRequired）→ monitorMiddleware（置于最前以覆盖 403/429）→ baseURLCheckMiddleware（resolve baseUrl：请求参数 → 用户配置 → 平台默认）→ gate.DataSourceAccessMiddleware → gate.BillingMiddleware → gate.RateLimitMiddleware → handler`。
+4. 路由全部是根级 `/{source}/{action}`，无版本前缀。单路由中间件链由各中间件包的 `Def` 装配
+   （`Applies` 决定挂不挂、`Order` 决定位置，常量集中在 `middleware/middleware.go`）：
+   `apiauth(100，若 AuthRequired) → monitor(200，置于管控三轴之前以覆盖 403/429) → baseurl(300，resolve baseUrl：请求参数 → 用户配置 → 平台默认) → gate.access(400) → gate.billing(500) → gate.ratelimit(600) → handler`。
+   全局链同理由 Def 装配：`requestid → recovery → logging → cors → cachecontrol → ipblock`。
+   **不要在 `app.go` 里逐行 `r.Use`/逐行 append 拼链**；装载集合是 `middleware/all/all.go` 的空白导入清单。
 5. 需要凭证池的源在 §6 登记自己的号池，不要另写一套生命周期管理。
 
 **测试夹具**：假源本体在 `testkit/fakesource`（三个假源 `fake_a`/`fake_b`/`fake_c`，动作集 search/detail/chapter/content/explore），处理器只做「按解析出的 baseUrl 取上游并原样返回」；`test/fakesource_test.go` 只在 test 包 `init()` 里调 `fakesource.Register()`，跨进程用例经 `cmd/fakegateway` 起同一套声明。集成测试覆盖路由管线与 seed 播种全靠这三个假源——**它们只在测试二进制里存在，不属于产品功能**。新增管线类用例请继续用假源，不要引入真实书源依赖。
@@ -122,7 +133,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 
 ## 7. 鉴权模型（两层，易混淆）
 
-1. **API 网关层**：`app.authMiddleware` → `utils.VerifyAuth`。仅 `AUTH_ENABLED=true` 时生效；白名单路径跳过；接受 JWT（`Authorization: Bearer` / `?token=` / `loomproxy_token` Cookie，统一走 `utils.TokenFromRequest`）或 API Key（`X-API-Key` / `?api_key=`）。
+1. **API 网关层**：`middleware/apiauth` → `utils.VerifyAuth`。仅 `AUTH_ENABLED=true` 时生效；白名单路径跳过；接受 JWT（`Authorization: Bearer` / `?token=` / `loomproxy_token` Cookie，统一走 `utils.TokenFromRequest`）或 API Key（`X-API-Key` / `?api_key=`）。
 2. **用户层**：`handlers/auth` 的注册/登录等；`AuthRequired()` 与 `AdminRequired()`（查库校验 admin 角色）保护 `/auth/me`、`/user/*`、`/quota/*`、`/admin/*`、`/debug/pprof/*`。
 3. **用户自助 API 密钥**（`/apikey`，JWT 会话保护）：创建（`lp_` 前缀，明文可随时查回，每人上限 10 个）/ 列表 / 撤销。网关匹配到用户密钥时**注入归属身份**，计费/配额/监控/套餐门控按归属用户生效；静态 env 键保持匿名语义。密钥不适用于面板会话接口。
 4. **会话**：JWT 的 `jti` 对应 `auth_sessions` 行（设备名/IP/最后活跃）；两层鉴权都校验会话未被吊销且未过期，**无 jti 的旧 token 一律 401**。删除/禁用用户、找回密码都会吊销相应会话。
@@ -155,7 +166,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - **限额解析优先级**：用户数据源级覆盖（`user_quota_overrides`，**追加语义**：生效额度 = 套餐限额 + 覆盖值）> 套餐限额（`quota_limits`）> 不限。
 - **速率限制**（`gate.RateLimitMiddleware`）两种口径并存，优先级：套餐级 > 全局，同级内 窗口计数（`limit_count` + `window_sec`，允许突发）> 固定间隔（`interval`，令牌桶容量 1，不可突发）；套餐级配了任一种即不回退全局。同时作用于 IP 维度与用户维度（key 含 planId），两者都放行才放行；管理员豁免全部；配置直查库，保存即生效。
 - **监控**（`base/metrics.go` + `app/monitor.go`）：内存聚合 + 最近明细环形缓冲，缓冲满 250 条批量落 `api_call_logs`；清理前按 数据源/接口 聚合累加进 `api_call_stats` 永久归档；`GET /admin/monitor`、`/monitor/trend`（近 7 天按天×源，合并内存中未落库明细）、`/monitor/history`、`POST /monitor/reset`。
-- **自动拉黑**（`app/autoblock.go`）：滑动窗口统计数据源路由的 403/429，达阈值写黑名单（`source=auto`）；回环地址永不自动拉黑；开关与阈值走系统设置（`auto_block_enabled`·`auto_block_threshold`·`auto_block_window_sec`）。
+- **自动拉黑**（`middleware/ipblock/autoblock.go`）：滑动窗口统计数据源路由的 403/429，达阈值写黑名单（`source=auto`）；回环地址永不自动拉黑；开关与阈值走系统设置（`auto_block_enabled`·`auto_block_threshold`·`auto_block_window_sec`）。
 - 历史字段名注意：`quota_costs` / `quota_cost_plans` / `user_quota_overrides` 的 `group_code` 列**实际存的是数据源码**（组概念已移除，启动时按各源 `LegacyGroups` 声明把存量组码行展开为每源一行并删除组行；无声明则组行留在库中不生效）。同理，本部署下线的历史源由环境变量 `RETIRED_SOURCES` 声明，seed 据此清理其在各配置表的存量行（`db.cleanupRemovedSources`，历史用量流水保留）。
 
 ## 10. 开发约定
@@ -168,6 +179,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - **前端**（规范见 `.trae/skills/minimalist-ui`）：暖单色配色、衬线标题（Newsreader）+ 几何无衬线（Geist）、1px `#EAEAEA` 边框、Bento 网格、淡彩标签；**禁止** emoji、渐变、重阴影、Inter/Roboto/Lucide。分层：`api/client.js`（fetch 封装：token 注入、401 跳登录、`code!==0` 抛 ApiError）+ `api/index.js`（按域端点方法，页面不拼路径）+ `store.js`（reactive 会话态，路由守卫用 `meta.public`/`meta.admin`）+ `components/`（UiTag/UiModal/UiPagination/UiSpinner/UiEmpty/UiField/UiSwitch/UiTrendChart/VerifyCodeField/PageHeader，标签一律 UiTag）+ `styles.css` 的 `@layer components` 基样类（btn/input/card/tag/table）。新页面复用这些组件，不要再写一次性样式。
 - **系统设置页**（`web/src/pages/admin/Settings.vue`）是卡片聚合而非平铺列表：受管 key 按功能分 5 张卡，卡级 diff 保存（逐 key `PUT /admin/settings/:key`）；不在清单内的 key 落入「自定义配置」兜底卡。**seed 新增设置 key 时要同步把字段加进前端 GROUPS 的对应分组**（或确认走兜底卡）。
 - `web/vite.config.js` 已配 dev 代理（`/auth`·`/admin`·`/quota`·`/datasources`·`/data`·`/verify` → `localhost:8081`）。
+- **中间件**：新增一条 = 新建 `middleware/<职责>` 包（或进 `gate` 的对应轴文件）+ `init()` 里一次 `middleware.Register(Def{Scope, Order, Applies, Build})` + `middleware/all/all.go` 加一行空白导入；`app.go` 免改。顺序只改 `middleware/middleware.go` 的 Order 常量，`test/middleware_chain_test.go` 会失败以逼一次审查；同作用域内 Order 撞车或重名在 `Register` 期 `log.Fatalf`（宁启动失败不带病装配）。`middleware` 根包是叶子包，不要给它加子包或 gate 的导入（成环），装载清单只在 `middleware/all`。
 - **测试**：黑盒测试一律放 `test/`（包名 test，只测公开 API，不与源码混放）。单元级用 `httptest` + 直接构造 `conf.Config` 全局指针；HTTP 集成用 `testserver_test.go` 的 `newTestServer(t)`（临时 SQLite + `app.CreateApp()` + `httptest.NewServer`，自动 AutoMigrate + seed，admin/admin1234）。全局态（`conf.Config`·`db.DB`·`utils.DefaultCache`·限流器·号池注册表）跨用例共享，**集成用例禁止 `t.Parallel()`**；`newTestServer` 已清缓存，直接改库后按需 `delCostCache`。
 - **质量门禁**：每次修改完成后 `make build`（含 vet + gofmt + `go test -race`），并**必须 `git commit`**（含 AGENTS.md 同步更新），不留未提交的工作区改动。
 - **AGENTS.md 同步规则**：改动涉及数据源、接口、中间件、配置项、架构模式时，同步更新本文件对应章节并一起提交。不确定时优先更新，避免文档与代码脱节。

@@ -1,9 +1,9 @@
-package app
+package ipblock
 
 // IP 自动拉黑：滑动窗口内 403/429 失败次数达阈值即写入黑名单（source=auto）。
 //
-// 信号源为 monitorMiddleware（数据源路由的最终响应状态码）；被拉黑后请求被全局
-// ipBlockMiddleware 拦截、不再进入监控计数，累计天然停止。
+// 信号源为 source/monitor（数据源路由的最终响应状态码）；被拉黑后请求被本包的
+// ipblock 中间件拦截、不再进入监控计数，累计天然停止。
 //
 // 配置（系统设置，db.GetSetting 10s 内存缓存，改后最长 10s 生效）：
 //
@@ -52,10 +52,10 @@ func isLoopbackIP(ip string) bool {
 	return false
 }
 
-// RecordAutoBlockFailure 记录一次数据源路由的失败响应（仅 403/429 计数），
-// 窗口内累计达阈值自动拉黑。由 monitorMiddleware 在 RecordCall 后调用；
+// RecordFailure 记录一次数据源路由的失败响应（仅 403/429 计数），
+// 窗口内累计达阈值自动拉黑。由 source/monitor 在 RecordCall 后调用；
 // 导出以便集成测试直接驱动非回环地址场景。
-func RecordAutoBlockFailure(ip string, status int) {
+func RecordFailure(ip string, status int) {
 	if status != http.StatusForbidden && status != http.StatusTooManyRequests {
 		return
 	}

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"loomproxy/app"
 	"loomproxy/base"
 	"loomproxy/base/pool"
 	"loomproxy/db"
+	"loomproxy/middleware/ipblock"
 	"loomproxy/models"
 )
 
@@ -227,28 +227,28 @@ func TestAutoBlockWindowAndStatus(t *testing.T) {
 	// 1) 非 403/429 状态码不计数：远超阈值的 200/400/500 不应触发拉黑
 	ip1 := "203.0.113.10"
 	for i := 0; i < 10; i++ {
-		app.RecordAutoBlockFailure(ip1, http.StatusOK)
-		app.RecordAutoBlockFailure(ip1, http.StatusBadRequest)
-		app.RecordAutoBlockFailure(ip1, http.StatusInternalServerError)
+		ipblock.RecordFailure(ip1, http.StatusOK)
+		ipblock.RecordFailure(ip1, http.StatusBadRequest)
+		ipblock.RecordFailure(ip1, http.StatusInternalServerError)
 	}
 	assertBlocked(ip1, false)
 
 	// 2) 403 与 429 混合累计达阈值 → 拉黑
-	app.RecordAutoBlockFailure(ip1, http.StatusForbidden)
-	app.RecordAutoBlockFailure(ip1, http.StatusTooManyRequests)
+	ipblock.RecordFailure(ip1, http.StatusForbidden)
+	ipblock.RecordFailure(ip1, http.StatusTooManyRequests)
 	assertBlocked(ip1, false) // 2 < 3
-	app.RecordAutoBlockFailure(ip1, http.StatusForbidden)
+	ipblock.RecordFailure(ip1, http.StatusForbidden)
 	assertBlocked(ip1, true)
 
 	// 3) 滑动窗口剪枝：窗口外的旧记录不计入
 	ip2 := "203.0.113.11"
-	app.RecordAutoBlockFailure(ip2, http.StatusForbidden)
-	app.RecordAutoBlockFailure(ip2, http.StatusForbidden)
+	ipblock.RecordFailure(ip2, http.StatusForbidden)
+	ipblock.RecordFailure(ip2, http.StatusForbidden)
 	time.Sleep(2100 * time.Millisecond) // 前 2 次滑出窗口
-	app.RecordAutoBlockFailure(ip2, http.StatusForbidden)
-	app.RecordAutoBlockFailure(ip2, http.StatusForbidden)
+	ipblock.RecordFailure(ip2, http.StatusForbidden)
+	ipblock.RecordFailure(ip2, http.StatusForbidden)
 	assertBlocked(ip2, false) // 窗口内仅 2 次 < 3
-	app.RecordAutoBlockFailure(ip2, http.StatusForbidden)
+	ipblock.RecordFailure(ip2, http.StatusForbidden)
 	assertBlocked(ip2, true) // 窗口内第 3 次达标
 }
 
@@ -309,7 +309,7 @@ func TestAutoBlockIP(t *testing.T) {
 
 	// 非回环地址：直接经内部函数累计达标，应写入 blocked_ips（source=auto）
 	for i := 0; i < 3; i++ {
-		app.RecordAutoBlockFailure("203.0.113.9", http.StatusForbidden)
+		ipblock.RecordFailure("203.0.113.9", http.StatusForbidden)
 	}
 	var rec models.BlockedIP
 	if err := db.DB.Where("ip = ?", "203.0.113.9").First(&rec).Error; err != nil {
