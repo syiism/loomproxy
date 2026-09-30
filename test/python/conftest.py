@@ -3,13 +3,15 @@
 
 设计（对应 test/testserver_test.go 的 newTestServer 思路）：
   * 每个用例起一个独立 Go 服务子进程：临时目录 SQLite + AUTH_ENABLED=true +
-    XMLY_POOL_ENABLED=false + 固定测试 JWT_SECRET，跑完即销毁，用例间互不污染；
+    POOL_ENABLED=false + 固定测试 JWT_SECRET，跑完即销毁，用例间互不污染；
+  * 服务二进制来自 cmd/fakegateway（登记 testkit/fakesource 的三个假源），底座产品入口
+    不带任何数据源，跨进程用例没有可打的路由；
   * 通过内置 http.server 假上游注入 data-source 平台默认 baseUrl（SSRF 可信豁免），
     得以覆盖“上游成功→计费扣减→额度用尽 429”的完整主链路；
   * 通过 sqlite3 直写同一份 SQLite（WAL，与 Go 进程并发读写安全），组合四类中间件
     （鉴权/计费/限流/号池之外的访问控制）场景，与 Go 用例直接改库的思路一致。
 
-运行（仓库根目录 loomproxy-dev/）：
+运行（仓库根目录）：
   pip install pytest
   pytest test/python -v
 脚手架会自动在 web/dist 补占位、缺失时执行 `CGO_ENABLED=1 go build`，
@@ -40,31 +42,31 @@ JWT_SECRET = "test-jwt-secret"
 # ---------- 二进制准备 ----------
 
 def _binary() -> str:
-    """返回可执行的 LoomProxy 二进制；缺失时自动构建。可被 LOOMPROXY_BIN 覆盖。"""
+    """返回可执行的测试服务二进制（cmd/fakegateway，带假源夹具）。可被 LOOMPROXY_BIN 覆盖。"""
     custom = os.environ.get("LOOMPROXY_BIN")
     if custom:
         assert os.path.exists(custom), f"LOOMPROXY_BIN 指定的二进制不存在: {custom}"
         return custom
-    target = os.path.join(REPO_ROOT, "loomproxy-go")
-    if not os.path.exists(target):
-        # go:embed 需要 web/dist 存在占位（gitignored），补一个空的避免编译失败
-        dist = os.path.join(REPO_ROOT, "web", "dist")
-        os.makedirs(os.path.join(dist, "assets"), exist_ok=True)
-        idx = os.path.join(dist, "index.html")
-        if not os.path.exists(idx):
-            with open(idx, "w") as f:
-                f.write("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-                        "<title>LoomProxy test</title></head><body></body></html>")
-        if not os.listdir(os.path.join(dist, "assets")):
-            with open(os.path.join(dist, "assets", "app.js"), "w") as f:
-                f.write("/* test placeholder */")
-        print("构建 LoomProxy 二进制（首次较慢）...", flush=True)
-        r = subprocess.run(
-            ["go", "build", "-o", target, "."],
-            cwd=REPO_ROOT,
-            env={**os.environ, "CGO_ENABLED": "1"},
-        )
-        assert r.returncode == 0, "go build 失败，请先在仓库根目录 make go-build"
+    # 每次会话重建：夹具声明与 Go 源码的变更不该被缓存的二进制悄悄带过（增量编译很快）
+    target = os.path.join(REPO_ROOT, "loomproxy-fakegateway")
+    # go:embed 需要 web/dist 存在占位（gitignored），补一个空的避免编译失败
+    dist = os.path.join(REPO_ROOT, "web", "dist")
+    os.makedirs(os.path.join(dist, "assets"), exist_ok=True)
+    idx = os.path.join(dist, "index.html")
+    if not os.path.exists(idx):
+        with open(idx, "w") as f:
+            f.write("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+                    "<title>LoomProxy test</title></head><body></body></html>")
+    if not os.listdir(os.path.join(dist, "assets")):
+        with open(os.path.join(dist, "assets", "app.js"), "w") as f:
+            f.write("/* test placeholder */")
+    print("构建测试服务二进制 cmd/fakegateway（首次较慢）...", flush=True)
+    r = subprocess.run(
+        ["go", "build", "-o", target, "./cmd/fakegateway"],
+        cwd=REPO_ROOT,
+        env={**os.environ, "CGO_ENABLED": "1"},
+    )
+    assert r.returncode == 0, "go build ./cmd/fakegateway 失败"
     return target
 
 
@@ -243,7 +245,7 @@ def _spawn():
         "SERVER_HOST": "127.0.0.1",
         "SERVER_PORT": str(port),
         "REDIS_ENABLED": "false",
-        "XMLY_POOL_ENABLED": "false",
+        "POOL_ENABLED": "false",
         "UPSTREAM_CACHE_TTL": "0",
         "NO_PROXY": "localhost,127.0.0.1",
     })
@@ -302,7 +304,7 @@ def admin(server):
 
 @pytest.fixture
 def fake_upstream():
-    """假上游：任意请求返回 {}（qq_luomu search 归一化为空书单，返回 200）。"""
+    """假上游：任意请求返回 {}（假源原样透传，返回 200 并触发计费）。"""
 
     class H(BaseHTTPRequestHandler):
         def do_GET(self):

@@ -37,3 +37,5 @@ tools/migrate-cards/codes.txt
 data/state.json
 
 .workbuddy
+# 测试服务入口产物（test/python 用）
+/loomproxy-fakegateway

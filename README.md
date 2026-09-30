@@ -146,7 +146,7 @@ make vet      # go vet + gofmt 检查
 make clean    # 清理二进制与 web/dist
 ```
 
-- 测试集中在 `test/` 目录（黑盒测试，只测公开 API），含 `httptest` 单元测试与完整 gin 引擎的 HTTP 集成测试；`test/python/` 提供同等 auth/quota 用例的 pytest 黑盒移植版（uv 管理）
+- 测试集中在 `test/` 目录（黑盒测试，只测公开 API），含 `httptest` 单元测试与完整 gin 引擎的 HTTP 集成测试；假数据源夹具在 `testkit/fakesource`（Go 用例经其 init 登记，`test/python/` 的 pytest 移植版经 `cmd/fakegateway` 起子进程）
 - 日志与界面文案使用中文，代码标识符用英文
 - 提交前至少运行 `go vet ./...` 与 `gofmt` 检查
 

@@ -81,6 +81,9 @@ utils/              auth.go jwt.go cache.go（LRU+TTL + Redis）network.go（SSR
                     与格式化通用工具）apikey.go device.go（UA 解析）
 web/                Vue 3 前端（src/）+ 构建产物（dist/，被 embed）
 test/               黑盒测试（包名 test，只测公开 API）
+testkit/fakesource/   假数据源夹具（fake_a/fake_b/fake_c + 各自的声明位），Go 集成测试
+                      与跨进程用例共用；不属于产品功能
+cmd/fakegateway/      测试服务入口：登记假源后走与产品入口相同的 app.Run
 docs/               中文设计文档（历史迁移记录，与现状可能有出入，以代码为准）
 data/               运行时数据：loomproxy.db（或配置的 DB_NAME）、各数据源的 JSON 字典目录
 scripts/ deploy/    部署脚本与 systemd 单元
@@ -187,6 +190,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - `docs/` 里的激进方案（unsafe 字段映射、工作窃取调度等）不落地。
 - 仓库无远端、无 CI；构建纪律靠 Makefile，部署靠 `scripts/deploy.sh` 与 Dockerfile。
 - 历史 Python 版设计文档在 `docs/`；`test/python/` 是 auth/quota 用例的 pytest 黑盒移植版（uv 管理）。
+  移植版起的是真实子进程，而底座产品二进制不带数据源，故用例打的是 `cmd/fakegateway`（假源 `fake_a`/`fake_b`/`fake_c`）；harness 每次会话重建该二进制，`LOOMPROXY_BIN` 可指向自备的产物。
 
 ## 13. 项目知识库（第三大脑）
 
