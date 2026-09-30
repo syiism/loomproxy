@@ -18,6 +18,7 @@ type DatasourceItem struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
 	Category  string           `json:"category"`
+	MediaType string           `json:"media_type,omitempty"` // 源声明的默认媒介（tab 级随 search_tab 下发）
 	SearchTab []base.SearchTab `json:"search_tab"`
 	Files     []string         `json:"files"`
 }
@@ -167,8 +168,11 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 		}
 		item.SearchTab = defaultSearchTabs
 		// 源自有形态（多媒介/多站点）时按声明渲染，底座不做分类分支
-		if meta, ok := base.GetSourceMeta(ds.Name); ok && len(meta.SearchTabs) > 0 {
-			item.SearchTab = meta.SearchTabs
+		if meta, ok := base.GetSourceMeta(ds.Name); ok {
+			item.MediaType = meta.MediaType
+			if len(meta.SearchTabs) > 0 {
+				item.SearchTab = meta.SearchTabs
+			}
 		}
 		// 分类目录 data/{category}/*.json 存在时列出其文件（源自有的分类/元数据字典）
 		item.Files = getFiles(ds.Category)

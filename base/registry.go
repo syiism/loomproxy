@@ -2,6 +2,7 @@ package base
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 )
@@ -28,6 +29,10 @@ type SourceMeta struct {
 	// DataFiles 该源附属的静态数据字典说明（`/data` 总览按文件名展示）。
 	// 底座不知道源各自带什么字典，说明由源声明
 	DataFiles []DataFileDesc `json:"data_files,omitempty"`
+	// MediaType 该源的**默认媒介**（novel/audio/comic/video，见 media.go），仅在响应与 tab
+	// 都没给出类型时兜底。多媒介源（一站同时载小说/听书/漫画/短剧）不要填默认值——那只会把
+	// 误判固化，应由 SearchTabs 逐项声明 + 让响应自带的类型说话。空 = 未声明。
+	MediaType string `json:"media_type,omitempty"`
 }
 
 // DataFileDesc 源声明的附属数据文件说明：Name 为文件名（不含 .json）
@@ -50,11 +55,14 @@ func DescribeDataFile(name string) string {
 	return ""
 }
 
-// SearchTab 数据源搜索分类：TabType 即下游请求的 tabType 参数，BdID 为上游分类标识
+// SearchTab 数据源搜索分类：TabType 即下游请求的 tabType 参数，BdID 为上游分类标识，
+// MediaType 声明该 tab 的媒介形态（novel/audio/comic/video）——多媒介源靠它把
+// 「这次请求读的是哪一类内容」交给骨架记录
 type SearchTab struct {
-	TabType int    `json:"tab_type"`
-	BdID    string `json:"bd_id"`
-	Name    string `json:"name"`
+	TabType   int    `json:"tab_type"`
+	BdID      string `json:"bd_id"`
+	Name      string `json:"name"`
+	MediaType string `json:"media_type,omitempty"`
 }
 
 var (
@@ -67,6 +75,17 @@ var (
 func RegisterSource(m SourceMeta) error {
 	if m.Code == "" || len(m.Actions) == 0 {
 		return fmt.Errorf("RegisterSource: code 与 actions 必填")
+	}
+	// 媒介声明非法直接炸：源包的 init() 全都忽略本函数的 error 返回值（现状），
+	// 只回 error 等于静默放过；与 middleware.Register 确立的「宁启动失败不带病装配」同风格。
+	if !IsValidMedia(m.MediaType) {
+		log.Fatalf("RegisterSource(%s): MediaType %q 非法（只接受 novel/audio/comic/video 或留空）", m.Code, m.MediaType)
+	}
+	for _, t := range m.SearchTabs {
+		if !IsValidMedia(t.MediaType) {
+			log.Fatalf("RegisterSource(%s): tab %d(%s) 的 MediaType %q 非法（只接受 novel/audio/comic/video 或留空）",
+				m.Code, t.TabType, t.Name, t.MediaType)
+		}
 	}
 	if m.Status == 0 {
 		m.Status = 1

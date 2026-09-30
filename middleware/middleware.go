@@ -56,6 +56,10 @@ const (
 const (
 	CtxResolvedBaseURL = "_resolved_baseUrl" // source/baseurl 解析出、app.buildParams 取用
 	CtxRequestID       = "request_id"        // transport/requestid 写入，响应头同名
+	// CtxCallSubject 本次调用的内容维度载体（*base.CallSubject）：app 在进 handler 前挂上，
+	// handler 返回后由 legado.ObserveCall 回填，source/monitor 在 c.Next() 之后读取。
+	// 归属本包而不是 base：base 不依赖 gin，跨包契约键与上面两个保持一致。
+	CtxCallSubject = "call_subject"
 )
 
 // Spec 描述一条待挂载路由，供 Applies 判定与 Build 取参。

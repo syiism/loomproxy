@@ -1,0 +1,248 @@
+package base
+
+import (
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+)
+
+// CallSubject 一次调用的「内容维度」：搜了什么词、读的是哪本书、哪一章、什么媒介。
+//
+// 为什么需要它：监控中间件在 c.Next() 之后只能看到路由与状态码——请求参数里只有
+// bookId/itemId/url 这类**标识**，没有书名与章节名。所以由拿到规范化响应的那一层
+// （base/legado 的 ObserveCall）回填：search/detail 的响应里本就带名称，顺手喂进命名缓存，
+// 后续 content 请求就能靠标识反查出书名、章节名与此前判定的媒介。
+//
+// 字段来源汇总（空串 = 这次没抽到，不是错误）：
+//
+//	形状        Keyword        BookName                 ChapterTitle      Media               ResultCount
+//	bookList    搜索词参数      空（结果灌书名缓存）        空                条目自带或空          结果条数
+//	bookInfo    空             响应的 name（缺则查缓存）   空                响应的类型码/名       1（有 info）
+//	chapterList 空             缓存                       空                缓存                章节目录条数
+//	正文        空             缓存（按书标识或章节标识）   缓存（toc 灌入）     响应的 contentType   正文非空=1
+type CallSubject struct {
+	Keyword      string `json:"keyword"`
+	BookName     string `json:"book_name"`
+	ChapterTitle string `json:"chapter_title"`
+	Media        string `json:"media"` // 枚举见 media.go；空 = 未判定
+	ResultCount  int    `json:"result_count"`
+	// 内部标识：只用于查命名缓存，不对外暴露（面板展示的是名称）
+	BookKey    string `json:"-"`
+	ChapterKey string `json:"-"`
+}
+
+// 内容维度字段的长度上限（rune）。上游书名/章节名可以很长，明细表要保住有界：
+// 超长按 rune 截断（按 byte 截会把中文截成半个字）。
+const (
+	SubjectKeywordMax  = 100
+	SubjectBookMax     = 120
+	SubjectChapterMax  = 200
+	SubjectMediaMax    = 16
+	subjectKeyIdentMax = 512 // 标识只用于查缓存，不落库；这里只做内存保护
+)
+
+// Normalize 统一收口：去空白 + 按 rune 截断，保证写进内存环形缓冲与数据库都界内。
+// 放在抽取末尾做，而不是落库时做——内存缓冲同样长期驻留。
+func (s *CallSubject) Normalize() {
+	s.Keyword = truncateRunes(strings.TrimSpace(s.Keyword), SubjectKeywordMax)
+	s.BookName = truncateRunes(strings.TrimSpace(s.BookName), SubjectBookMax)
+	s.ChapterTitle = truncateRunes(strings.TrimSpace(s.ChapterTitle), SubjectChapterMax)
+	s.Media = truncateRunes(strings.TrimSpace(s.Media), SubjectMediaMax)
+	s.BookKey = truncateRunes(strings.TrimSpace(s.BookKey), subjectKeyIdentMax)
+	s.ChapterKey = truncateRunes(strings.TrimSpace(s.ChapterKey), subjectKeyIdentMax)
+}
+
+// ---------------------------------------------------------------------------
+// 命名缓存：标识 → 名称（+ 媒介），进程内，有上限与 TTL
+// ---------------------------------------------------------------------------
+
+const (
+	// nameCacheCap 单类缓存的最大条目数。按每本书记一章的读法，2 万条足够覆盖
+	// 一个进程生命周期内的活跃内容；超了按 FIFO 淘汰最老的。
+	nameCacheCap = 20000
+	// nameCacheTTL 名称的有效期：书名/章节名几乎不变，但缓存不该无限长大，
+	// 隔一段时间自然过期，也让改了名的书能被刷新。
+	nameCacheTTL = 24 * time.Hour
+)
+
+type namedEntry struct {
+	name  string
+	media string // 只有书维度用：同一本书的媒介不会因请求而异
+	at    time.Time
+}
+
+// nameCache 有界的「标识 → 名称」表。读写都在请求路径上，一把互斥锁足够：
+// 临界区只有一次 map 操作，无 IO。
+type nameCache struct {
+	mu   sync.Mutex
+	m    map[string]namedEntry
+	fifo []string // 首次写入顺序，用于淘汰
+}
+
+func newNameCache() *nameCache {
+	return &nameCache{m: make(map[string]namedEntry, 64)}
+}
+
+func (c *nameCache) put(key, name, media string) {
+	if key == "" || (name == "" && media == "") {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if old, exists := c.m[key]; exists {
+		// 已存在：只补空缺，不覆盖已有名字（新抽到的空值不该把老名字抹掉）
+		if name == "" {
+			name = old.name
+		}
+		if media == "" {
+			media = old.media
+		}
+		c.m[key] = namedEntry{name: name, media: media, at: time.Now()}
+		return
+	}
+	// 满了先腾位：按 FIFO 丢最老的（队列里的键可能已被 get 判过期删掉，
+	// 所以逐个探测、存在的才真删；每次循环至少弹一个，必然终止）
+	for len(c.m) >= nameCacheCap && len(c.fifo) > 0 {
+		k := c.fifo[0]
+		c.fifo = c.fifo[1:]
+		delete(c.m, k)
+	}
+	c.fifo = append(c.fifo, key)
+	c.m[key] = namedEntry{name: name, media: media, at: time.Now()}
+}
+
+func (c *nameCache) get(key string) namedEntry {
+	if key == "" {
+		return namedEntry{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[key]
+	if !ok {
+		return namedEntry{}
+	}
+	if time.Since(e.at) > nameCacheTTL {
+		delete(c.m, key)
+		return namedEntry{}
+	}
+	return e
+}
+
+func (c *nameCache) size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.m)
+}
+
+var (
+	// 键带源码前缀：两个源可能复用同一个 bookId（尤其都拿 URL 当标识时）
+	bookNameCache    = newNameCache()
+	chapterNameCache = newNameCache()
+)
+
+func identKey(source, ident string) string {
+	if ident == "" {
+		return ""
+	}
+	return source + "|" + ident
+}
+
+// RememberBook 登记「书标识 → 书名 + 媒介」；name 与 media 都空时不登记
+func RememberBook(source, ident, name, media string) {
+	bookNameCache.put(identKey(source, ident), name, media)
+}
+
+// LookupBook 反查书名与媒介；未命中返回两个空串
+func LookupBook(source, ident string) (name, media string) {
+	e := bookNameCache.get(identKey(source, ident))
+	return e.name, e.media
+}
+
+// RememberChapter 登记「章节标识 → 章节标题」
+func RememberChapter(source, ident, title string) {
+	chapterNameCache.put(identKey(source, ident), title, "")
+}
+
+// LookupChapter 反查章节标题
+func LookupChapter(source, ident string) string {
+	return chapterNameCache.get(identKey(source, ident)).name
+}
+
+// NameCacheStats 两个命名缓存的当前条目数（供监控页/自检展示缓存是否在工作）
+func NameCacheStats() (books, chapters int) {
+	return bookNameCache.size(), chapterNameCache.size()
+}
+
+// ResetNameCaches 清空命名缓存（仅供集成测试隔离全局态）
+func ResetNameCaches() {
+	bookNameCache = newNameCache()
+	chapterNameCache = newNameCache()
+}
+
+// ---------------------------------------------------------------------------
+// 标识推导
+// ---------------------------------------------------------------------------
+
+// BookIdentFromChapterKey 从章节标识里推导书标识（请求没单独带书标识时的兜底）。
+// 两种常见形态：`bookId|chapterId`，以及带 bookId 查询参数的 URL。
+func BookIdentFromChapterKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if i := strings.Index(key, "|"); i > 0 {
+		return key[:i]
+	}
+	for _, qk := range []string{"bookId", "book_id", "bid", "bookid"} {
+		if v := rawQueryValue(key, qk); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// rawQueryValue 从一段「原始 URL 字符串」里取查询参数（解一次转义）。
+// 不用 url.Parse：这些串常常不是完整合法 URL（相对路径、带未转义中文），
+// 手工切分更稳，也不会因为解析失败就整段丢掉。
+func rawQueryValue(raw, key string) string {
+	if raw == "" || key == "" {
+		return ""
+	}
+	i := strings.Index(raw, "?")
+	if i < 0 {
+		return ""
+	}
+	q := raw[i+1:]
+	if j := strings.IndexAny(q, "#"); j >= 0 {
+		q = q[:j]
+	}
+	for _, kv := range strings.Split(q, "&") {
+		if kv == "" {
+			continue
+		}
+		k, v, found := strings.Cut(kv, "=")
+		if !found || k != key {
+			continue
+		}
+		if dec, err := url.QueryUnescape(v); err == nil {
+			return dec
+		}
+		return v
+	}
+	return ""
+}
+
+// truncateRunes 按 rune 截断（中文安全），n<=0 或未超长时原样返回。
+func truncateRunes(s string, n int) string {
+	if n <= 0 || s == "" {
+		return s
+	}
+	if len(s) <= n { // 字节数不超过就差不到哪去，省一次遍历
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
