@@ -135,15 +135,11 @@ func Init() error {
 	// 组概念已移除（2026-08-09）：删除历史组表（表不存在时忽略错误）
 	_ = DB.Migrator().DropTable("quota_source_groups")
 
-	// 存量卡密明文 → SHA-256 迁移（安全加固）：长度不足 64 的视为旧明文码
-	var rcs []models.RedemptionCode
-	DB.Find(&rcs)
-	for _, rc := range rcs {
-		if len(rc.Code) > 0 && len(rc.Code) < 64 {
-			DB.Model(&models.RedemptionCode{}).Where("id = ?", rc.ID).
-				Update("code", models.HashRedemptionCode(rc.Code))
-		}
-	}
+	// 卡密自 2026-09-29 起按明文落库（换取码可随时查回，见 models.RedemptionCode 与
+	// handlers/admin/redeem.go），因此这里**不做任何启动期哈希**：曾有段「明文 → SHA-256」的
+	// 存量迁移残留，每次重启都会把新生成的明文码重新哈希掉，与明文策略相反，也让
+	// tools/migrate-cards 的回写活不过一次重启（2026-10-01 移除）。
+	// 历史哈希行的兼容在兑换侧：明文未命中时按哈希回落匹配（handlers/userconfig/redeem.go）。
 
 	if err := Seed(DB); err != nil {
 		log.Printf("WARNING: Seed data failed: %v", err)
