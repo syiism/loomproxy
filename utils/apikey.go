@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 const ApiKeyPrefix = "lp_"

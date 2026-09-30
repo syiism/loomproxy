@@ -11,10 +11,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/handlers/catalog"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/handlers/catalog"
+	"loomproxy/models"
 )
 
 func RegisterRoutes(r *gin.Engine) {

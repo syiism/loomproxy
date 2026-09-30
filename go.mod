@@ -1,4 +1,4 @@
-module loomproxy-go
+module loomproxy
 
 go 1.26.5
 

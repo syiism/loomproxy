@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"loomproxy-go/app"
-	"loomproxy-go/base"
-	"loomproxy-go/base/pool"
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/app"
+	"loomproxy/base"
+	"loomproxy/base/pool"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 // insertCallLog 直插监控明细（created_at 可指定，用于跨天分桶）

@@ -18,10 +18,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/models"
-	"loomproxy-go/utils"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // billingEnabled 计费开关：AUTH_ENABLED=false 的开放部署下不做用户级计费

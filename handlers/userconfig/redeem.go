@@ -10,10 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/handlers/catalog"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/handlers/catalog"
+	"loomproxy/models"
 )
 
 // 兑换限频：每用户每分钟最多 5 次尝试；连续失败 10 次锁定 1 小时（内存计数，重启清零）

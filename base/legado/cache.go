@@ -3,7 +3,7 @@ package legado
 import (
 	"time"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 // upstreamCacheTTL 读取全局配置的上游响应缓存时长（UPSTREAM_CACHE_TTL，秒）。

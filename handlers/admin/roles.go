@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
 )
 
 var roleCodePattern = regexp.MustCompile(`^[a-z0-9_]+$`)

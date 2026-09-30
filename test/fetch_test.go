@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"loomproxy-go/base"
+	"loomproxy/base"
 )
 
 func TestFetchJSONWithPooledBuffer(t *testing.T) {

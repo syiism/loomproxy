@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"loomproxy-go/models"
+	"loomproxy/models"
 )
 
 // deviceOf 把库记录还原为 Provider 视角的号（Ident + Attrs + 额度台账）

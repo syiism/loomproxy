@@ -5,10 +5,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/db"
-	"loomproxy-go/gate"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/gate"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
 )
 
 type sourceConfigItem struct {

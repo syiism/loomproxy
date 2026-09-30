@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 var autoBlockState = struct {

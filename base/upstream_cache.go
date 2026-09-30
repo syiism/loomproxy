@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 // 上游响应短 TTL 缓存（纯内存，自包含实现，避免 base → utils → legado → base 的循环依赖）。

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"loomproxy-go/base"
-	"loomproxy-go/conf"
+	"loomproxy/base"
+	"loomproxy/conf"
 )
 
 // setupConf 初始化测试用配置（conf.Config 为指针，未经 Load 时为 nil）

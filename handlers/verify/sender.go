@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/db"
+	"loomproxy/db"
 )
 
 // Sender 发码通道抽象。后期接入发码平台的扩展点：

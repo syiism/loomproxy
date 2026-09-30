@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 func TestApiKeyLifecycle(t *testing.T) {

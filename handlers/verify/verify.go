@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 // 内置场景。新增场景：加常量 + 在 targetValidated 中补充目标格式校验 + 业务侧接入 Check/Consume。

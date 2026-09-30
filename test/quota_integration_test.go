@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"loomproxy-go/db"
-	"loomproxy-go/gate"
-	"loomproxy-go/models"
-	"loomproxy-go/utils"
+	"loomproxy/db"
+	"loomproxy/gate"
+	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // searchA 以指定 token 请求 假数据源A搜索接口

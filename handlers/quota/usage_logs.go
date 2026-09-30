@@ -5,9 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
 )
 
 // MyUsageLogs 当前登录用户自己的额度使用流水（按 id 倒序分页）

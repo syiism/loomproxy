@@ -3,8 +3,8 @@ package admin
 import (
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/base/pool"
-	"loomproxy-go/handlers/auth"
+	"loomproxy/base/pool"
+	"loomproxy/handlers/auth"
 )
 
 // ListPools 号池状态快照：各数据源登记的号池（活跃/冷备/周期耗尽/死号 + 脱敏号明细）。

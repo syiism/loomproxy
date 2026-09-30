@@ -6,7 +6,7 @@ package test
 import (
 	"testing"
 
-	"loomproxy-go/db"
+	"loomproxy/db"
 )
 
 func TestSQLiteJournalModeWAL(t *testing.T) {

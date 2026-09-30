@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 // 上游 IP 代理池 + 请求头轮换：

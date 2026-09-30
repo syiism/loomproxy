@@ -1,6 +1,6 @@
 package legado
 
-import "loomproxy-go/base"
+import "loomproxy/base"
 
 type BookItem struct {
 	BookId      string `json:"bookId"`

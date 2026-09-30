@@ -4,7 +4,7 @@ package test
 // 这里只做导入期登记与常量别名，供本包用例引用。
 
 import (
-	"loomproxy-go/testkit/fakesource"
+	"loomproxy/testkit/fakesource"
 )
 
 const (

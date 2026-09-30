@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"loomproxy-go/app"
+	"loomproxy/app"
 )
 
 func main() {

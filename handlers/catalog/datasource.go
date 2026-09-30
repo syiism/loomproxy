@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"sort"
 
-	"loomproxy-go/base"
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/gate"
-	"loomproxy-go/models"
-	"loomproxy-go/utils"
+	"loomproxy/base"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/gate"
+	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 type DatasourceItem struct {

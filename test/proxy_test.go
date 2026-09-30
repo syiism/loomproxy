@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"loomproxy-go/base"
-	"loomproxy-go/conf"
+	"loomproxy/base"
+	"loomproxy/conf"
 )
 
 // fakeProxy 返回一个伪装成 HTTP 代理的测试服务器：不真正转发，直接返回标记响应

@@ -23,11 +23,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/app"
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/utils"
+	"loomproxy/app"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/utils"
 )
 
 const (

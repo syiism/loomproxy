@@ -5,8 +5,8 @@ import (
 	"sort"
 	"sync"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/lifecycle"
+	"loomproxy/conf"
+	"loomproxy/lifecycle"
 )
 
 // 号池注册表：数据源包把自建池登记进来（通常在源包 init/装配阶段），

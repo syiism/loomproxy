@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
 )
 
 // 卡密字符集：Crockford Base32 去歧义（无 I/L/O/U）

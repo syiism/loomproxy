@@ -1,7 +1,7 @@
 package legado
 
 import (
-	"loomproxy-go/base"
+	"loomproxy/base"
 )
 
 type ContentResponse struct {

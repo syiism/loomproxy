@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"loomproxy-go/base"
-	"loomproxy-go/conf"
+	"loomproxy/base"
+	"loomproxy/conf"
 )
 
 type fakeHandler struct {

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/models"
+	"loomproxy/models"
 )
 
 // 系统设置读取缓存：避免热路径（如 base.Fetch 的按数据源代理判定）每请求查库。

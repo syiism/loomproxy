@@ -12,7 +12,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"loomproxy-go/db"
+	"loomproxy/db"
 )
 
 // roleCodesOf 直接查库返回用户当前的全部角色 code

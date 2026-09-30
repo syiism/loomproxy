@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 type contextKey string

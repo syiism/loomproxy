@@ -11,11 +11,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/base"
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/models"
-	"loomproxy-go/utils"
+	"loomproxy/base"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 func recoveryMiddleware() gin.HandlerFunc {

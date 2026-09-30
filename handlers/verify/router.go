@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 // ok/fail 与 handlers/auth.Ok/Fail 同构的响应信封；verify 不能反向 import auth

@@ -9,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/models"
+	"loomproxy/conf"
+	"loomproxy/models"
 )
 
 // TokenCookieName 登录态 Cookie 名，值为 JWT（与 Authorization Bearer 相同）

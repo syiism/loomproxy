@@ -5,7 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"loomproxy-go/models"
+	"loomproxy/models"
 )
 
 // ReplaceUserRole 将用户角色整体替换为单个角色（角色单选模型，user_roles 表仍保留多行能力）。

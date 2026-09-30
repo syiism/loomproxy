@@ -7,11 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/base"
-	"loomproxy-go/db"
-	"loomproxy-go/gate"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
+	"loomproxy/base"
+	"loomproxy/db"
+	"loomproxy/gate"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
 )
 
 type InterfaceCost struct {

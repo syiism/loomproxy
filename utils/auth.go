@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
+	"loomproxy/conf"
+	"loomproxy/db"
 )
 
 type AuthException struct {

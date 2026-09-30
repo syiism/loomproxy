@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"loomproxy-go/base"
+	"loomproxy/base"
 )
 
 // TestDrainWaitsInflightFlush 回归：淘汰批（50 条）异步落库飞行中时，

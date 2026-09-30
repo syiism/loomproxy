@@ -9,10 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/base"
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
+	"loomproxy/base"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
 )
 
 type monitorRow struct {

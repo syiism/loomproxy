@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/models"
+	"loomproxy/models"
 )
 
 // IP 黑名单读取缓存：避免全局中间件每请求查库。

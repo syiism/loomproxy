@@ -13,8 +13,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"loomproxy-go/app"
-	"loomproxy-go/testkit/fakesource"
+	"loomproxy/app"
+	"loomproxy/testkit/fakesource"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"time"
 
-	"loomproxy-go/models"
+	"loomproxy/models"
 )
 
 // lastActiveMinInterval LastActiveAt 更新的最小间隔，避免每次请求都写库

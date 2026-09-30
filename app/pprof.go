@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/handlers/auth"
+	"loomproxy/handlers/auth"
 )
 
 // registerPprofRoutes 挂载 Go 运行时 profiling 端点，整组由 AdminRequired 保护——

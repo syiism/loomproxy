@@ -3,8 +3,8 @@ package pool
 import (
 	"time"
 
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 // ConfigInfo 号池运行参数快照

@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"loomproxy-go/base"
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/base"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 // Config 号池运行参数（零值字段取 DefaultConfig 的对应值）

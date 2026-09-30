@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 // 熔断器（按上游 host 维度）：连续失败达到阈值后开启，

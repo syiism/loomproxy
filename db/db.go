@@ -13,8 +13,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/models"
+	"loomproxy/conf"
+	"loomproxy/models"
 )
 
 var DB *gorm.DB

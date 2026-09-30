@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 // 动态代理池（API 来源，如 https://proxy.scdn.io/api/get_proxy.php?protocol=socks5&count=20&country_code=CN）：

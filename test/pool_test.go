@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"loomproxy-go/base/pool"
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/base/pool"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 const (

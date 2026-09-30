@@ -10,9 +10,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 // TestUserRolesDedupOnSQLite 回归：user_roles 去重 SQL 原为 MySQL 多表删除语法

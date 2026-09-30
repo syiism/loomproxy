@@ -14,11 +14,11 @@ import (
 	"github.com/go-playground/validator/v10"
 	"gorm.io/gorm"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/verify"
-	"loomproxy-go/models"
-	"loomproxy-go/utils"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/handlers/verify"
+	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 type registerRequest struct {

@@ -8,10 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"loomproxy-go/db"
-	"loomproxy-go/gate"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/gate"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
 )
 
 var quotaScopes = map[string]bool{

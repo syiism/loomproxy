@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"loomproxy-go/base"
-	"loomproxy-go/conf"
-	"loomproxy-go/utils"
+	"loomproxy/base"
+	"loomproxy/conf"
+	"loomproxy/utils"
 )
 
 type FileInfo struct {

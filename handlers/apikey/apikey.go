@@ -10,10 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/auth"
-	"loomproxy-go/models"
-	"loomproxy-go/utils"
+	"loomproxy/db"
+	"loomproxy/handlers/auth"
+	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 const maxKeysPerUser = 10

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"loomproxy-go/db"
-	"loomproxy-go/models"
+	"loomproxy/db"
+	"loomproxy/models"
 )
 
 func TestRedeemLegacyHashFallback(t *testing.T) {

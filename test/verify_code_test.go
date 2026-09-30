@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"loomproxy-go/db"
-	"loomproxy-go/handlers/verify"
+	"loomproxy/db"
+	"loomproxy/handlers/verify"
 )
 
 // enableVerifyScene 启用指定场景（写设置 + 失效 10s 缓存）

@@ -4,10 +4,10 @@ import (
 	"log"
 	"time"
 
-	"loomproxy-go/base"
-	"loomproxy-go/db"
-	"loomproxy-go/lifecycle"
-	"loomproxy-go/models"
+	"loomproxy/base"
+	"loomproxy/db"
+	"loomproxy/lifecycle"
+	"loomproxy/models"
 )
 
 // monitorRetention 调用明细落库后的保留时长（写入时顺带清理过期记录）

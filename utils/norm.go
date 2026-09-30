@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 func ToString(v interface{}) string {

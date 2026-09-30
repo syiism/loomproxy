@@ -22,7 +22,7 @@ import (
 	"errors"
 	"strings"
 
-	"loomproxy-go/base"
+	"loomproxy/base"
 )
 
 const (

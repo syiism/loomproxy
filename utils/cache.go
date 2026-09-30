@@ -14,7 +14,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"loomproxy-go/conf"
+	"loomproxy/conf"
 )
 
 type cacheEntry struct {

@@ -9,8 +9,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"loomproxy-go/conf"
-	"loomproxy-go/models"
+	"loomproxy/conf"
+	"loomproxy/models"
 )
 
 func seedRoles(db *gorm.DB) error {

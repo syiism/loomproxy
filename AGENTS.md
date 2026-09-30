@@ -24,7 +24,7 @@
 
 | 层 | 技术 |
 |---|---|
-| 语言 | Go 1.26（模块名 `loomproxy-go`，CGO 必需——SQLite 驱动为 `mattn/go-sqlite3`） |
+| 语言 | Go 1.26（模块名 `loomproxy`，CGO 必需——SQLite 驱动为 `mattn/go-sqlite3`。**模块名与产物名是两件事**：二进制、镜像、systemd 单元、部署路径仍一律叫 `loomproxy-go`，不随模块名变动） |
 | Web | Gin |
 | 存储 | GORM + SQLite（默认）/ MySQL / PostgreSQL，由 `DB_TYPE` 切换；Redis 作缓存 |
 | 鉴权 | golang-jwt/v5（HS256）+ bcrypt + 静态与用户级 API Key |
