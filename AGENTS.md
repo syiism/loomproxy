@@ -190,6 +190,9 @@ scripts/ deploy/    部署脚本与 systemd 单元
   落地上收口在 `handleError`：① 所有出口文案过 `sanitizeUpstreamMsg`（含 `://` 一律换「上游请求失败，请稍后重试」）；② `*url.Error`/`net.Error` 判为传输层失败（`isTransportError`）走 502，不再落进「400 + 原文」的参数错误兜底——DNS 分支在前，保留「上游地址不可达/连接被拒绝」这类更具体的友好文案；③ 不含 URL 的本地错误（如参数缺失提示）原样给下游，排障要看得到。回归用例 `test/upstream_error_mask_test.go`。
 - **上游字段兼容**：解析上游响应禁止写死单一字段名，必须多字段兼容读取（`utils.FirstNonEmpty` / `utils.ToString`，数值 ID 一律用 `utils.ToString` 避免科学计数法），拼进 URL 的 ID 必须 `url.QueryEscape`。
 - 日志与界面文案用中文，代码标识符用英文。
+- **手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字**（`EMPTY`/`RANK`/`GROUPS` 这类，SQLite 容忍而 MySQL 报 1064；
+  测试全在 SQLite 上跑，这类错误不会有用例信号，只有生产暴露）。聚合别名统一加 `_count`/`_sum` 后缀：
+  `AS empty_count`、`AS latency_sum`、`AS max_latency`（`handlers/admin/monitor_subjects.go` 即此教训）。
 - **可信代理**：`CreateApp` 中 `SetTrustedProxies(["127.0.0.1","::1"])`——只有本机 nginx 的 `X-Forwarded-For` 参与真实 IP 还原。套 CDN 部署时需同步配置 nginx real_ip（`set_real_ip_from` + `real_ip_header`），否则记录与限流/黑名单口径都会是边缘节点 IP。
 - **前端**（规范见 `.trae/skills/minimalist-ui`）：暖单色配色、衬线标题（Newsreader）+ 几何无衬线（Geist）、1px `#EAEAEA` 边框、Bento 网格、淡彩标签；**禁止** emoji、渐变、重阴影、Inter/Roboto/Lucide。分层：`api/client.js`（fetch 封装：token 注入、401 跳登录、`code!==0` 抛 ApiError）+ `api/index.js`（按域端点方法，页面不拼路径）+ `store.js`（reactive 会话态，路由守卫用 `meta.public`/`meta.admin`）+ `components/`（UiTag/UiModal/UiPagination/UiSpinner/UiEmpty/UiField/UiSwitch/UiTrendChart/VerifyCodeField/PageHeader，标签一律 UiTag）+ `styles.css` 的 `@layer components` 基样类（btn/input/card/tag/table）。新页面复用这些组件，不要再写一次性样式。
 - **系统设置页**（`web/src/pages/admin/Settings.vue`）是卡片聚合而非平铺列表：受管 key 按功能分 5 张卡，卡级 diff 保存（逐 key `PUT /admin/settings/:key`）；不在清单内的 key 落入「自定义配置」兜底卡。**seed 新增设置 key 时要同步把字段加进前端 GROUPS 的对应分组**（或确认走兜底卡）。

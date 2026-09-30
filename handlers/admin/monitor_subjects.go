@@ -61,7 +61,9 @@ type subjectAgg struct {
 	Success int64  `json:"success"`
 	Latency int64  `json:"latency"`
 	Max     int64  `json:"max"`
-	Empty   int64  `json:"empty"`
+	// Empty 别名不能写成 `AS empty`：EMPTY 是 MySQL 8.0 保留字，SQLite 容忍 → 用例测不出来，
+	// 生产 MySQL 上直接 1064。查询里的别名见 GetMonitorSubjects 的 Select。
+	Empty int64 `gorm:"column:empty_count" json:"empty"`
 }
 
 // GetMonitorSubjects 内容维度榜单：某个搜索词/书名/章节/媒介在窗口内被调用得怎么样。
@@ -101,7 +103,7 @@ func GetMonitorSubjects(c *gin.Context) {
 		Select(dim.column+" AS name, source, COUNT(*) AS total, "+
 			"SUM(CASE WHEN status >= 200 AND status < 300 THEN 1 ELSE 0 END) AS success, "+
 			"COALESCE(SUM(latency_ms), 0) AS latency, COALESCE(MAX(latency_ms), 0) AS max, "+
-			"SUM(CASE WHEN status >= 200 AND status < 300 AND result_count = 0 THEN 1 ELSE 0 END) AS empty").
+			"SUM(CASE WHEN status >= 200 AND status < 300 AND result_count = 0 THEN 1 ELSE 0 END) AS empty_count").
 		Where(cond, args...).
 		Group(dim.column + ", source").
 		Scan(&aggs).Error; err != nil {
