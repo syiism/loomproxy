@@ -39,3 +39,6 @@ data/state.json
 .workbuddy
 # 测试服务入口产物（test/python 用）
 /loomproxy-fakegateway
+
+# 本地代理工作区（方案与记忆文档，不入库）
+.qoder/
