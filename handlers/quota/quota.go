@@ -237,7 +237,7 @@ func Dashboard(c *gin.Context) {
 		resp.ActiveUsers = gate.ActiveUsersToday("")
 		// 今日调用次数取接口监控口径（今日落库明细 + 内存环中今日记录），
 		// 覆盖全部调用；原流水行数只统计计费调用，口径过窄。
-		// 归档表只含 7 天前数据，与今日无关
+		// 归档表只含已过保留期的历史数据（未设保留期时为空），与今日无关
 		resp.CallCount = monitorCallsToday()
 	}
 

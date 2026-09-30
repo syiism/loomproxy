@@ -30,7 +30,8 @@ type monitorRow struct {
 }
 
 // lifetimeCounts 各接口的历史累计调用次数：永久归档（api_call_stats）
-// + 保留期内尚未清理的明细（api_call_logs）
+// + 尚未清理的明细（api_call_logs）。默认 MONITOR_RETENTION_DAYS=0 时明细即全量、归档为空，
+// 设了保留期才有「已归档」的那部分——两种模式下都不重不漏
 func lifetimeCounts() map[string]int64 {
 	m := make(map[string]int64)
 	var stats []models.ApiCallStat
@@ -154,11 +155,12 @@ func GetMonitorHistory(c *gin.Context) {
 	})
 }
 
-// trendDays 趋势图覆盖的天数（与 api_call_logs 明细保留期 7 天一致）
+// trendDays 趋势图的展示窗口（天）。这是展示口径，与明细保留期无关：
+// 明细默认永久保留（MONITOR_RETENTION_DAYS=0），设了保留期也只影响清理，不改这张图的天数
 const trendDays = 7
 
-// GetMonitorTrend 近 7 天调用趋势：按天 × 数据源聚合 api_call_logs 明细。
-// 口径说明：api_call_stats 永久归档不带时间维度，按天趋势只能来自保留期内的明细；
+// GetMonitorTrend 近 trendDays 天调用趋势：按天 × 数据源聚合 api_call_logs 明细。
+// 口径说明：api_call_stats 永久归档不带时间维度，按天趋势只能来自尚未清理的明细；
 // 日期分桶用服务器本地时区（与明细 created_at 口径一致）。
 func GetMonitorTrend(c *gin.Context) {
 	// 日期函数按方言分流（postgres 没有 date(col) 函数，用 ::date 转换）

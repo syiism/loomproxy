@@ -5,13 +5,20 @@ import (
 	"time"
 
 	"loomproxy/base"
+	"loomproxy/conf"
 	"loomproxy/db"
 	"loomproxy/lifecycle"
 	"loomproxy/models"
 )
 
-// monitorRetention 调用明细落库后的保留时长（写入时顺带清理过期记录）
-const monitorRetention = 7 * 24 * time.Hour
+// monitorRetention 调用明细的保留时长；<=0 返回 0，表示永久保留且不做清理
+func monitorRetention() time.Duration {
+	days := conf.Config.MonitorRetentionDays
+	if days <= 0 {
+		return 0
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
 
 // initMonitorPersistence 注册监控明细的落库链路：
 // 内存环形缓冲淘汰时批量落库；服务收到关闭指令时内存中剩余明细兜底落库
@@ -44,13 +51,19 @@ func persistCallLogs(calls []base.RecentCall) {
 		return
 	}
 	log.Printf("监控明细落库 %d 条", len(rows))
-	purgeExpiredCallLogs()
+	PurgeExpiredCallLogs()
 }
 
-// purgeExpiredCallLogs 清理超过保留期的明细：删除前先按 数据源/接口 聚合
-// 累加到 api_call_stats 永久归档（明细会过期，累计次数保留）
-func purgeExpiredCallLogs() {
-	cutoff := time.Now().Add(-monitorRetention)
+// PurgeExpiredCallLogs 清理超过保留期的明细：删除前先按 数据源/接口 聚合
+// 累加到 api_call_stats 永久归档（明细会过期，累计次数保留）。
+// 保留期 <=0（默认永久）时整段 no-op——既不聚合也不删除，归档表保持为空、明细表即全量。
+// 导出供集成测试按配置驱动清理语义。
+func PurgeExpiredCallLogs() {
+	retention := monitorRetention()
+	if retention <= 0 {
+		return
+	}
+	cutoff := time.Now().Add(-retention)
 
 	type aggRow struct {
 		Source     string

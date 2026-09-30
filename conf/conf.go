@@ -50,6 +50,10 @@ type ConfMgr struct {
 	DataDir      string
 	DataFileGlob string
 
+	// MonitorRetentionDays 接口调用明细（api_call_logs）的保留天数；
+	// <=0 表示永久保留且不做清理（默认），>0 时过期明细先聚合归档再删除
+	MonitorRetentionDays int
+
 	AuthEnabled   bool
 	APIKeys       []string
 	AuthWhitelist []string
@@ -221,6 +225,8 @@ func Load() {
 
 		DataDir:      envStr("DATA_DIR", "data"),
 		DataFileGlob: envStr("DATA_FILE_GLOB", "*.json"),
+
+		MonitorRetentionDays: envInt("MONITOR_RETENTION_DAYS", 0),
 
 		AuthEnabled:   envBool("AUTH_ENABLED", false),
 		APIKeys:       envList("API_KEYS", ""),

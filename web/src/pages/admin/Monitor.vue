@@ -22,7 +22,7 @@
       </div>
     </div>
 
-    <!-- 近 7 天调用趋势（api_call_logs 明细按天×数据源聚合，与明细保留期一致） -->
+    <!-- 近 7 天调用趋势（api_call_logs 明细按天×数据源聚合；7 天是展示窗口，与明细保留期无关） -->
     <div class="card reveal mb-6">
       <div class="text-sm font-medium mb-3">近 7 天调用趋势</div>
       <UiTrendChart :days="trend.days" :sources="trend.sources" :rows="trend.rows" />
@@ -94,7 +94,7 @@
       <input v-model="historyFilter.username" placeholder="调用者" class="input input-sm sm:w-32 font-mono" @keydown.enter="loadHistory(1)">
       <button @click="loadHistory(1)" class="btn-ghost btn-sm">筛选</button>
     </div>
-    <div class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留 7 天）</div>
+    <div class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留期由环境变量 MONITOR_RETENTION_DAYS 决定，默认永久）</div>
     <div class="table-wrap reveal overflow-x-auto">
       <table class="table-base">
         <thead>

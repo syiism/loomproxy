@@ -3,8 +3,8 @@ package models
 import "time"
 
 // ApiCallLog 数据源接口调用明细（监控用，与额度计费无关）。
-// 由内存环形缓冲淘汰时批量落库 + 服务关停时兜底落库，
-// 保留期内由写入方顺带清理（默认 7 天）。
+// 由内存环形缓冲淘汰时批量落库 + 服务关停时兜底落库。
+// 保留期由 MONITOR_RETENTION_DAYS 决定：默认 0=永久保留且不清理，>0 时写入方顺带清理。
 type ApiCallLog struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	Username  string    `gorm:"size:64;index" json:"username"` // 调用者用户名（API Key/匿名为空）
