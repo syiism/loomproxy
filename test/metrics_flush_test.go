@@ -35,7 +35,7 @@ func TestDrainWaitsInflightFlush(t *testing.T) {
 
 	// 写满 250 条触发淘汰：最旧 50 条离环并启动异步落库（阻塞在 flusherRelease）
 	for i := 0; i < 250; i++ {
-		base.RecordCall("fake_c", "search", "", "1.2.3.4", 200, time.Millisecond)
+		base.RecordCall("fake_c", "search", "", "1.2.3.4", 200, time.Millisecond, nil)
 	}
 	<-flusherStarted
 
@@ -80,7 +80,7 @@ func TestFlushedCountsForLifetime(t *testing.T) {
 
 	// 触发一次淘汰（250 条 = 200 保留 + 50 淘汰）
 	for i := 0; i < 250; i++ {
-		base.RecordCall("fake_c", "search", "", "1.2.3.4", 200, time.Millisecond)
+		base.RecordCall("fake_c", "search", "", "1.2.3.4", 200, time.Millisecond, nil)
 	}
 
 	flushed, total := base.FlushedCounts()

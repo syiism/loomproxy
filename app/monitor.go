@@ -37,13 +37,18 @@ func persistCallLogs(calls []base.RecentCall) {
 	rows := make([]models.ApiCallLog, 0, len(calls))
 	for _, rc := range calls {
 		rows = append(rows, models.ApiCallLog{
-			Username:  rc.Username,
-			IP:        rc.IP,
-			Source:    rc.Source,
-			Action:    rc.Action,
-			Status:    rc.Status,
-			LatencyMs: rc.LatencyMs,
-			CreatedAt: rc.Time,
+			Username:     rc.Username,
+			IP:           rc.IP,
+			Source:       rc.Source,
+			Action:       rc.Action,
+			Status:       rc.Status,
+			LatencyMs:    rc.LatencyMs,
+			CreatedAt:    rc.Time,
+			Keyword:      rc.Keyword,
+			BookName:     rc.BookName,
+			ChapterTitle: rc.ChapterTitle,
+			Media:        rc.Media,
+			ResultCount:  rc.ResultCount,
 		})
 	}
 	if err := db.DB.Create(&rows).Error; err != nil {

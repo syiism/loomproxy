@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"loomproxy/base"
+	"loomproxy/base/legado"
 	"loomproxy/base/pool"
 	"loomproxy/conf"
 	"loomproxy/db"
@@ -150,7 +151,18 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 		info := makeEndpoint(handler)
 		h := handler
 
+		// 源名与动作：路径形如 /{source}/{action}
+		source, action := "", ""
+		if parts := strings.SplitN(strings.TrimPrefix(info.Path, "/"), "/", 2); len(parts) == 2 {
+			source, action = parts[0], parts[1]
+		}
+
 		handlerFunc := func(c *gin.Context) {
+			// 内容维度载体：进 handler 前挂上（monitor 中间件在 c.Next() 之后才读它），
+			// handler 返回后由 legado.ObserveCall 按标准信封回填
+			subject := &base.CallSubject{}
+			c.Set(middleware.CtxCallSubject, subject)
+
 			params := buildParams(c, h.GetQueryParams())
 			if uid, exists := c.Get("user_id"); exists {
 				if id, ok := uid.(uint); ok {
@@ -161,10 +173,10 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 
 			// data_files handler 从路径提取 source/name 参数
 			if h.GetName() == "data_files" {
-				source := c.Param("source")
+				dataSource := c.Param("source")
 				name := c.Param("name")
-				if source != "" {
-					parts := []string{source}
+				if dataSource != "" {
+					parts := []string{dataSource}
 					if name != "" {
 						parts = append(parts, name)
 					}
@@ -187,14 +199,13 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 					return
 				}
 			}
+			// 控制面端点（source 为空）没有内容维度可抽
+			if source != "" {
+				legado.ObserveCall(source, params, result, subject)
+			}
 			c.JSON(http.StatusOK, result)
 		}
 
-		// 源名与动作：路径形如 /{source}/{action}
-		source, action := "", ""
-		if parts := strings.SplitN(strings.TrimPrefix(info.Path, "/"), "/", 2); len(parts) == 2 {
-			source, action = parts[0], parts[1]
-		}
 		// 单路由链：成员与顺序全部来自各中间件包的 Def（Applies 过滤 + Order 排序），
 		// 这里不再逐行 append——加中间件不碰本文件，见 middleware/all/all.go
 		spec := middleware.Spec{

@@ -36,7 +36,11 @@ func monitorMiddleware(source, action string) gin.HandlerFunc {
 		username, _ := c.Get("username")
 		uname, _ := username.(string)
 		status := c.Writer.Status()
-		base.RecordCall(source, action, uname, c.ClientIP(), status, time.Since(start))
+		// 内容维度由 app 挂在 context 上、handler 返回后回填；被管控拦下的请求从没进过
+		// handler，取到 nil 就是全空——各维度留空而不是编造一个值
+		raw, _ := c.Get(middleware.CtxCallSubject)
+		subject, _ := raw.(*base.CallSubject)
+		base.RecordCall(source, action, uname, c.ClientIP(), status, time.Since(start), subject)
 		ipblock.RecordFailure(c.ClientIP(), status)
 	}
 }

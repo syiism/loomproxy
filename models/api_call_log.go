@@ -14,6 +14,13 @@ type ApiCallLog struct {
 	Status    int       `json:"status"`                        // HTTP 状态码
 	LatencyMs int64     `json:"latency_ms"`                    // 耗时（毫秒）
 	CreatedAt time.Time `gorm:"index" json:"created_at"`       // 调用时间
+	// 内容维度：由 base/legado 从规范化响应回填，没抽到就是空串（不建 index——
+	// 面板是 contains LIKE 筛选，B-tree 用不上，只换来写放大）
+	Keyword      string `gorm:"size:128" json:"keyword"`         // 搜索词
+	BookName     string `gorm:"size:160" json:"book_name"`       // 书名
+	ChapterTitle string `gorm:"size:255" json:"chapter_title"`   // 章节标题
+	Media        string `gorm:"size:16;index" json:"media_type"` // 媒介：novel/audio/comic/video，空=未判定
+	ResultCount  int    `gorm:"default:0" json:"result_count"`   // 结果条数（0 = 空结果，榜单据此统计）
 }
 
 func (ApiCallLog) TableName() string {

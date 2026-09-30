@@ -26,6 +26,12 @@ type RecentCall struct {
 	Action    string    `json:"action"`
 	Status    int       `json:"status"`
 	LatencyMs int64     `json:"latency_ms"`
+	// 内容维度（由 legado.ObserveCall 从规范化响应回填；没抽到就是空串）
+	Keyword      string `json:"keyword,omitempty"`
+	BookName     string `json:"book_name,omitempty"`
+	ChapterTitle string `json:"chapter_title,omitempty"`
+	Media        string `json:"media,omitempty"` // 枚举见 media.go；空 = 未判定
+	ResultCount  int    `json:"result_count"`
 }
 
 // recentCallsCap 最近调用明细的内存保留条数（环形缓冲）
@@ -62,8 +68,9 @@ func SetMetricsFlusher(f func([]RecentCall)) {
 }
 
 // RecordCall 记录一次数据源接口调用（status 为最终 HTTP 状态码，2xx 视为成功；
-// username 为调用者用户名，匿名/API Key 调用传空串；ip 为调用者客户端 IP）
-func RecordCall(source, action, username, ip string, status int, latency time.Duration) {
+// username 为调用者用户名，匿名/API Key 调用传空串；ip 为调用者客户端 IP；
+// subject 是本次调用的内容维度（搜索词/书名/章节/媒介/结果数），可为 nil——那时各维度留空）
+func RecordCall(source, action, username, ip string, status int, latency time.Duration, subject *CallSubject) {
 	ms := latency.Milliseconds()
 	now := time.Now()
 	metricsState.Lock()
@@ -90,7 +97,7 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 	m.LastCalledAt = &now
 	m.LastStatus = status
 
-	metricsState.recent = append(metricsState.recent, RecentCall{
+	rc := RecentCall{
 		Time:      now,
 		Username:  username,
 		IP:        ip,
@@ -98,7 +105,15 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 		Action:    action,
 		Status:    status,
 		LatencyMs: ms,
-	})
+	}
+	if subject != nil {
+		rc.Keyword = subject.Keyword
+		rc.BookName = subject.BookName
+		rc.ChapterTitle = subject.ChapterTitle
+		rc.Media = subject.Media
+		rc.ResultCount = subject.ResultCount
+	}
+	metricsState.recent = append(metricsState.recent, rc)
 	// 缓冲达到 cap+batch：淘汰最旧 batch 条，异步批量落库（不阻塞请求路径）
 	var evicted []RecentCall
 	var flusher func([]RecentCall)
