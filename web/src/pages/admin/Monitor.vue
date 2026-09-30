@@ -38,6 +38,54 @@
       </button>
     </div>
 
+    <!-- 内容维度榜单：某个搜索词/书名/章节/媒介在窗口内被调用得怎么样。
+         口径 = 库中未清理明细 + 内存中尚未落库的明细（与总表一致） -->
+    <div class="card reveal mb-8">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div class="text-sm font-medium flex-1">内容维度榜</div>
+        <div class="flex items-center gap-1">
+          <button v-for="d in DIMS" :key="d.key" @click="switchDim(d.key)"
+                  :class="subjectDim === d.key ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'">
+            {{ d.label }}
+          </button>
+        </div>
+        <select v-model="subjectDays" class="input input-sm w-24" @change="loadSubjects">
+          <option v-for="d in [1, 3, 7, 30]" :key="d" :value="d">近 {{ d }} 天</option>
+        </select>
+        <input v-model="subjectSource" placeholder="数据源" class="input input-sm w-28 font-mono" @keydown.enter="loadSubjects">
+      </div>
+      <UiEmpty v-if="subjectItems.length === 0" title="该窗口内没有可统计的内容维度"
+               text="只有真正拿到响应、且源声明了媒介的调用才会入榜。" />
+      <div v-else class="table-wrap overflow-x-auto">
+        <table class="table-base">
+          <thead>
+            <tr><th>{{ subjectColumn }}</th><th>次数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th><th>最大耗时</th><th>0 结果</th><th>数据源</th><th>最近</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(s, i) in subjectItems" :key="i">
+              <td>
+                <UiTag v-if="subjectDim === 'media'" :tone="mediaTone(s.name)" :label="s.label || mediaLabel(s.name)" />
+                <div v-else class="max-w-56 truncate text-sm" :title="s.name">{{ s.name }}</div>
+              </td>
+              <td class="font-mono text-xs">{{ s.total }}</td>
+              <td class="font-mono text-xs">{{ s.success }}</td>
+              <td class="font-mono text-xs">{{ s.failed }}</td>
+              <td class="font-mono text-xs" :style="{ color: rateColor(s.success_rate) }">{{ s.success_rate.toFixed(1) }}%</td>
+              <td class="font-mono text-xs">{{ s.avg_latency_ms }}ms</td>
+              <td class="font-mono text-xs">{{ s.max_latency_ms }}ms</td>
+              <td class="font-mono text-xs" :style="s.empty_results > 0 ? 'color:#956400' : ''">{{ s.empty_results }}</td>
+              <td class="font-mono text-xs text-text-muted">{{ (s.sources || []).join(' ') }}</td>
+              <td class="font-mono text-xs text-text-muted whitespace-nowrap">{{ s.last_called_at ? fmtDate(s.last_called_at) : '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="text-xs text-text-muted mt-3 reveal">
+        媒介为「未判定」表示源既没声明、响应也没给类型——补 SourceMeta 的 media_type 或 tab 声明即可归位。
+        命名缓存当前 {{ subjectCache.books }} 本书名 / {{ subjectCache.chapters }} 条章节名。
+      </div>
+    </div>
+
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
     <UiEmpty v-else-if="items.length === 0" title="暂无调用数据" text="有数据源接口被调用后，这里会显示统计。" />
@@ -68,7 +116,7 @@
       <div class="table-wrap reveal overflow-x-auto mb-8">
         <table class="table-base">
           <thead>
-            <tr><th>时间</th><th>调用者</th><th>IP</th><th>数据源</th><th>接口</th><th>状态</th><th>耗时</th></tr>
+            <tr><th>时间</th><th>调用者</th><th>IP</th><th>数据源</th><th>接口</th><th>状态</th><th>耗时</th><th>搜索词</th><th>书名</th><th>章节</th><th>媒介</th><th>结果</th></tr>
           </thead>
           <tbody>
             <tr v-for="(r, i) in recent" :key="i">
@@ -82,6 +130,11 @@
               <td class="font-mono text-xs">{{ r.action }}</td>
               <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}</td>
               <td class="font-mono text-xs">{{ r.latency_ms }}ms</td>
+              <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
+              <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
+              <td><div class="max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
+              <td><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></td>
+              <td class="font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
             </tr>
           </tbody>
         </table>
@@ -92,13 +145,19 @@
       <div class="font-serif text-lg font-medium tracking-tight flex-1">历史调用</div>
       <input v-model="historyFilter.source" placeholder="数据源" class="input input-sm sm:w-32 font-mono" @keydown.enter="loadHistory(1)">
       <input v-model="historyFilter.username" placeholder="调用者" class="input input-sm sm:w-32 font-mono" @keydown.enter="loadHistory(1)">
+      <input v-model="historyFilter.keyword" placeholder="搜索词" class="input input-sm sm:w-32" @keydown.enter="loadHistory(1)">
+      <input v-model="historyFilter.bookName" placeholder="书名" class="input input-sm sm:w-32" @keydown.enter="loadHistory(1)">
+      <select v-model="historyFilter.mediaType" class="input input-sm sm:w-28" @change="loadHistory(1)">
+        <option value="">全部媒介</option>
+        <option v-for="m in MEDIAS" :key="m.value" :value="m.value">{{ m.label }}</option>
+      </select>
       <button @click="loadHistory(1)" class="btn-ghost btn-sm">筛选</button>
     </div>
-    <div class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留期由环境变量 MONITOR_RETENTION_DAYS 决定，默认永久）</div>
+    <div class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留期由环境变量 MONITOR_RETENTION_DAYS 决定，默认永久）。搜索词与书名属用户阅读内容，仅管理员可见。</div>
     <div class="table-wrap reveal overflow-x-auto">
       <table class="table-base">
         <thead>
-          <tr><th>ID</th><th>时间</th><th>调用者</th><th>IP</th><th>数据源</th><th>接口</th><th>状态</th><th>耗时</th></tr>
+          <tr><th>ID</th><th>时间</th><th>调用者</th><th>IP</th><th>数据源</th><th>接口</th><th>状态</th><th>耗时</th><th>搜索词</th><th>书名</th><th>章节</th><th>媒介</th><th>结果</th></tr>
         </thead>
         <tbody>
           <tr v-for="r in history" :key="r.id">
@@ -113,9 +172,14 @@
             <td class="font-mono text-xs">{{ r.action }}</td>
             <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}</td>
             <td class="font-mono text-xs">{{ r.latency_ms }}ms</td>
+            <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
+            <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
+            <td><div class="max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
+            <td><UiTag :tone="mediaTone(r.media_type)" :label="mediaLabel(r.media_type)" /></td>
+            <td class="font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
           </tr>
           <tr v-if="history.length === 0">
-            <td colspan="8" class="text-center text-sm text-text-muted py-6">暂无历史记录（调用超过 200 条后旧记录才会落库）</td>
+            <td colspan="13" class="text-center text-sm text-text-muted py-6">暂无历史记录（调用超过 200 条后旧记录才会落库）</td>
           </tr>
         </tbody>
       </table>
@@ -125,7 +189,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import PageHeader from '../../components/PageHeader.vue'
 import UiTrendChart from '../../components/UiTrendChart.vue'
 import UiTag from '../../components/UiTag.vue'
@@ -147,9 +211,31 @@ const history = ref([])
 const historyPage = ref(1)
 const historyTotal = ref(0)
 const historyPageSize = 20
-const historyFilter = ref({ source: '', username: '' })
+const historyFilter = ref({ source: '', username: '', keyword: '', bookName: '', mediaType: '' })
+const subjectDim = ref('keyword')
+const subjectDays = ref(7)
+const subjectSource = ref('')
+const subjectItems = ref([])
+const subjectCache = ref({ books: 0, chapters: 0 })
 let timer = null
 let resetTimer = null
+
+// 媒介枚举与骨架 base/media.go 对齐；未判定用 gray，让它在一堆淡彩标签里一眼可辨
+const MEDIAS = [
+  { value: 'novel', label: '小说', tone: 'blue' },
+  { value: 'audio', label: '音频', tone: 'yellow' },
+  { value: 'comic', label: '漫画', tone: 'green' },
+  { value: 'video', label: '视频', tone: 'red' },
+]
+const DIMS = [
+  { key: 'keyword', label: '搜索词', column: '搜索词' },
+  { key: 'book', label: '书名', column: '书名' },
+  { key: 'chapter', label: '章节', column: '章节标题' },
+  { key: 'media', label: '媒介', column: '媒介类型' },
+]
+const mediaLabel = (m) => (MEDIAS.find((x) => x.value === m) || {}).label || '未判定'
+const mediaTone = (m) => (MEDIAS.find((x) => x.value === m) || {}).tone || 'gray'
+const subjectColumn = computed(() => (DIMS.find((d) => d.key === subjectDim.value) || {}).column || '名称')
 
 const rateColor = (r) => r >= 95 ? '#346538' : r >= 80 ? '#956400' : '#9F2F2D'
 const statusColor = (s) => s >= 500 ? '#9F2F2D' : s >= 400 ? '#956400' : '#346538'
@@ -185,11 +271,15 @@ const load = async (silent) => {
 
 const loadHistory = async (page) => {
   try {
+    const f = historyFilter.value
     const data = await adminApi.getMonitorHistory({
       page,
       pageSize: historyPageSize,
-      source: historyFilter.value.source || undefined,
-      username: historyFilter.value.username || undefined,
+      source: f.source || undefined,
+      username: f.username || undefined,
+      keyword: f.keyword || undefined,
+      bookName: f.bookName || undefined,
+      mediaType: f.mediaType || undefined,
     })
     history.value = data.list || []
     historyTotal.value = data.total || 0
@@ -197,6 +287,21 @@ const loadHistory = async (page) => {
     nextTick(revealObserve)
   } catch (e) { toast(e.message, 'error') }
 }
+
+const loadSubjects = async () => {
+  try {
+    const data = await adminApi.getMonitorSubjects({
+      dim: subjectDim.value,
+      days: subjectDays.value,
+      source: subjectSource.value || undefined,
+    })
+    subjectItems.value = data.items || []
+    subjectCache.value = data.name_cache || { books: 0, chapters: 0 }
+    nextTick(revealObserve)
+  } catch (e) { toast(e.message, 'error') }
+}
+
+const switchDim = (key) => { subjectDim.value = key; loadSubjects() }
 
 const onReset = async () => {
   if (!resetArmed.value) {
@@ -218,6 +323,6 @@ watch(autoRefresh, (v) => {
   if (v) timer = setInterval(() => load(true), 10000)
 })
 
-onMounted(() => { load(); loadHistory(1); revealObserve() })
+onMounted(() => { load(); loadSubjects(); loadHistory(1); revealObserve() })
 onUnmounted(() => { clearInterval(timer); clearTimeout(resetTimer) })
 </script>

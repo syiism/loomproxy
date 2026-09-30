@@ -75,10 +75,20 @@ export const adminApi = {
   // 接口监控（内存计数，与计费无关）
   getMonitor: () => request('/admin/monitor'),
   getMonitorTrend: () => request('/admin/monitor/trend'),
+  // 内容维度榜单：dim ∈ keyword|book|chapter|media
+  getMonitorSubjects: ({ dim, days, source } = {}) =>
+    request('/admin/monitor/subjects', { query: { dim, days: days || undefined, source: source || undefined } }),
   listPools: () => request('/admin/pools'),
   resetMonitor: () => request('/admin/monitor/reset', { method: 'POST' }),
-  getMonitorHistory: ({ page = 1, pageSize = 20, source, username } = {}) =>
-    request('/admin/monitor/history', { query: { page, page_size: pageSize, source: source || undefined, username: username || undefined } }),
+  getMonitorHistory: ({ page = 1, pageSize = 20, source, username, action, keyword, bookName, chapterTitle, mediaType } = {}) =>
+    request('/admin/monitor/history', {
+      query: {
+        page, page_size: pageSize,
+        source: source || undefined, username: username || undefined, action: action || undefined,
+        keyword: keyword || undefined, book_name: bookName || undefined,
+        chapter_title: chapterTitle || undefined, media_type: mediaType || undefined,
+      },
+    }),
   // 卡密（套餐兑换）
   createRedeemCodes: (payload) => request('/admin/redeem-codes', { method: 'POST', body: payload }),
   listRedeemCodes: ({ page = 1, pageSize = 20, batchNo, status, planId } = {}) =>

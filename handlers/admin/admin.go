@@ -49,6 +49,7 @@ func RegisterRoutes(r *gin.Engine) {
 		g.GET("/usage-logs", ListUsageLogs)
 		g.GET("/monitor", GetMonitor)
 		g.GET("/monitor/trend", GetMonitorTrend)
+		g.GET("/monitor/subjects", GetMonitorSubjects)
 		g.GET("/pools", ListPools)
 		g.GET("/monitor/history", GetMonitorHistory)
 		g.POST("/monitor/reset", ResetMonitor)

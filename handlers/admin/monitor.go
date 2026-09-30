@@ -137,6 +137,23 @@ func GetMonitorHistory(c *gin.Context) {
 	if username := c.Query("username"); username != "" {
 		q = q.Where("username = ?", username)
 	}
+	if act := c.Query("action"); act != "" {
+		q = q.Where("action = ?", act)
+	}
+	// 内容维度：文本类做 contains 筛选（列名取自代码内固定字面量，值走绑定参数；
+	// 转义 LIKE 通配符，用户输入的 % 不该吞掉全表），媒介是枚举、等值匹配
+	if v := c.Query("keyword"); v != "" {
+		q = q.Where("keyword LIKE ? ESCAPE '\\'", "%"+escapeLike(v)+"%")
+	}
+	if v := c.Query("book_name"); v != "" {
+		q = q.Where("book_name LIKE ? ESCAPE '\\'", "%"+escapeLike(v)+"%")
+	}
+	if v := c.Query("chapter_title"); v != "" {
+		q = q.Where("chapter_title LIKE ? ESCAPE '\\'", "%"+escapeLike(v)+"%")
+	}
+	if media := c.Query("media_type"); media != "" {
+		q = q.Where("media = ?", media)
+	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误: "+err.Error())
