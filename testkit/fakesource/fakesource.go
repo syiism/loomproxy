@@ -50,7 +50,7 @@ func newHandler(source, action string) base.Handler {
 	h.Path = "/" + source + "/" + action
 	h.Name = source + "_" + action
 	h.Methods = []string{"GET"}
-	h.QueryParams = []string{"query", "bookId", "itemId", "baseUrl"}
+	h.QueryParams = []string{"key", "query", "tabType", "bookId", "itemId", "baseUrl"}
 	h.Description = "假数据源 " + source + " " + action
 	h.Auth = true
 	return h
@@ -71,19 +71,23 @@ func (h *handler) Handle(ctx context.Context, params map[string]interface{}) (in
 }
 
 // Register 登记三个假源的声明与处理器（同进程只应调用一次，重复登记会 panic）。
+// 每个源额外钉一项「内容维度」的来源，覆盖三条判定路径（见 base/media.go 的优先级）：
+// fake_a 不声明媒介 → 只能由响应自带类型判定；fake_b 声明源默认 audio；
+// fake_c 在 tab 上声明 comic → 由请求的 tabType 判定。
 func Register() {
 	sources := []struct {
 		code, display string
 		legacyGroups  []string
 		searchTabs    []base.SearchTab
 		dataFiles     []base.DataFileDesc
+		mediaType     string
 	}{
-		{A, "假数据源A", []string{LegacyGroup}, nil, nil},
-		{B, "假数据源B", nil, nil, []base.DataFileDesc{{Name: DictFile, Description: "假源字典"}}},
+		{A, "假数据源A", []string{LegacyGroup}, nil, nil, ""},
+		{B, "假数据源B", nil, nil, []base.DataFileDesc{{Name: DictFile, Description: "假源字典"}}, base.MediaAudio},
 		{C, "假数据源C", nil, []base.SearchTab{
 			{TabType: 1, BdID: "fa", Name: "假分类一"},
-			{TabType: 2, BdID: "fb", Name: "假分类二"},
-		}, nil},
+			{TabType: 2, BdID: "fb", Name: "假分类二", MediaType: base.MediaComic},
+		}, nil, ""},
 	}
 	for i, s := range sources {
 		if err := base.RegisterSource(base.SourceMeta{
@@ -97,6 +101,7 @@ func Register() {
 			LegacyGroups: s.legacyGroups,
 			SearchTabs:   s.searchTabs,
 			DataFiles:    s.dataFiles,
+			MediaType:    s.mediaType,
 		}); err != nil {
 			panic("注册假数据源失败: " + err.Error())
 		}

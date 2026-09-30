@@ -68,9 +68,13 @@ base/               核心：Handler 接口与泛型注册表、BaseHandler（�
                     upstream_cache.go（上游短 TTL 缓存，自包含实现——不能用 utils.Cache，
                     会形成 base→utils→base 环）、singleflight.go（导出的 Flight 类型，
                     超时兜底 + 失败结果不共享 + leader panic 防护）、circuit_breaker.go（按 host 熔断）、
-                    metrics.go（调用监控内存计数 + 明细环形缓冲）、proxy.go / proxy_api.go（IP 代理池）
+                    metrics.go（调用监控内存计数 + 明细环形缓冲）、proxy.go / proxy_api.go（IP 代理池）、
+                    subject.go（调用明细的内容维度 + 「标识→名称/媒介」命名缓存，2 万条 24h）、
+                    media.go（媒介枚举 novel/audio/comic/video 与归一：类型码、正文类型、中文名）
 base/pool/          通用号池框架（见 §6）
-base/legado/        Legado 响应 DTO 与五个基础处理器（Search/Detail/Chapter/Content/Explore）
+base/legado/        Legado 响应 DTO 与五个基础处理器（Search/Detail/Chapter/Content/Explore）；
+                    observe.go 按标准信封（bookList/bookInfo/chapterList/contentType）抽取调用明细的
+                    内容维度并喂命名缓存——放这里而不是 base，因为 base 不能反向导入 legado（成环）
 handlers/           控制面 HTTP 端点：auth/ admin/ quota/（额度面板与用量流水）userconfig/
                     apikey/ verify/ catalog/（/datasources 与 /data，能力发现端点）
 sources/            数据面：各源包目录 + all.go（数据源导入集合，即「本部署携带哪些源」；底座为空）
@@ -103,12 +107,19 @@ scripts/ deploy/    部署脚本与 systemd 单元
 **新增数据源必须遵循：**
 
 1. 源包落在 `sources/<源>`，在 `init()` 中：
-   - `base.RegisterSource(base.SourceMeta{Code, Display, Category, Description, SortOrder, Status, Actions, FixedBaseURL, SearchTabs, LegacyGroups, DataFiles})` 声明数据源身份——这是路由对账、seed 播种（`data_sources` / `quota_costs` / `quota_limits` / 套餐关联）的**唯一事实来源**；
+   - `base.RegisterSource(base.SourceMeta{Code, Display, Category, Description, SortOrder, Status, Actions, FixedBaseURL, SearchTabs, LegacyGroups, DataFiles, MediaType})` 声明数据源身份——这是路由对账、seed 播种（`data_sources` / `quota_costs` / `quota_limits` / 套餐关联）的**唯一事实来源**；
    - 每个动作一次 `base.Register(name, factory, priority, metadata)`；
    - `FixedBaseURL: true` 表示上游地址写死在源实现内：该源路由不接收 `baseUrl` 参数、不做用户/平台配置回落，也跳过 SSRF 校验。
    - `SearchTabs` 声明自有搜索分类（多媒介/多站点形态）；不声明则 `/datasources` 下发底座通用 tab。**底座不按分类名做分支**，需要新形态请补声明而不是改 `handlers/catalog`。
    - `LegacyGroups` 声明该源历史所属的平台组码（组概念 2026-08-09 已移除）；seed 据此把存量按组码配置的行展开为本源码并清理组行。
    - `DataFiles` 声明该源附属的静态数据字典（文件名 + 说明）；`/data` 列表的说明列取自声明，底座不内置任何具体文件名。
+   - `MediaType` / `SearchTab[].MediaType` 声明**媒介**（`novel`·`audio`·`comic`·`video`，见 `base/media.go`），
+     监控明细与 `/datasources` 都取此值。判定优先级（`base/legado/observe.go` 的短路链）：
+     **响应自带**（正文 `contentType`、详情 `bookTypeCode`/`bookType`）> **请求 tab 命中的声明** >
+     **同一本书的命名缓存** > **源默认 `MediaType`** > 空（未判定）。
+     多媒介源（一站同时载小说/听书/漫画/短剧）**不要填源默认**，逐个 tab 声明才对；
+     底座**不按 `Category` 推媒介**——那等于把数据源知识塞回骨架。
+     声明值非法在 `RegisterSource` 期 `log.Fatalf`（源包 `init()` 都忽略 error 返回值，只回 error 等于静默放过）。
 2. 处理器实现 `base.Handler`：`Handle(ctx, params)`、`GetPath/GetMethods/GetName/GetDescription/GetQueryParams/AuthRequired`；通常内嵌 `base/legado` 的基础处理器（复用 DTO 与上游缓存 TTL），或内嵌 `base.BaseHandler`（`NewBaseHandler()` 默认 GET、Auth 开、QueryParams 含 `api_key`）。
 3. `sources/all.go` 加一行空白导入——这份清单即「本部署携带哪些源」，`app.go` 只空白导入 `sources` 包本身，不因新源而改。
 4. 路由全部是根级 `/{source}/{action}`，无版本前缀。单路由中间件链由各中间件包的 `Def` 装配
@@ -165,7 +176,8 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - **访问控制**（`gate.DataSourceAccessMiddleware`）：先查数据源 `status`，再按用户生效套餐查 `QuotaPlanDataSource` 关联，不满足 403。
 - **限额解析优先级**：用户数据源级覆盖（`user_quota_overrides`，**追加语义**：生效额度 = 套餐限额 + 覆盖值）> 套餐限额（`quota_limits`）> 不限。
 - **速率限制**（`gate.RateLimitMiddleware`）两种口径并存，优先级：套餐级 > 全局，同级内 窗口计数（`limit_count` + `window_sec`，允许突发）> 固定间隔（`interval`，令牌桶容量 1，不可突发）；套餐级配了任一种即不回退全局。同时作用于 IP 维度与用户维度（key 含 planId），两者都放行才放行；管理员豁免全部；配置直查库，保存即生效。
-- **监控**（`base/metrics.go` + `app/monitor.go`）：内存聚合 + 最近明细环形缓冲，缓冲满 250 条批量落 `api_call_logs`；明细保留期由 `MONITOR_RETENTION_DAYS` 决定（**默认 0=永久，`PurgeExpiredCallLogs` 整段 no-op，归档表恒空、明细表即全量**），设了天数才在删除前按 数据源/接口 聚合累加进 `api_call_stats` 永久归档——`lifetimeCounts` 的「归档 + 明细 + 未落库内存」三口径在两种模式下都不重不漏；`GET /admin/monitor`、`/monitor/trend`（7 天是**展示窗口**、与保留期无关，按天×源聚合，合并内存中未落库明细）、`/monitor/history`、`POST /monitor/reset`。
+- **监控**（`base/metrics.go` + `app/monitor.go`）：内存聚合 + 最近调用环形缓冲，缓冲满 250 条批量落 `api_call_logs`；明细保留期由 `MONITOR_RETENTION_DAYS` 决定（**默认 0=永久，`PurgeExpiredCallLogs` 整段 no-op，归档表恒空、明细表即全量**），设了天数才在删除前按 数据源/接口 聚合累加进 `api_call_stats` 永久归档——`lifetimeCounts` 的「归档 + 明细 + 未落库内存」三口径在两种模式下都不重不漏；`GET /admin/monitor`、`/monitor/trend`（7 天是**展示窗口**、与保留期无关，按天×源聚合，合并内存中未落库明细）、`/monitor/history`、`POST /monitor/reset`。
+- **调用明细的内容维度**（`base/subject.go` + `base/legado/observe.go`）：`api_call_logs` 除路由与状态码外，还记录 `keyword`（搜索词）/`book_name`/`chapter_title`/`media`（媒介）/`result_count`。取值来自**规范化响应**而非请求参数——app 在进 handler 前把 `*base.CallSubject` 挂到 `middleware.CtxCallSubject`，handler 返回后 `ObserveCall` 回填，`source/monitor` 在 `c.Next()` 之后读走（所以被管控拦掉的请求各维度为空）。名称靠「标识→名称」命名缓存跨请求反查（search 灌入、content 反查），上限 2 万条 / 24h，按 `source|标识` 隔离。查询端：`/admin/monitor/history` 支持 `keyword`/`book_name`/`chapter_title` contains 筛选（LIKE 通配符已转义）与 `media_type` 等值；`GET /admin/monitor/subjects?dim=keyword|book|chapter|media&days=&source=` 出维度榜（含 0 结果次数、涉及数据源数、命名缓存条目数）。
 - **自动拉黑**（`middleware/ipblock/autoblock.go`）：滑动窗口统计数据源路由的 403/429，达阈值写黑名单（`source=auto`）；回环地址永不自动拉黑；开关与阈值走系统设置（`auto_block_enabled`·`auto_block_threshold`·`auto_block_window_sec`）。
 - 历史字段名注意：`quota_costs` / `quota_cost_plans` / `user_quota_overrides` 的 `group_code` 列**实际存的是数据源码**（组概念已移除，启动时按各源 `LegacyGroups` 声明把存量组码行展开为每源一行并删除组行；无声明则组行留在库中不生效）。同理，本部署下线的历史源由环境变量 `RETIRED_SOURCES` 声明，seed 据此清理其在各配置表的存量行（`db.cleanupRemovedSources`，历史用量流水保留）。
 
@@ -191,6 +203,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - `baseURLCheckMiddleware` 对所有注册路由校验 `base_url`（`utils.IsSafeURL`：仅 http/https，DNS 解析后拒绝回环/私有/保留 IP，含 IPv6）。**按来源区别对待**：请求参数与用户个人配置严格校验；**平台默认配置视为管理员可信来源**，允许指向本机/内网（用于同机部署数据源项目）。声明 `FixedBaseURL` 的源整体跳过。
 - 密码 bcrypt 哈希；用户软删除，其用户名/邮箱进入黑名单（注册与建用户查重走 `Unscoped()`，冲突返回 409 提示「已被注销账号占用」）；邮箱可空但唯一。
 - 号池与设备凭证（`pool_devices.attrs`）属上游签名凭证：接口响应与日志只出脱敏值（保留前 8 后 4），管理面板不展示原值。
+- **调用明细含用户阅读内容**（搜索词/书名/章节名/媒介）：属敏感行为数据，只经 `/admin/*`（后端 `AdminRequired()`）暴露给管理员，不进访问日志、不出网关；默认永久保留（`MONITOR_RETENTION_DAYS=0`）意味着这些记录长期驻库——对外部署前按合规要求设定保留天数。
 - 面板路由守卫在前端，真正可信的权限校验是后端 `AdminRequired()`——后端是唯一信任边界。
 
 ## 12. 已知取舍
