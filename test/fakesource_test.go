@@ -23,6 +23,9 @@ const (
 	fakeA = "fake_a"
 	fakeB = "fake_b"
 	fakeC = "fake_c"
+
+	// fakeLegacyGroup 假源声明的历史平台组码（仅供 seed 迁移用例构造存量行）
+	fakeLegacyGroup = "fake_legacy_group"
 )
 
 // fakeActions 假源声明的动作集：seed 据此播种 quota_costs，app 据此对账路由
@@ -59,20 +62,34 @@ func (h *fakeSourceHandler) Handle(ctx context.Context, params map[string]interf
 }
 
 func init() {
-	sources := []struct{ code, display string }{
-		{fakeA, "假数据源A"},
-		{fakeB, "假数据源B"},
-		{fakeC, "假数据源C"},
+	sources := []struct {
+		code, display string
+		legacyGroups  []string
+		searchTabs    []base.SearchTab
+		dataFiles     []base.DataFileDesc
+	}{
+		// fake_a 声明历史组码：覆盖 seed 按声明展开存量组行的路径
+		{fakeA, "假数据源A", []string{fakeLegacyGroup}, nil, nil},
+		// fake_b 声明附属数据字典：覆盖 /data 的说明取自声明
+		{fakeB, "假数据源B", nil, nil, []base.DataFileDesc{{Name: "fake_dict", Description: "假源字典"}}},
+		// fake_c 声明自有搜索分类：覆盖 /datasources 按声明渲染而非底座缺省
+		{fakeC, "假数据源C", nil, []base.SearchTab{
+			{TabType: 1, BdID: "fa", Name: "假分类一"},
+			{TabType: 2, BdID: "fb", Name: "假分类二"},
+		}, nil},
 	}
 	for i, s := range sources {
 		if err := base.RegisterSource(base.SourceMeta{
-			Code:        s.code,
-			Display:     s.display,
-			Category:    "fake",
-			Description: "集成测试夹具，不属于底座功能",
-			SortOrder:   i + 1,
-			Status:      1,
-			Actions:     fakeActions,
+			Code:         s.code,
+			Display:      s.display,
+			Category:     "fake",
+			Description:  "集成测试夹具，不属于底座功能",
+			SortOrder:    i + 1,
+			Status:       1,
+			Actions:      fakeActions,
+			LegacyGroups: s.legacyGroups,
+			SearchTabs:   s.searchTabs,
+			DataFiles:    s.dataFiles,
 		}); err != nil {
 			panic("注册假数据源失败: " + err.Error())
 		}

@@ -230,13 +230,14 @@ func generateRandomPassword(n int) string {
 
 // SourceSeed 数据源播种声明（app 启动时从 base 注册表注入；db 不反向依赖 base）。
 type SourceSeed struct {
-	Name        string
-	DisplayName string
-	Category    string
-	Description string
-	SortOrder   int
-	Status      int
-	Actions     []string
+	Name         string
+	DisplayName  string
+	Category     string
+	Description  string
+	SortOrder    int
+	Status       int
+	Actions      []string
+	LegacyGroups []string // 历史平台组码，用于展开存量按组配置的行
 }
 
 var sourceSeedProvider func() []SourceSeed
@@ -244,17 +245,23 @@ var sourceSeedProvider func() []SourceSeed
 // SetSourceSeedProvider 注入数据源声明；未注入时数据源相关播种跳过（角色/设置等不受影响）。
 func SetSourceSeedProvider(fn func() []SourceSeed) { sourceSeedProvider = fn }
 
-// removedSources 已下线数据源：底座项目不携带任何书源实现，历史上挂过的源
-// （番茄系、落幕系、uxx、xmly）在此统一清理其在各配置表的存量行。
-// 历史用量流水（api_call_logs / quota_usage_logs）保留不删
-var removedSources = []string{
-	"fq_tutu", "fq_mufan", "fq_xinghai", "fq_luomu", "fq_jingluo", "fq_hg",
-	"qq_luomu", "qm_luomu", "sq_luomu", "uxx", "xmly",
+// retiredSources 本部署声明的已下线数据源码（环境变量 RETIRED_SOURCES，逗号分隔，默认空）。
+// 底座不携带任何书源实现，也就不知道该清理谁的存量行——清单归部署侧，底座只提供清理机制。
+// 历史用量流水（api_call_logs / quota_usage_logs）一律保留不删
+func retiredSources() []string {
+	if conf.Config == nil {
+		return nil
+	}
+	return conf.Config.RetiredSources
 }
 
 // cleanupRemovedSources 清理已下线数据源在各配置表中的存量行（幂等：无行时无操作）。
 // data_sources 为软删除模型，用 Unscoped 硬删；套餐-数据源关联按外键先行清理
 func cleanupRemovedSources(db *gorm.DB) error {
+	removedSources := retiredSources()
+	if len(removedSources) == 0 {
+		return nil
+	}
 	var ids []uint
 	if err := db.Model(&models.DataSource{}).Where("name IN ?", removedSources).Pluck("id", &ids).Error; err != nil {
 		return err
@@ -318,17 +325,27 @@ func cleanupRemovedSources(db *gorm.DB) error {
 // 组概念已于 2026-08-09 移除（quota_costs / quota_cost_plans / user_quota_overrides
 // 的 group_code 字段统一为数据源码），此映射仅用于存量数据迁移；
 // 底座项目的成员源已全部下线，展开为空 = 只清理组行。
-var legacyGroupSources = map[string][]string{
-	"fq": {},
-	"qq": {},
-	"qm": {},
-	"sq": {},
+// legacyGroupSources 历史平台组码 → 成员数据源，由各源的 LegacyGroups 声明聚合。
+// 组概念已于 2026-08-09 移除（quota_costs / quota_cost_plans / user_quota_overrides
+// 的 group_code 统一为数据源码），此映射仅用于存量数据迁移。
+// 底座不携带源，故无声明即无映射：存量组行会留在库中 inert，由携带源的一侧声明补齐。
+func legacyGroupSources() map[string][]string {
+	if sourceSeedProvider == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	for _, src := range sourceSeedProvider() {
+		for _, group := range src.LegacyGroups {
+			out[group] = append(out[group], src.Name)
+		}
+	}
+	return out
 }
 
-// migrateGroupCostRows 将存量按组码（fq/qq/qm/sq）配置的行展开为按数据源码的行
+// migrateGroupCostRows 将存量按历史组码配置的行展开为按数据源码的行
 // （目标行已存在时保留），随后删除组行。幂等：无组行时无操作。
 func migrateGroupCostRows(db *gorm.DB) error {
-	for group, sources := range legacyGroupSources {
+	for group, sources := range legacyGroupSources() {
 		// quota_costs：组行 → 每源一行
 		var costs []models.QuotaCost
 		if err := db.Where("group_code = ?", group).Find(&costs).Error; err != nil {

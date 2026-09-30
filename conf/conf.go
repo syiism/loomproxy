@@ -86,6 +86,10 @@ type ConfMgr struct {
 	PoolRenewBeforeSec int
 	// 维护协程巡检间隔（秒）
 	PoolMaintainSec int
+
+	// RetiredSources 本部署已下线的历史数据源码（逗号分隔，默认空）：启动时清理其在各
+	// 配置表的存量行。底座不携带源实现，无从知道该清理谁的存量行，故清单由部署侧声明
+	RetiredSources []string
 }
 
 var Config *ConfMgr
@@ -248,6 +252,8 @@ func Load() {
 		PoolMaxDead:        envInt("POOL_MAX_DEAD", 10),
 		PoolRenewBeforeSec: envInt("POOL_RENEW_BEFORE_SEC", 300),
 		PoolMaintainSec:    envInt("POOL_MAINTAIN_SEC", 60),
+
+		RetiredSources: envList("RETIRED_SOURCES", ""),
 	}
 
 	// 生产环境（启用鉴权）强制要求修改默认 JWT_SECRET

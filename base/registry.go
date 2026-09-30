@@ -19,6 +19,42 @@ type SourceMeta struct {
 	// FixedBaseURL 声明该源上游地址写死在源实现中（如签名接口、HTML 抓取站）：
 	// 路由不接收 baseUrl 参数，也不做用户/平台配置回落与 SSRF 校验
 	FixedBaseURL bool `json:"fixed_base_url"`
+	// SearchTabs 该源的搜索分类（下游 Legado 的 search_tabs）。缺省用底座通用分类，
+	// 需要自有形态（多媒介、多站点）的源在此声明，避免底座按分类名做分支
+	SearchTabs []SearchTab `json:"search_tabs,omitempty"`
+	// LegacyGroups 该源在历史版本所属的平台组码（组概念 2026-08-09 已移除，现统一按
+	// 数据源码配置）。声明后 seed 把存量按组码的行展开为本源码并清理组行
+	LegacyGroups []string `json:"legacy_groups,omitempty"`
+	// DataFiles 该源附属的静态数据字典说明（`/data` 总览按文件名展示）。
+	// 底座不知道源各自带什么字典，说明由源声明
+	DataFiles []DataFileDesc `json:"data_files,omitempty"`
+}
+
+// DataFileDesc 源声明的附属数据文件说明：Name 为文件名（不含 .json）
+type DataFileDesc struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// DescribeDataFile 按文件名取数据字典说明；未声明则返回空串
+func DescribeDataFile(name string) string {
+	sourceMu.Lock()
+	defer sourceMu.Unlock()
+	for _, m := range sourceMetas {
+		for _, f := range m.DataFiles {
+			if f.Name == name {
+				return f.Description
+			}
+		}
+	}
+	return ""
+}
+
+// SearchTab 数据源搜索分类：TabType 即下游请求的 tabType 参数，BdID 为上游分类标识
+type SearchTab struct {
+	TabType int    `json:"tab_type"`
+	BdID    string `json:"bd_id"`
+	Name    string `json:"name"`
 }
 
 var (

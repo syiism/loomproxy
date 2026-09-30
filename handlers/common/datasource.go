@@ -14,18 +14,12 @@ import (
 	"loomproxy-go/utils"
 )
 
-type SearchTab struct {
-	TabType int    `json:"tab_type"`
-	BdId    string `json:"bd_id"`
-	Name    string `json:"name"`
-}
-
 type DatasourceItem struct {
-	ID        string      `json:"id"`
-	Name      string      `json:"name"`
-	Category  string      `json:"category"`
-	SearchTab []SearchTab `json:"search_tab"`
-	Files     []string    `json:"files"`
+	ID        string           `json:"id"`
+	Name      string           `json:"name"`
+	Category  string           `json:"category"`
+	SearchTab []base.SearchTab `json:"search_tab"`
+	Files     []string         `json:"files"`
 }
 
 type DatasourcesResponse struct {
@@ -51,8 +45,8 @@ func NewDatasourceHandler(_ *base.APIConfig) base.Handler {
 	return h
 }
 
-var defaultSearchTabs = []SearchTab{
-	{TabType: 3, BdId: "2", Name: "小说"},
+var defaultSearchTabs = []base.SearchTab{
+	{TabType: 3, BdID: "2", Name: "小说"},
 }
 
 func listDataFiles(sourceType string) []string {
@@ -172,6 +166,10 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 			Category: ds.Category,
 		}
 		item.SearchTab = defaultSearchTabs
+		// 源自有形态（多媒介/多站点）时按声明渲染，底座不做分类分支
+		if meta, ok := base.GetSourceMeta(ds.Name); ok && len(meta.SearchTabs) > 0 {
+			item.SearchTab = meta.SearchTabs
+		}
 		// 分类目录 data/{category}/*.json 存在时列出其文件（源自有的分类/元数据字典）
 		item.Files = getFiles(ds.Category)
 		data = append(data, item)

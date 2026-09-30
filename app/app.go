@@ -618,7 +618,7 @@ func init() {
 			seeds = append(seeds, db.SourceSeed{
 				Name: m.Code, DisplayName: m.Display, Category: m.Category,
 				Description: m.Description, SortOrder: m.SortOrder, Status: m.Status,
-				Actions: m.Actions,
+				Actions: m.Actions, LegacyGroups: m.LegacyGroups,
 			})
 		}
 		return seeds

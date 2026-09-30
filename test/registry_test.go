@@ -3,11 +3,16 @@ package test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"loomproxy-go/base"
+	"loomproxy-go/conf"
 )
 
 type fakeHandler struct {
@@ -172,5 +177,91 @@ func TestRegisterSourceDeclaration(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("DeclaredSources 缺 test_src_a")
+	}
+}
+
+// TestDatasourcesRendersDeclaredSearchTabs /datasources 的搜索分类取自各源声明：
+// 声明了自有形态的源下发其声明，未声明的回落底座通用分类——底座不按分类名做分支。
+func TestDatasourcesRendersDeclaredSearchTabs(t *testing.T) {
+	srv := newTestServer(t)
+
+	status, env := doJSON(t, srv, http.MethodGet, "/datasources", nil, nil)
+	if status != http.StatusOK || env.Code != 0 {
+		t.Fatalf("GET /datasources 失败（status=%d code=%d msg=%s）", status, env.Code, env.Msg)
+	}
+
+	var items []struct {
+		ID        string           `json:"id"`
+		SearchTab []base.SearchTab `json:"search_tab"`
+	}
+	if err := json.Unmarshal(env.Data, &items); err != nil {
+		t.Fatalf("解析数据源列表失败: %v", err)
+	}
+	tabs := map[string][]base.SearchTab{}
+	for _, it := range items {
+		tabs[it.ID] = it.SearchTab
+	}
+
+	declared, ok := tabs[fakeC]
+	if !ok {
+		t.Fatalf("列表缺 %s（items=%v）", fakeC, items)
+	}
+	if len(declared) != 2 || declared[0].TabType != 1 || declared[1].Name != "假分类二" {
+		t.Fatalf("%s 未下发声明的搜索分类: %+v", fakeC, declared)
+	}
+	if declared[0].BdID != "fa" {
+		t.Fatalf("bd_id 未按声明下发: %+v", declared[0])
+	}
+
+	fallback, ok := tabs[fakeA]
+	if !ok {
+		t.Fatalf("列表缺 %s", fakeA)
+	}
+	if len(fallback) != 1 || fallback[0].TabType != 3 {
+		t.Fatalf("%s 未回落底座通用分类: %+v", fakeA, fallback)
+	}
+}
+
+// TestDescribeDataFileFromDeclaration /data 的字典文件说明取自源声明，
+// 底座不内置任何具体数据源的文件名。
+func TestDescribeDataFileFromDeclaration(t *testing.T) {
+	srv := newTestServer(t)
+
+	if got := base.DescribeDataFile("fake_dict"); got != "假源字典" {
+		t.Fatalf("DescribeDataFile 取自声明失败: %q", got)
+	}
+	if got := base.DescribeDataFile("undeclared_dict"); got != "" {
+		t.Fatalf("未声明的文件应返回空串, got %q", got)
+	}
+
+	dir := filepath.Join(conf.Config.DataDir, "fake")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("建数据字典目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fake_dict.json"), []byte(`{"k":"v"}`), 0o644); err != nil {
+		t.Fatalf("写字典文件失败: %v", err)
+	}
+
+	// /data 系列端点直接返回对象本身（不带 code/msg/data 信封）
+	status, raw := doRaw(t, srv, http.MethodGet, "/data/fake", nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET /data/fake status=%d body=%s", status, truncate(string(raw), 200))
+	}
+	var list struct {
+		Source string `json:"source"`
+		Count  int    `json:"count"`
+		Files  []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("解析字典列表失败: %v（body=%s）", err, truncate(string(raw), 300))
+	}
+	if len(list.Files) != 1 || list.Files[0].Name != "fake_dict" {
+		t.Fatalf("字典列表异常: %+v", list)
+	}
+	if list.Files[0].Description != "假源字典" {
+		t.Fatalf("说明未按声明下发: %+v", list.Files[0])
 	}
 }

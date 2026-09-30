@@ -42,12 +42,6 @@ type ErrorResponse struct {
 	Available []string `json:"available"`
 }
 
-var fileDescriptions = map[string]string{
-	"moduleMap": "模式映射（tab_type → bd_id）",
-	"sytjs":     "推荐首页 tab_type 列表",
-	"categorys": "分类/榜单配置（genre_tab → 子榜列表）",
-}
-
 type DataFilesHandler struct {
 	base.BaseHandler
 	dataRoot string
@@ -61,7 +55,7 @@ func NewDataFilesHandler(_ *base.APIConfig) base.Handler {
 	h.Name = "data_files"
 	h.Methods = []string{"GET"}
 	h.QueryParams = []string{}
-	h.Description = "静态数据文件。支持 GET /data（总览）、GET /data/fq（目录列表）、GET /data/fq/categorys.json（文件直出）"
+	h.Description = "静态数据文件。支持 GET /data（总览）、GET /data/<分类>（目录列表）、GET /data/<分类>/<文件>.json（文件直出）"
 	h.Auth = false
 	h.dataRoot = conf.Config.DataDir
 	return h
@@ -103,7 +97,7 @@ func (h *DataFilesHandler) fileInfo(path string) FileInfo {
 		Name:        stem,
 		Filename:    name,
 		Size:        size,
-		Description: fileDescriptions[stem],
+		Description: base.DescribeDataFile(stem),
 	}
 }
 
@@ -145,10 +139,10 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 		source = strings.TrimSuffix(source, ".json")
 
 		if len(parts) >= 2 {
-			// /data/fq/categorys.json
+			// /data/<分类>/<文件>.json
 			name := parts[1]
 			if name == "" {
-				// /data/fq/
+				// /data/<分类>/
 				name = source
 				source = parts[0]
 				if name != "" && strings.HasSuffix(name, ".json") {
@@ -179,7 +173,7 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 				hasRawData = true
 			}
 		} else {
-			// /data/fq — 目录列表
+			// /data/<分类> — 目录列表
 			result = h.buildFileList(source)
 		}
 	} else {

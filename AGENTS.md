@@ -89,9 +89,12 @@ scripts/ deploy/    部署脚本与 systemd 单元
 **新增数据源必须遵循：**
 
 1. 源包在 `init()` 中：
-   - `base.RegisterSource(base.SourceMeta{Code, Display, Category, Description, SortOrder, Status, Actions, FixedBaseURL})` 声明数据源身份——这是路由对账、seed 播种（`data_sources` / `quota_costs` / `quota_limits` / 套餐关联）的**唯一事实来源**；
+   - `base.RegisterSource(base.SourceMeta{Code, Display, Category, Description, SortOrder, Status, Actions, FixedBaseURL, SearchTabs, LegacyGroups, DataFiles})` 声明数据源身份——这是路由对账、seed 播种（`data_sources` / `quota_costs` / `quota_limits` / 套餐关联）的**唯一事实来源**；
    - 每个动作一次 `base.Register(name, factory, priority, metadata)`；
    - `FixedBaseURL: true` 表示上游地址写死在源实现内：该源路由不接收 `baseUrl` 参数、不做用户/平台配置回落，也跳过 SSRF 校验。
+   - `SearchTabs` 声明自有搜索分类（多媒介/多站点形态）；不声明则 `/datasources` 下发底座通用 tab。**底座不按分类名做分支**，需要新形态请补声明而不是改 `handlers/common`。
+   - `LegacyGroups` 声明该源历史所属的平台组码（组概念 2026-08-09 已移除）；seed 据此把存量按组码配置的行展开为本源码并清理组行。
+   - `DataFiles` 声明该源附属的静态数据字典（文件名 + 说明）；`/data` 列表的说明列取自声明，底座不内置任何具体文件名。
 2. 处理器实现 `base.Handler`：`Handle(ctx, params)`、`GetPath/GetMethods/GetName/GetDescription/GetQueryParams/AuthRequired`；通常内嵌 `base/legado` 的基础处理器（复用 DTO 与上游缓存 TTL），或内嵌 `base.BaseHandler`（`NewBaseHandler()` 默认 GET、Auth 开、QueryParams 含 `api_key`）。
 3. `handlers/all/all.go` 加一行空白导入。
 4. 路由全部是根级 `/{source}/{action}`，无版本前缀。单路由中间件链：
@@ -133,7 +136,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - 熔断：`CIRCUIT_BREAKER_ENABLED`·`_FAILURES`·`_COOLDOWN`
 - 代理：`UPSTREAM_PROXIES`·`UPSTREAM_PROXY_FILE`（5s 热加载）·`UPSTREAM_PROXY_API`·`_API_SCHEME`·`_API_INTERVAL`·`UPSTREAM_PROXY_CHECK_URL`·`UPSTREAM_UA_ROTATE`；动态池自维护水位（低于 5 自动补充，复验存量 + 逐轮拉新）；**哪些接口走代理由系统设置 `proxy_enabled_sources` 决定**（逗号分隔，支持整源与单接口两种粒度，留空=不限制）
 - 号池：`POOL_ENABLED`·`POOL_COLD_SPARES`·`POOL_MAX_HOT`·`POOL_MAX_DEAD`·`POOL_RENEW_BEFORE_SEC`·`POOL_MAINTAIN_SEC`
-- 数据：`DATA_DIR`·`DATA_FILE_GLOB`·`TZ_OFFSET_HOURS`·`ERROR_CODE`
+- 数据：`DATA_DIR`·`DATA_FILE_GLOB`·`TZ_OFFSET_HOURS`·`ERROR_CODE`·`RETIRED_SOURCES`（本部署已下线的历史数据源码，逗号分隔，默认空；启动时清理其配置表存量行——底座不携带源，清单归部署侧）
 - 鉴权：`AUTH_ENABLED`·`API_KEYS`·`AUTH_WHITELIST`·`JWT_SECRET`（**生产必须改**，启用鉴权时用默认值直接拒绝启动）·`JWT_EXPIRE_HOURS`·`ADMIN_USERNAME`·`ADMIN_PASSWORD`
 - 数据库：`DB_TYPE`（代码默认 **mysql**，`.env.example` 与镜像默认 sqlite）·`DB_HOST/PORT/USER/PASSWORD/NAME/SSLMODE`；SQLite 路径为 `DATA_DIR/DB_NAME.db`，经 DSN 启用 WAL + `busy_timeout` + `SetMaxOpenConns(1)`（读事务升级写会触发不被 busy_timeout 重试的 `SQLITE_BUSY_SNAPSHOT`，单连接彻底规避）
 
@@ -147,7 +150,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - **速率限制**（`quota.RateLimitMiddleware`）两种口径并存，优先级：套餐级 > 全局，同级内 窗口计数（`limit_count` + `window_sec`，允许突发）> 固定间隔（`interval`，令牌桶容量 1，不可突发）；套餐级配了任一种即不回退全局。同时作用于 IP 维度与用户维度（key 含 planId），两者都放行才放行；管理员豁免全部；配置直查库，保存即生效。
 - **监控**（`base/metrics.go` + `app/monitor.go`）：内存聚合 + 最近明细环形缓冲，缓冲满 250 条批量落 `api_call_logs`；清理前按 数据源/接口 聚合累加进 `api_call_stats` 永久归档；`GET /admin/monitor`、`/monitor/trend`（近 7 天按天×源，合并内存中未落库明细）、`/monitor/history`、`POST /monitor/reset`。
 - **自动拉黑**（`app/autoblock.go`）：滑动窗口统计数据源路由的 403/429，达阈值写黑名单（`source=auto`）；回环地址永不自动拉黑；开关与阈值走系统设置（`auto_block_enabled`·`auto_block_threshold`·`auto_block_window_sec`）。
-- 历史字段名注意：`quota_costs` / `quota_cost_plans` / `user_quota_overrides` 的 `group_code` 列**实际存的是数据源码**（组概念已移除，启动时会把存量组码行展开为每源一行并删除组行）。
+- 历史字段名注意：`quota_costs` / `quota_cost_plans` / `user_quota_overrides` 的 `group_code` 列**实际存的是数据源码**（组概念已移除，启动时按各源 `LegacyGroups` 声明把存量组码行展开为每源一行并删除组行；无声明则组行留在库中不生效）。同理，本部署下线的历史源由环境变量 `RETIRED_SOURCES` 声明，seed 据此清理其在各配置表的存量行（`db.cleanupRemovedSources`，历史用量流水保留）。
 
 ## 10. 开发约定
 
