@@ -5,9 +5,11 @@
 
 ## 1. 项目概述
 
-**loomproxy-base** 是 LoomProxy（网络小说书源 API 代理/聚合服务，Go + Gin + GORM + Vue 3）的**底座项目**：只保留平台能力，**不携带任何数据源实现**。
+**loomproxy-base** 是 LoomProxy（Go + Gin + GORM + Vue 3）的**底座项目**：一个**上游接口的代理与治理平台**——代理或内联第三方接口、归一异构响应，并对接口做鉴权、计费、限流、监控与生命周期管理。底座只保留平台能力，**不携带任何上游接口实现**。
 
-对下（上游）它提供一套写书源的完整基础设施——处理器自注册、弹性获取栈（缓存 / 请求合并 / 熔断 / 代理池 / UA 轮换）、SSRF 防护、号池框架；对上（下游）输出统一的 Legado（阅读 App）风格数据，并内置用户系统、额度计费与限流、管理面板。
+**Legado 书源协议是内置的一种下游输出契约，不是项目边界**：`base/legado` 的五动作与字段归一化服务于阅读 App，但同一套骨架同样可以代理音视频、漫画、元数据或任意 HTTP 接口——动作集与输出形状由接口包自己声明，底座不做书源特有的分支。
+
+对下（上游）它提供一套接入接口的完整基础设施——处理器自注册、弹性获取栈（缓存 / 请求合并 / 熔断 / 代理池 / UA 轮换）、SSRF 防护、号池框架；对上（下游）按接口包声明的契约输出（书源形态输出统一的 Legado 风格数据），并内置用户系统、额度计费与限流、管理面板。
 
 底座包含的能力：
 
@@ -204,6 +206,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - `baseURLCheckMiddleware` 对所有注册路由校验 `base_url`（`utils.IsSafeURL`：仅 http/https，DNS 解析后拒绝回环/私有/保留 IP，含 IPv6）。**按来源区别对待**：请求参数与用户个人配置严格校验；**平台默认配置视为管理员可信来源**，允许指向本机/内网（用于同机部署数据源项目）。声明 `FixedBaseURL` 的源整体跳过。
 - 密码 bcrypt 哈希；用户软删除，其用户名/邮箱进入黑名单（注册与建用户查重走 `Unscoped()`，冲突返回 409 提示「已被注销账号占用」）；邮箱可空但唯一。
 - 号池与设备凭证（`pool_devices.attrs`）属上游签名凭证：接口响应与日志只出脱敏值（保留前 8 后 4），管理面板不展示原值。
+- **许可与合规**：代码按 AGPL-3.0 发布（`LICENSE`），使用条件见 `DISCLAIMER.md`。引入新依赖前确认许可证与 AGPL 兼容（`go.mod` 是唯一的依赖清单，别绕过）；不要把凭证、上游签名参数或真实 `.env` 内容写进仓库、文档与测试夹具。`api_call_logs` 的内容维度是用户阅读/调用行为数据，默认永久保留（`MONITOR_RETENTION_DAYS=0`），对外部署前必须按合规要求设定保留期。
 - **调用明细含用户阅读内容**（搜索词/书名/章节名/媒介）：属敏感行为数据，只经 `/admin/*`（后端 `AdminRequired()`）暴露给管理员，不进访问日志、不出网关；默认永久保留（`MONITOR_RETENTION_DAYS=0`）意味着这些记录长期驻库——对外部署前按合规要求设定保留天数。
 - 面板路由守卫在前端，真正可信的权限校验是后端 `AdminRequired()`——后端是唯一信任边界。
 
@@ -215,7 +218,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - `/datasources` 与 `/data` 走 Redis 缓存，管理端相关写操作（数据源 CRUD、套餐关联、用户套餐变更、兑换）调用 `InvalidateDatasourcesCache()` 写时失效。
 - 配额计费按**请求**计数，含上游缓存命中；如需按上游真实调用计费需另改。
 - `docs/` 里的激进方案（unsafe 字段映射、工作窃取调度等）不落地。
-- 仓库无远端、无 CI；构建纪律靠 Makefile，部署靠 `scripts/deploy.sh` 与 Dockerfile。
+- 仓库有远端（`origin = git@gitee.com:syiism/loomproxy.git`，`main` 跟踪 `origin/main`）、无 CI：构建纪律靠 Makefile，部署靠 `scripts/deploy.sh` 与 Dockerfile，受保护路径校验靠本地基线 tag 的三点 diff。**推送策略**：`main`（基座，公开）可由维护者推送；携带数据源的 `sources/*` 分支暂不推送远端。
 - 历史 Python 版设计文档在 `docs/`；`test/python/` 是 auth/quota 用例的 pytest 黑盒移植版（uv 管理）。
   移植版起的是真实子进程，而底座产品二进制不带数据源，故用例打的是 `cmd/fakegateway`（假源 `fake_a`/`fake_b`/`fake_c`）；harness 每次会话重建该二进制，`LOOMPROXY_BIN` 可指向自备的产物。
 
