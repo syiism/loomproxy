@@ -52,8 +52,8 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "verify_provider", Value: "mock", Type: "string", Description: "发码通道：mock=仅打印服务端日志（开发默认）；http=通用 HTTP 模板适配器（配 verify_http_* 对接发码平台）"},
 		{Key: "verify_http_url", Value: "", Type: "string", Description: "http 通道发码接口地址，支持占位符 {{target}} {{code}} {{scene}}"},
 		{Key: "verify_http_method", Value: "POST", Type: "string", Description: "http 通道请求方法"},
-		{Key: "verify_http_headers", Value: "", Type: "string", Description: "http 通道请求头（JSON 对象），如 {\"Authorization\":\"Bearer xx\"}"},
-		{Key: "verify_http_body", Value: "", Type: "string", Description: "http 通道请求体模板，支持 {{target}} {{code}} {{scene}} 占位符"},
+		{Key: "verify_http_headers", Value: "", Type: "json", Description: "http 通道请求头（JSON 对象，保存时校验并压成单行），如 {\"authorization\":\"Bearer xx\",\"content-type\":\"application/json\"}"},
+		{Key: "verify_http_body", Value: "", Type: "json", Description: "http 通道请求体模板（JSON，保存时校验并压成单行），支持 {{target}} {{code}} {{scene}} 占位符"},
 		{Key: "verify_http_success_keyword", Value: "", Type: "string", Description: "http 通道成功判定关键字（响应体需包含，留空=HTTP 2xx 即成功）"},
 		{Key: "auto_block_enabled", Value: "false", Type: "bool", Description: "IP 自动拉黑开关：滑动窗口内 403/429 次数达阈值自动加入黑名单（回环地址永不自动拉黑）"},
 		{Key: "auto_block_threshold", Value: "30", Type: "number", Description: "IP 自动拉黑阈值：窗口内允许的 403/429 次数上限"},
@@ -61,14 +61,27 @@ func seedSettings(db *gorm.DB) error {
 	}
 
 	for _, setting := range settings {
-		var count int64
+		var existing models.SystemSetting
 		// MySQL 中 `key` 是保留字，需用反引号包裹
-		db.Model(&models.SystemSetting{}).Where("`key` = ?", setting.Key).Count(&count)
-		if count == 0 {
+		err := db.Model(&models.SystemSetting{}).Where("`key` = ?", setting.Key).First(&existing).Error
+		if err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return err
+			}
 			if err := db.Create(&setting).Error; err != nil {
 				return err
 			}
 			log.Printf("Created setting: %s", setting.Key)
+			continue
+		}
+		// type 由声明决定（面板不提供改类型的入口）：老库里这些 key 可能仍是 string，
+		// 不对账就会错过保存期的 JSON 校验。只同步 type，不动 value 与 description。
+		if existing.Type != setting.Type {
+			if err := db.Model(&models.SystemSetting{}).Where("`key` = ?", setting.Key).
+				Update("type", setting.Type).Error; err != nil {
+				return err
+			}
+			log.Printf("设置项 %s 的 type 对账为 %s（原 %s）", setting.Key, setting.Type, existing.Type)
 		}
 	}
 	return nil

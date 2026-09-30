@@ -35,6 +35,23 @@
                 :rows="f.rows || 3"
                 :disabled="fieldDisabled(f)"
               ></textarea>
+              <template v-else-if="f.widget === 'json'">
+                <textarea
+                  v-model="form[f.key]"
+                  class="input font-mono leading-relaxed"
+                  :rows="f.rows || 5"
+                  :disabled="fieldDisabled(f)"
+                  spellcheck="false"
+                  @blur="checkJson(f.key)"
+                ></textarea>
+                <div class="mt-2 flex items-center gap-2">
+                  <button type="button" class="btn-ghost btn-sm" :disabled="fieldDisabled(f)" @click="checkJson(f.key)">校验</button>
+                  <button type="button" class="btn-ghost btn-sm" :disabled="fieldDisabled(f)" @click="formatJson(f.key)">格式化</button>
+                  <span v-if="jsonState[f.key]" class="min-w-0 flex-1 truncate text-xs"
+                        :class="jsonState[f.key].ok ? 'text-pale-green-fg' : 'text-pale-red-fg'"
+                        :title="jsonState[f.key].msg">{{ jsonState[f.key].msg }}</span>
+                </div>
+              </template>
               <input
                 v-else
                 v-model="form[f.key]"
@@ -95,6 +112,7 @@
             <option value="string">string</option>
             <option value="bool">bool</option>
             <option value="number">number</option>
+            <option value="json">json</option>
           </select>
         </UiField>
         <UiField label="值">
@@ -102,6 +120,8 @@
             <option value="true">true</option>
             <option value="false">false</option>
           </select>
+          <textarea v-else-if="createForm.type === 'json'" v-model="createForm.value"
+                    class="input font-mono leading-relaxed" rows="4" spellcheck="false"></textarea>
           <input v-else v-model="createForm.value" class="input font-mono" required>
         </UiField>
         <UiField label="说明">
@@ -118,6 +138,8 @@
             <option value="true">true</option>
             <option value="false">false</option>
           </select>
+          <textarea v-else-if="editItem.type === 'json'" v-model="editForm.value"
+                    class="input font-mono leading-relaxed" rows="5" spellcheck="false"></textarea>
           <input v-else v-model="editForm.value" class="input font-mono" required>
         </UiField>
         <div v-if="editItem.description" class="text-xs text-text-muted">{{ editItem.description }}</div>
@@ -185,8 +207,8 @@ const GROUPS = [
       { key: 'verify_provider', label: '通道', widget: 'select', options: ['mock', 'http'] },
       { key: 'verify_http_url', label: '请求地址', widget: 'textarea', rows: 2, gate: 'providerHttp' },
       { key: 'verify_http_method', label: '请求方法', widget: 'text', gate: 'providerHttp' },
-      { key: 'verify_http_headers', label: '请求头（JSON）', widget: 'textarea', rows: 3, gate: 'providerHttp' },
-      { key: 'verify_http_body', label: '请求体模板', widget: 'textarea', rows: 3, gate: 'providerHttp' },
+      { key: 'verify_http_headers', label: '请求头（JSON）', widget: 'json', rows: 4, gate: 'providerHttp' },
+      { key: 'verify_http_body', label: '请求体模板（JSON）', widget: 'json', rows: 6, gate: 'providerHttp' },
       { key: 'verify_http_success_keyword', label: '成功判定关键字', widget: 'text', gate: 'providerHttp' },
     ],
   },
@@ -228,6 +250,34 @@ const customEntries = computed(() => list.value.filter(s => !MANAGED_KEYS.has(s.
 // gate: 'providerHttp' 表示仅 http 通道可编辑（mock 下置灰）
 const fieldDisabled = (f) => f.gate === 'providerHttp' && form.value.verify_provider === 'mock'
 
+// json widget：本地即时校验（后端同样会校验并压缩，这里只是让坏值当场可见）
+const jsonState = ref({})
+
+const checkJson = (key) => {
+  const raw = String(form.value[key] ?? '').trim()
+  if (!raw) { jsonState.value = { ...jsonState.value, [key]: { ok: true, msg: '空值合法（该能力未启用）' } }; return true }
+  try {
+    const parsed = JSON.parse(raw)
+    const compact = JSON.stringify(parsed)
+    jsonState.value = { ...jsonState.value, [key]: { ok: true, msg: `合法 JSON（保存时压缩为单行 ${compact.length} 字节）` } }
+    return true
+  } catch (e) {
+    jsonState.value = { ...jsonState.value, [key]: { ok: false, msg: '非法 JSON：' + e.message } }
+    return false
+  }
+}
+
+const formatJson = (key) => {
+  const raw = String(form.value[key] ?? '').trim()
+  if (!raw) return
+  try {
+    form.value[key] = JSON.stringify(JSON.parse(raw), null, 2)
+    checkJson(key)
+  } catch (e) {
+    jsonState.value = { ...jsonState.value, [key]: { ok: false, msg: '无法格式化：' + e.message } }
+  }
+}
+
 // 表单值 → 落库字符串（bool 转 'true'/'false'，文本 trim）
 const serialize = (v) => (typeof v === 'boolean' ? String(v) : String(v ?? '').trim())
 
@@ -251,6 +301,7 @@ const load = async () => {
     settingsMap.value = map
     form.value = f
     snapshot.value = snap
+    jsonState.value = {}
   } catch (e) {
     error.value = e.message
   }
@@ -263,10 +314,16 @@ const saveGroup = async (g) => {
   if (savingGroup.value) return
   const changes = g.fields.filter(f => settingsMap.value[f.key] && serialize(form.value[f.key]) !== snapshot.value[f.key])
   if (changes.length === 0) return
+  // JSON 型先本地过一遍：坏值不发请求，免得整卡只有这一项被后端拒掉后界面与库对不上
+  for (const f of changes.filter(f => f.widget === 'json')) {
+    if (!checkJson(f.key)) { toast(`「${f.label}」不是合法 JSON，已取消保存`, 'error'); return }
+  }
   savingGroup.value = g.title
   try {
     for (const f of changes) {
-      await adminApi.updateSetting(f.key, serialize(form.value[f.key]))
+      const res = await adminApi.updateSetting(f.key, serialize(form.value[f.key]))
+      // 后端对 JSON 型会压缩落库：回填压缩值，界面显示的即为库里的实际内容
+      if (f.widget === 'json' && res && typeof res.value === 'string') form.value[f.key] = res.value
     }
     for (const f of changes) {
       snapshot.value[f.key] = serialize(form.value[f.key])

@@ -367,7 +367,8 @@ type updateSettingRequest struct {
 	Value string `json:"value"`
 }
 
-// UpdateSetting 更新设置项
+// UpdateSetting 更新设置项。type='json' 的 key 在校验通过后压缩为单行落库，
+// 校验失败直接 400——坏值留在库里只会等到运行时才炸。
 func UpdateSetting(c *gin.Context) {
 	key := c.Param("key")
 	var req updateSettingRequest
@@ -376,17 +377,28 @@ func UpdateSetting(c *gin.Context) {
 		return
 	}
 
-	result := db.DB.Model(&models.SystemSetting{}).Where("`key` = ?", key).Update("value", req.Value)
+	var setting models.SystemSetting
+	if err := db.DB.Where("`key` = ?", key).First(&setting).Error; err != nil {
+		auth.Fail(c, http.StatusNotFound, "设置项不存在")
+		return
+	}
+	value := req.Value
+	if setting.Type == "json" {
+		normalized, err := normalizeJSONValue(value)
+		if err != nil {
+			auth.Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		value = normalized
+	}
+
+	result := db.DB.Model(&models.SystemSetting{}).Where("`key` = ?", key).Update("value", value)
 	if result.Error != nil {
 		auth.Fail(c, http.StatusInternalServerError, "更新失败")
 		return
 	}
-	if result.RowsAffected == 0 {
-		auth.Fail(c, http.StatusNotFound, "设置项不存在")
-		return
-	}
 	db.InvalidateSettingCache(key)
-	auth.Ok(c, gin.H{"message": "已更新"})
+	auth.Ok(c, gin.H{"message": "已更新", "value": value})
 }
 
 // ListQuotaPlans 额度套餐列表
