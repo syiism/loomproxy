@@ -93,10 +93,11 @@
         <div class="card">
           <div class="text-sm text-text-muted mb-4">在安装了「阅读」App 的设备上，点击下方按钮将自动拉起 App 并导入书源。若未拉起，可复制直链到 App 内手动导入（网络导入/粘贴）。</div>
           <div class="flex gap-3">
-            <button class="btn-primary" :disabled="!legadoImportUrl" @click="onImportLegado">导入书源</button>
-            <button class="btn-ghost" :disabled="!legadoImportUrl" @click="copyImportUrl">复制直链</button>
+            <button class="btn-primary" :disabled="!bookSourceReady" @click="onImportLegado">导入书源</button>
+            <button class="btn-ghost" :disabled="!bookSourceReady" @click="copyImportUrl">复制直链</button>
           </div>
-          <div v-if="!legadoImportUrl" class="text-xs text-text-muted mt-3">管理员尚未配置书源直链</div>
+          <div v-if="!bookSourceReady" class="text-xs text-text-muted mt-3">书源文件尚未就位（由部署侧托管在 <span class="font-mono">/data/shuyuan/bookSource.json</span>）</div>
+          <div v-else class="text-xs text-text-muted mt-3 font-mono break-all">{{ bookSourceUrl }}</div>
         </div>
       </section>
 
@@ -201,7 +202,9 @@ const revokeOthersOpen = ref(false)
 const sourceConfigs = ref(null)
 const sourceConfigDirty = ref(false)
 const savingSourceConfig = ref(false)
-const legadoImportUrl = ref('')
+// 书源导入：绝对地址由当前站点拼（同源即用户真实到达的域），就绪与否由后端看文件
+const bookSourceUrl = ref('')
+const bookSourceReady = ref(false)
 const redeemCode = ref('')
 const redeeming = ref(false)
 const keys = ref([])
@@ -417,19 +420,21 @@ const onChangePwd = async () => {
 const loadImportConfig = async () => {
   try {
     const data = await userConfigApi.getImportConfig()
-    legadoImportUrl.value = data.legado_import_url || ''
-  } catch (e) { /* 未配置时隐藏入口 */ }
+    const path = data.book_source_path || ''
+    bookSourceUrl.value = path ? window.location.origin + path : ''
+    bookSourceReady.value = !!data.ready && !!bookSourceUrl.value
+  } catch (e) { /* 取不到就按未就位处理 */ }
 }
 
 const onImportLegado = () => {
-  if (!legadoImportUrl.value) return
-  window.location.href = 'legado://import/auto?src=' + encodeURIComponent(legadoImportUrl.value)
+  if (!bookSourceReady.value) return
+  window.location.href = 'legado://import/auto?src=' + encodeURIComponent(bookSourceUrl.value)
 }
 
 const copyImportUrl = async () => {
-  if (!legadoImportUrl.value) return
+  if (!bookSourceReady.value) return
   try {
-    await navigator.clipboard.writeText(legadoImportUrl.value)
+    await navigator.clipboard.writeText(bookSourceUrl.value)
     toast('直链已复制，可到阅读 App 内手动导入', 'success')
   } catch (e) {
     toast('复制失败，请长按链接手动复制', 'error')

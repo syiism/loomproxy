@@ -7,8 +7,8 @@
       </template>
     </PageHeader>
 
-    <!-- 书源导入入口提示：仅在管理员配置了书源直链时展示 -->
-    <router-link v-if="hasImportUrl" to="/profile" class="card reveal card-hover mb-6 md:mb-8 flex items-center justify-between gap-3 group">
+    <!-- 书源导入入口提示：仅在书源文件已托管就位时展示 -->
+    <router-link v-if="bookSourceReady" to="/profile" class="card reveal card-hover mb-6 md:mb-8 flex items-center justify-between gap-3 group">
       <div class="flex items-center gap-3 min-w-0">
         <span class="font-mono text-xs uppercase tracking-wider text-text-muted shrink-0">提示</span>
         <span class="text-sm">阅读书源在个人中心，点击前往导入。</span>
@@ -191,7 +191,7 @@ const logsTotal = ref(0)
 const logsPage = ref(1)
 const logsPageSize = ref(10)
 const logsLoading = ref(true)
-const hasImportUrl = ref(false)
+const bookSourceReady = ref(false)
 
 const subtitle = computed(() => {
   return isAdmin.value
@@ -329,11 +329,11 @@ const load = async () => {
 onMounted(() => { revealObserve() })
 load()
 
-// 书源直链未配置时隐藏入口提示
+// 书源文件未就位时隐藏入口提示（托管在 /data/shuyuan/bookSource.json）
 const loadImportConfig = async () => {
   try {
     const data = await userConfigApi.getImportConfig()
-    hasImportUrl.value = !!data.legado_import_url
+    bookSourceReady.value = !!data.ready
     nextTick(revealObserve)
   } catch (e) { /* 未配置时隐藏提示 */ }
 }

@@ -185,7 +185,6 @@ const GROUPS = [
       { key: 'maintenance_mode', label: '维护模式', widget: 'switch' },
       { key: 'announcement', label: '站内公告', widget: 'textarea', rows: 4 },
       { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources' },
-      { key: 'legado_import_url', label: '书源导入链接', widget: 'text' },
     ],
   },
   {

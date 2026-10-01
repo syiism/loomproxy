@@ -78,6 +78,11 @@
 - 响应统一 `{code,msg,data}`；对下游错误文案必须脱敏（收口在 `handleError` + `sanitizeUpstreamMsg`）。
 - 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露），条件里的列名优先用 GORM map 形式让它加引号。
 - 设置项的 `type` 是行为声明不是展示标签（`string`/`bool`/`number`/`json`），`json` 型前后端双侧校验。
+- **下发位置是部署事实，不做设置项**：书源 JSON 走静态托管 `GET /data/shuyuan/bookSource.json`（免鉴权、原样直出），
+  `GET /user/import-config` 只回路径与 `ready`（判据是 `json.Valid`）；绝对地址由前端 `window.location.origin` 拼，
+  不信 `X-Forwarded-Host`。旧的 `legado_import_url` 已进 seed 废弃键清单、启动硬删。
+- **审计类写入不许吞错**：只为留档而写的表（如 `redemption_logs`）插入失败必须打服务端日志；
+  列宽按**用户输入的最坏形态**定，不是按我们自己生成的形态定。SQLite 不检查列宽，这类只在 MySQL 暴露。
 - 前端复用既有组件与 `@layer components` 基样类；`reveal` 动画依赖观察时机（先 `loading=false` 再 `nextTick(revealObserve)`）。
 - 黑盒测试一律放 `test/`，集成用例禁止 `t.Parallel()`；改动完成后 `make build` 且必须 `git commit`。
 - 详情：[`docs/规范/开发约定.md`](docs/规范/开发约定.md)

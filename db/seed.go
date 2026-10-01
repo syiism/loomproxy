@@ -40,7 +40,6 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "default_role", Value: "user", Type: "string", Description: "新用户默认角色"},
 		{Key: "default_quota_plan", Value: "free", Type: "string", Description: "新用户默认额度套餐"},
 		{Key: "maintenance_mode", Value: "false", Type: "bool", Description: "维护模式"},
-		{Key: "legado_import_url", Value: "", Type: "string", Description: "书源 JSON 直链（个人中心「导入书源」按钮，legado:// 拉起阅读 App）"},
 		{Key: "jwt_expire_hours", Value: "168", Type: "number", Description: "登录 token 有效时长（小时），-1 表示永不过期；用户可在个人中心设置自己的时长覆盖"},
 		{Key: "proxy_enabled_sources", Value: "", Type: "string", Description: "启用 IP 代理池的数据源/接口，逗号分隔（如 novel_a/chapter 单接口、novel_a 整源）；留空表示不限制（全部走代理）"},
 		{Key: "rank_public_sources", Value: "", Type: "string", Description: "允许普通用户查看排行榜的数据源，逗号分隔的数据源码；留空=不对普通用户开放任何榜单。管理员不受此名单限制（面板也可在「数据源列表」逐源开关）"},
@@ -63,15 +62,17 @@ func seedSettings(db *gorm.DB) error {
 
 	// 已废弃的设置键：策略换了形态时把旧键清掉，否则它会以「未被管理的 key」形式
 	// 赖在面板「自定义配置」卡里，看起来像一个还能生效的开关。
-	// rank_public_enabled（bool 总开关）被 rank_public_sources（按源白名单）取代。
-	for _, gone := range []string{"rank_public_enabled"} {
+	// rank_public_enabled（bool 总开关）被 rank_public_sources（按源白名单）取代；
+	// legado_import_url（管理员手填书源直链）被静态托管 /data/shuyuan/bookSource.json 取代——
+	// 下发位置是部署事实，不该是一个可能被填错、又没人校验的设置项。
+	for _, gone := range []string{"rank_public_enabled", "legado_import_url"} {
 		var n int64
 		db.Model(&models.SystemSetting{}).Unscoped().Where("`key` = ?", gone).Count(&n)
 		if n > 0 {
 			if err := db.Unscoped().Where("`key` = ?", gone).Delete(&models.SystemSetting{}).Error; err != nil {
 				return err
 			}
-			log.Printf("已移除废弃设置项: %s（由按源白名单取代）", gone)
+			log.Printf("已移除废弃设置项: %s（原因见上方注释，留着它会以「未被管理的 key」形式赖在面板里）", gone)
 		}
 	}
 

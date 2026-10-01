@@ -8,6 +8,7 @@ import (
 	"loomproxy/db"
 	"loomproxy/gate"
 	"loomproxy/handlers/auth"
+	"loomproxy/handlers/catalog"
 	"loomproxy/models"
 )
 
@@ -110,14 +111,14 @@ func UpdateSourceConfigs(c *gin.Context) {
 	auth.Ok(c, gin.H{"message": "已更新"})
 }
 
-// GetImportConfig 返回面向登录用户的导入配置（书源直链等）
+// GetImportConfig 返回面向登录用户的导入配置：书源文件由静态托管（/data/shuyuan/bookSource.json），
+// 这里只给相对路径与「是否就位」。绝对地址由前端用 window.location.origin 拼——浏览器地址栏才是
+// 用户真实到达的域，服务端转发的 X-Forwarded-Host 可能被伪造，用它拼链接等于把用户交给那个域。
 func GetImportConfig(c *gin.Context) {
-	var setting models.SystemSetting
-	url := ""
-	if err := db.DB.Where("`key` = ?", "legado_import_url").First(&setting).Error; err == nil {
-		url = setting.Value
-	}
-	auth.Ok(c, gin.H{"legado_import_url": url})
+	auth.Ok(c, gin.H{
+		"book_source_path": catalog.BookSourcePath(),
+		"ready":            catalog.BookSourceReady(),
+	})
 }
 
 func RegisterRoutes(r *gin.Engine) {

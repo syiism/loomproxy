@@ -216,6 +216,32 @@ func (h *DataFilesHandler) buildFileList(source string) FileListResponse {
 	}
 }
 
+// 书源下发：面板「导入书源」不再读管理员手填的直链，而是指向这里的固定约定路径，
+// 文件由静态托管（GET /data/<分类>/<文件>.json）直出。部署要换书源就是替换这个文件，
+// 不必碰设置、也不必重新编译。
+const (
+	BookSourceDir  = "shuyuan"
+	BookSourceFile = "bookSource"
+)
+
+// BookSourcePath 对外暴露的相对路径（前端用 window.location.origin 拼成绝对地址：
+// 浏览器地址栏才是用户真实到达的域，服务端转发的 X-Forwarded-Host 可能被伪造）。
+// 托管通道就是本 handler 自己的 /data/<分类>/<文件>.json 形态。
+func BookSourcePath() string {
+	return "/data/" + BookSourceDir + "/" + BookSourceFile + ".json"
+}
+
+// BookSourceReady 书源文件是否已就位。判据用 json.Valid 而不是「文件存在」：
+// 半截的文件会让 App 导入失败，而面板上一切正常——宁可不给按钮。
+func BookSourceReady() bool {
+	path := filepath.Join(conf.Config.DataDir, BookSourceDir, BookSourceFile+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return json.Valid(raw)
+}
+
 func init() {
 	base.Register("data_files", NewDataFilesHandler, 0, map[string]interface{}{
 		"type": "datafiles",
