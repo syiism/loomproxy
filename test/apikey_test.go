@@ -4,16 +4,22 @@ package test
 // 列表掩码 → 撤销失效 → 静态 env 键行为不变。
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"loomproxy/conf"
 	"loomproxy/db"
 	"loomproxy/models"
+	"loomproxy/utils"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestApiKeyLifecycle(t *testing.T) {
@@ -94,7 +100,52 @@ func TestApiKeyLifecycle(t *testing.T) {
 	status, raw = doRaw(t, srv, http.MethodGet, "/fake_a/search"+buildQuery(map[string]string{
 		"query": "测试",
 	}), nil, map[string]string{"X-API-Key": plain})
-	if status != http.StatusUnauthorized {
-		t.Fatalf("撤销后仍可用: status = %d, want 401（body=%s）", status, truncate(string(raw), 200))
+	// 撤销后**带了**这个密钥，所以答案是「无效的 API Key」(403) 而不是「缺少鉴权凭证」(401)——
+	// 两者混为一谈会让调用方以为自己没传参
+	if status != http.StatusForbidden {
+		t.Fatalf("撤销后仍可用: status = %d, want 403（body=%s）", status, truncate(string(raw), 200))
+	}
+	if !strings.Contains(string(raw), "无效的 API Key") {
+		t.Errorf("撤销后的提示应说明密钥无效，实得 %s", truncate(string(raw), 200))
+	}
+}
+
+// TestApiKeyLookupQuotesReservedColumn api_keys.key 是 MySQL 保留字：条件写成裸串
+// Where("key = ?", plain) 会被 GORM 原样下发 → MySQL 报 Error 1064 → 所有 API Key 都被判成
+// 「不存在」。SQLite 容忍裸写，所以用例全绿、只有生产暴露（AGENTS §10）。
+//
+// 这里不连 MySQL（测试环境没有），而是把真实查询路径挂到 DryRun 会话上，
+// 断言**生成出来的 SQL 给列名加了引号**——GORM 在两种方言下都用反引号，
+// 所以这个形状断言对 MySQL 同样成立，且改回裸写就会红。
+func TestApiKeyLookupQuotesReservedColumn(t *testing.T) {
+	newTestServer(t)
+
+	var captured strings.Builder
+	prev := db.DB
+	db.DB = prev.Session(&gorm.Session{DryRun: true, Logger: &sqlSpy{sb: &captured}})
+	t.Cleanup(func() { db.DB = prev })
+
+	_, _ = utils.LookupApiKeyIdentity("lp_not_a_real_key_000000000000000000000000000000")
+	sql := captured.String()
+	if !strings.Contains(sql, "api_keys") {
+		t.Fatalf("未捕获到 api_keys 查询，实得：%q", sql)
+	}
+	if !strings.Contains(sql, "`key`") {
+		t.Errorf("key 列没有加引号，MySQL 会当保留字直接 1064：%s", sql)
+	}
+}
+
+// sqlSpy 只把 Trace 收到的 SQL 记进 buffer，用于断言生成的语句形态
+type sqlSpy struct{ sb *strings.Builder }
+
+func (s *sqlSpy) LogMode(logger.LogLevel) logger.Interface      { return s }
+func (s *sqlSpy) Info(context.Context, string, ...interface{})  {}
+func (s *sqlSpy) Warn(context.Context, string, ...interface{})  {}
+func (s *sqlSpy) Error(context.Context, string, ...interface{}) {}
+func (s *sqlSpy) Trace(_ context.Context, _ time.Time, fc func() (string, int64), _ error) {
+	if s.sb != nil {
+		sql, _ := fc()
+		s.sb.WriteString(sql)
+		s.sb.WriteString("\n")
 	}
 }

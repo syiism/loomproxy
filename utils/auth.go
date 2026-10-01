@@ -32,6 +32,10 @@ func IsWhitelisted(path string) bool {
 	return false
 }
 
+// ErrNoCredential 表示「本次请求压根没带 API Key」，用于把「没带」与「带了但无效」分开：
+// 前者归到统一的缺失提示，后者原样回给调用方。
+var ErrNoCredential = NewAuthException("缺少鉴权凭证（X-API-Key 或 api_key）", 401)
+
 func VerifyAuth(c *gin.Context) error {
 	if !conf.Config.AuthEnabled {
 		return nil
@@ -46,8 +50,14 @@ func VerifyAuth(c *gin.Context) error {
 		return nil
 	}
 
-	if err := verifyAPIKey(c); err == nil {
+	keyErr := verifyAPIKey(c)
+	if keyErr == nil {
 		return nil
+	}
+	// 带了凭证却没通过时说清是哪一个：把「无效的 API Key」统一成「缺少鉴权凭证」，
+	// 调用方会以为自己没传参，而真实原因可能是归属用户被禁用、密钥被撤销，甚至是一条 SQL 报错
+	if keyErr != ErrNoCredential {
+		return keyErr
 	}
 
 	return NewAuthException("缺少鉴权凭证（X-API-Key / api_key / Authorization Bearer）", 401)
@@ -63,7 +73,7 @@ func verifyAPIKey(c *gin.Context) error {
 	}
 
 	if apiKey == "" {
-		return NewAuthException("缺少鉴权凭证（X-API-Key 或 api_key）", 401)
+		return ErrNoCredential
 	}
 
 	// 静态 env 键（管理员级，历史行为不变：匿名不归属用户）

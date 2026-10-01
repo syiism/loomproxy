@@ -48,7 +48,10 @@ func LookupApiKeyIdentity(plain string) (*ApiKeyIdentity, error) {
 		}
 	}
 	var ak models.ApiKey
-	if err := db.DB.Where("key = ?", plain).First(&ak).Error; err != nil {
+	// 条件用 map 形式：GORM 会按方言给列名加引号。裸写 "key = ?" 会被原样下发，
+	// 而 KEY 是 MySQL 保留字 → Error 1064 → 所有 API Key 在 MySQL 部署上直接判成「不存在」
+	// （SQLite 容忍裸写，所以用例全绿、只有生产暴露，见 AGENTS §10）
+	if err := db.DB.Where(map[string]interface{}{"key": plain}).First(&ak).Error; err != nil {
 		return nil, fmt.Errorf("API Key 不存在")
 	}
 	var user models.User
