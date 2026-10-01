@@ -2,6 +2,7 @@ package userconfig
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -180,13 +181,16 @@ func Redeem(c *gin.Context) {
 
 	success := err == nil
 	recordRedeemAttempt(userID, success)
-	db.DB.Create(&models.RedemptionLog{
+	// 审计行写不进去不能改兑换结果，但必须吭声：这张表存在的意义就是留下失败的那几次
+	if logErr := db.DB.Create(&models.RedemptionLog{
 		UserID:     userID,
 		Code:       code,
 		Success:    success,
 		FailReason: failReason,
 		IP:         c.ClientIP(),
-	})
+	}).Error; logErr != nil {
+		log.Printf("ERROR: 写卡密兑换审计日志失败（用户 %d，结果=%v）: %v", userID, success, logErr)
+	}
 	if !success {
 		auth.Fail(c, http.StatusBadRequest, failReason)
 		return

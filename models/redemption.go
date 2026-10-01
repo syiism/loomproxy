@@ -37,11 +37,14 @@ func (RedemptionCode) TableName() string {
 
 // RedemptionLog 卡密兑换尝试日志（含失败，防爆破审计）
 type RedemptionLog struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	UserID     uint      `gorm:"index" json:"user_id"`
-	Code       string    `gorm:"size:32" json:"code"` // 用户输入的原文
+	ID     uint `gorm:"primaryKey" json:"id"`
+	UserID uint `gorm:"index" json:"user_id"`
+	// Code 记用户输入的原文（已归一为大写去空格）：卡码明文是 20 位以内，但粘贴进来
+	// 的历史哈希是 64 位——这列以前只有 32，严格模式下整条 insert 直接失败、
+	// 且调用侧不检查错误，等于「最想留档的那次尝试恰好没留档」
+	Code       string    `gorm:"size:64" json:"code"`
 	Success    bool      `json:"success"`
-	FailReason string    `gorm:"size:64" json:"fail_reason"`
+	FailReason string    `gorm:"size:255" json:"fail_reason"`
 	IP         string    `gorm:"size:64" json:"ip"`
 	CreatedAt  time.Time `gorm:"index" json:"created_at"`
 }
