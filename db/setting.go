@@ -28,8 +28,9 @@ func GetSetting(key string) string {
 	value := ""
 	if DB != nil {
 		var s models.SystemSetting
-		// MySQL 中 `key` 是保留字，需用反引号包裹
-		if err := DB.Where("`key` = ?", key).First(&s).Error; err == nil {
+		// 条件用 map 形式让 GORM 按方言加引号：`key` 在 MySQL 是保留字，而反引号写死会让
+		// PostgreSQL 直接语法报错、错误被吞掉后所有设置都读成空串（见待办清单 P1）
+		if err := DB.Where(map[string]interface{}{"key": key}).First(&s).Error; err == nil {
 			value = s.Value
 		}
 	}

@@ -81,7 +81,7 @@ func CreateSetting(c *gin.Context) {
 	}
 
 	var count int64
-	if err := db.DB.Model(&models.SystemSetting{}).Where("`key` = ?", req.Key).Count(&count).Error; err != nil {
+	if err := db.DB.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": req.Key}).Count(&count).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
 		return
 	}
@@ -113,7 +113,7 @@ func DeleteSetting(c *gin.Context) {
 		return
 	}
 
-	result := db.DB.Where("`key` = ?", key).Delete(&models.SystemSetting{})
+	result := db.DB.Where(map[string]interface{}{"key": key}).Delete(&models.SystemSetting{})
 	if result.Error != nil {
 		auth.Fail(c, http.StatusInternalServerError, "删除失败")
 		return

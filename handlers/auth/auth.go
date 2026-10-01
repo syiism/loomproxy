@@ -93,7 +93,7 @@ func RegisterRoutes(r *gin.Engine) {
 
 func getSettingBool(key string, def bool) bool {
 	var setting models.SystemSetting
-	if err := db.DB.Where("`key` = ?", key).First(&setting).Error; err != nil {
+	if err := db.DB.Where(map[string]interface{}{"key": key}).First(&setting).Error; err != nil {
 		return def
 	}
 	return strings.ToLower(setting.Value) == "true"
@@ -101,7 +101,7 @@ func getSettingBool(key string, def bool) bool {
 
 func getSettingStr(key string, def string) string {
 	var setting models.SystemSetting
-	if err := db.DB.Where("`key` = ?", key).First(&setting).Error; err != nil {
+	if err := db.DB.Where(map[string]interface{}{"key": key}).First(&setting).Error; err != nil {
 		return def
 	}
 	return setting.Value

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/mail"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -413,12 +414,15 @@ func ListRoles(c *gin.Context) {
 // ListSettings 系统设置列表
 func ListSettings(c *gin.Context) {
 	var settings []models.SystemSetting
-	db.DB.Order("`key` ASC").Find(&settings)
+	db.DB.Find(&settings)
+	// 排序放内存里做：`key` 在 MySQL 是保留字要加引号，而反引号是 MySQL 方言、
+	// PostgreSQL 只认双引号——ORDER BY 里怎么写都不跨方言，交给 GORM 又只支持条件形式
+	sort.Slice(settings, func(i, j int) bool { return settings[i].Key < settings[j].Key })
 	auth.Ok(c, settings)
 }
 
 type updateSettingRequest struct {
-	// 不用 required：空值是合法设置（如撤下公告 announcement、清空 legado_import_url）
+	// 不用 required：空值是合法设置（如撤下公告 announcement、清空按源白名单）
 	Value string `json:"value"`
 }
 
@@ -433,7 +437,7 @@ func UpdateSetting(c *gin.Context) {
 	}
 
 	var setting models.SystemSetting
-	if err := db.DB.Where("`key` = ?", key).First(&setting).Error; err != nil {
+	if err := db.DB.Where(map[string]interface{}{"key": key}).First(&setting).Error; err != nil {
 		auth.Fail(c, http.StatusNotFound, "设置项不存在")
 		return
 	}
@@ -447,7 +451,7 @@ func UpdateSetting(c *gin.Context) {
 		value = normalized
 	}
 
-	result := db.DB.Model(&models.SystemSetting{}).Where("`key` = ?", key).Update("value", value)
+	result := db.DB.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": key}).Update("value", value)
 	if result.Error != nil {
 		auth.Fail(c, http.StatusInternalServerError, "更新失败")
 		return

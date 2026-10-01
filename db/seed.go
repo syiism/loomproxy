@@ -67,9 +67,10 @@ func seedSettings(db *gorm.DB) error {
 	// 下发位置是部署事实，不该是一个可能被填错、又没人校验的设置项。
 	for _, gone := range []string{"rank_public_enabled", "legado_import_url"} {
 		var n int64
-		db.Model(&models.SystemSetting{}).Unscoped().Where("`key` = ?", gone).Count(&n)
+		goneCond := map[string]interface{}{"key": gone}
+		db.Model(&models.SystemSetting{}).Unscoped().Where(goneCond).Count(&n)
 		if n > 0 {
-			if err := db.Unscoped().Where("`key` = ?", gone).Delete(&models.SystemSetting{}).Error; err != nil {
+			if err := db.Unscoped().Where(goneCond).Delete(&models.SystemSetting{}).Error; err != nil {
 				return err
 			}
 			log.Printf("已移除废弃设置项: %s（原因见上方注释，留着它会以「未被管理的 key」形式赖在面板里）", gone)
@@ -78,8 +79,8 @@ func seedSettings(db *gorm.DB) error {
 
 	for _, setting := range settings {
 		var existing models.SystemSetting
-		// MySQL 中 `key` 是保留字，需用反引号包裹
-		err := db.Model(&models.SystemSetting{}).Where("`key` = ?", setting.Key).First(&existing).Error
+		// 条件一律用 map 形式：让 GORM 按方言给 `key`（MySQL 保留字）加引号
+		err := db.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": setting.Key}).First(&existing).Error
 		if err != nil {
 			if err != gorm.ErrRecordNotFound {
 				return err
@@ -93,7 +94,7 @@ func seedSettings(db *gorm.DB) error {
 		// type 由声明决定（面板不提供改类型的入口）：老库里这些 key 可能仍是 string，
 		// 不对账就会错过保存期的 JSON 校验。只同步 type，不动 value 与 description。
 		if existing.Type != setting.Type {
-			if err := db.Model(&models.SystemSetting{}).Where("`key` = ?", setting.Key).
+			if err := db.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": setting.Key}).
 				Update("type", setting.Type).Error; err != nil {
 				return err
 			}

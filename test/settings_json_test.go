@@ -18,7 +18,7 @@ import (
 func settingValue(t *testing.T, key string) (value, typ string) {
 	t.Helper()
 	var s models.SystemSetting
-	if err := db.DB.Where("`key` = ?", key).First(&s).Error; err != nil {
+	if err := db.DB.Where(map[string]interface{}{"key": key}).First(&s).Error; err != nil {
 		t.Fatalf("读取设置项 %s 失败: %v", key, err)
 	}
 	return s.Value, s.Type
@@ -93,7 +93,7 @@ func TestSettingsTypeReconcileOnSeed(t *testing.T) {
 	newTestServer(t)
 
 	if err := db.DB.Model(&models.SystemSetting{}).
-		Where("`key` = ?", "verify_http_body").Update("type", "string").Error; err != nil {
+		Where(map[string]interface{}{"key": "verify_http_body"}).Update("type", "string").Error; err != nil {
 		t.Fatalf("模拟老库 type=string 失败: %v", err)
 	}
 	if err := db.Seed(db.DB); err != nil {

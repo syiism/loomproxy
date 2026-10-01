@@ -10,12 +10,15 @@ import (
 
 	"loomproxy/db"
 	"loomproxy/handlers/verify"
+	"loomproxy/models"
 )
 
 // enableVerifyScene 启用指定场景（写设置 + 失效 10s 缓存）
 func enableVerifyScene(t *testing.T, scene string) {
 	t.Helper()
-	if err := db.DB.Exec("UPDATE system_settings SET value = ? WHERE `key` = 'verify_code_scenes'", scene).Error; err != nil {
+	// 条件用 map 形式让 GORM 按方言引号 `key`：写死反引号的 SQL 在 PostgreSQL 上是语法错误
+	if err := db.DB.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": "verify_code_scenes"}).
+		Update("value", scene).Error; err != nil {
 		t.Fatalf("启用场景 %s 失败: %v", scene, err)
 	}
 	db.InvalidateSettingCache("verify_code_scenes")
@@ -24,7 +27,8 @@ func enableVerifyScene(t *testing.T, scene string) {
 // setVerifySetting 写单个 verify_* 设置并失效缓存
 func setVerifySetting(t *testing.T, key, value string) {
 	t.Helper()
-	if err := db.DB.Exec("UPDATE system_settings SET value = ? WHERE `key` = ?", value, key).Error; err != nil {
+	if err := db.DB.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": key}).
+		Update("value", value).Error; err != nil {
 		t.Fatalf("写设置 %s 失败: %v", key, err)
 	}
 	db.InvalidateSettingCache(key)

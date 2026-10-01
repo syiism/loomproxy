@@ -130,7 +130,7 @@ func TestApiKeyLookupQuotesReservedColumn(t *testing.T) {
 	if !strings.Contains(sql, "api_keys") {
 		t.Fatalf("未捕获到 api_keys 查询，实得：%q", sql)
 	}
-	if !strings.Contains(sql, "`key`") {
+	if !strings.Contains(sql, "`key`") { // dialect-allow：断言 GORM 按当前方言加的引号，不是手写 SQL
 		t.Errorf("key 列没有加引号，MySQL 会当保留字直接 1064：%s", sql)
 	}
 }
