@@ -226,6 +226,9 @@ func TestUpdateUserEmailConflict(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("清空邮箱 status = %d, want 400（msg=%s）", status, env.Msg)
 	}
+	if !strings.Contains(env.Msg, "邮箱不能清空") {
+		t.Errorf("文案应给出可操作提示而不是裸校验错误，实得 %q", env.Msg)
+	}
 
 	// 非法邮箱同样 400，不落库
 	status, env = doJSON(t, srv, http.MethodPatch, "/admin/users/"+itoa(ivan), map[string]interface{}{
@@ -233,6 +236,9 @@ func TestUpdateUserEmailConflict(t *testing.T) {
 	}, admin)
 	if status != http.StatusBadRequest {
 		t.Fatalf("非法邮箱 status = %d, want 400（msg=%s）", status, env.Msg)
+	}
+	if !strings.Contains(env.Msg, "邮箱格式不正确") {
+		t.Errorf("文案应中文化 gin validator 的英文原文，实得 %q", env.Msg)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -182,7 +183,7 @@ func GetUser(c *gin.Context) {
 
 type updateUserRequest struct {
 	Nickname *string `json:"nickname"`
-	Email    *string `json:"email" binding:"omitempty,email"`
+	Email    *string `json:"email"`
 	Status   *int    `json:"status"`
 }
 
@@ -214,8 +215,12 @@ func UpdateUser(c *gin.Context) {
 	if req.Email != nil {
 		cleaned := strings.ToLower(strings.TrimSpace(*req.Email))
 		if cleaned == "" {
-			// users.email 声明为 not null，写 NULL 会撞约束变成 500；历史 NULL 行只读不改
+			// users.email 声明为 not null，写 NULL 会撞约束变 500；历史 NULL 行只读不改
 			auth.Fail(c, http.StatusBadRequest, "邮箱不能清空，请保留原邮箱或填写新邮箱")
+			return
+		}
+		if _, err := mail.ParseAddress(cleaned); err != nil {
+			auth.Fail(c, http.StatusBadRequest, "邮箱格式不正确")
 			return
 		}
 		updates["email"] = cleaned
