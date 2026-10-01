@@ -677,7 +677,6 @@ func Run(ctx context.Context) error {
 	base.SetProxySourcesGetter(func() string { return db.GetSetting("proxy_enabled_sources") })
 
 	addr := fmt.Sprintf("%s:%d", conf.Config.ServerHost, conf.Config.ServerPort)
-	log.Printf("LoomProxy starting on %s", addr)
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -702,7 +701,16 @@ func Run(ctx context.Context) error {
 		close(shutdownDone)
 	}()
 
-	err := srv.ListenAndServe()
+	// 显式建监听再 Serve：日志才能报内核实际分配的地址。SERVER_PORT=0 时 addr 里的端口是 0，
+	// 跨进程测试（test/python）从这行读回真实端口，不必再自己抢一个空闲端口——那种做法是 TOCTOU，
+	// 抢到的端口在被服务 bind 之前可能被别人用掉，两个并发构建就会撞 bind: address already in use（P9）
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("监听 %s 失败: %w", addr, err)
+	}
+	log.Printf("LoomProxy starting on %s", lis.Addr().String())
+
+	err = srv.Serve(lis)
 	if errors.Is(err, http.ErrServerClosed) {
 		// 等待优雅停机与清理（含监控明细兜底落库）完成，
 		// 否则 main 的 log.Fatal 会在清理完成前 os.Exit

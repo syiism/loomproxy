@@ -19,6 +19,7 @@
 """
 import json
 import os
+import re
 import socket
 import sqlite3
 import subprocess
@@ -75,12 +76,36 @@ BINARY = _binary()
 
 # ---------- 工具 ----------
 
-def _free_port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+def _wait_listen_port(proc, timeout: float = 30.0) -> int:
+    """从服务启动日志里读回内核实际分配的端口（SERVER_PORT=0）。
+
+    不再由测试自己抢空闲端口：bind-then-close 是 TOCTOU，抢到的端口在服务等 bind 之前
+    可能已被别人占用，两个并发构建就撞在 bind: address already in use 上（待办清单 P9）。
+
+    读日志的线程必须一路抽取到底——管道写满会把服务堵死，所以找到端口后也继续读。
+    """
+    lines = []
+    holder = {}
+
+    def pump():
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            lines.append(line)
+            if "port" not in holder:
+                m = re.search(r"LoomProxy starting on (\S+):(\d+)", line)
+                if m:
+                    holder["port"] = int(m.group(2))
+
+    threading.Thread(target=pump, daemon=True).start()
+    deadline = time.time() + timeout
+    while time.time() < deadline and "port" not in holder:
+        if proc.poll() is not None:
+            raise RuntimeError("LoomProxy 进程提前退出，code=%s\n%s" % (proc.returncode, "\n".join(lines[-20:])))
+        time.sleep(0.05)
+    if "port" not in holder:
+        proc.kill()
+        raise RuntimeError("等待监听地址超时，最后日志：\n%s" % "\n".join(lines[-20:]))
+    return holder["port"]
 
 
 class Api:
@@ -232,7 +257,6 @@ class ServerCtx:
 def _spawn():
     """构建并启动一个全新 LoomProxy 服务；返回 (ServerCtx, proc)。"""
     data_dir = tempfile_data_dir()
-    port = _free_port()
     env = {k: v for k, v in os.environ.items() if "PROXY" not in k.upper()}
     env.update({
         "DB_TYPE": "sqlite",
@@ -243,14 +267,17 @@ def _spawn():
         "ADMIN_USERNAME": ADMIN_USER,
         "ADMIN_PASSWORD": ADMIN_PASS,
         "SERVER_HOST": "127.0.0.1",
-        "SERVER_PORT": str(port),
+        # 0 让内核挑端口，端口从服务日志读回：并发跑构建不再互抢 8081
+        "SERVER_PORT": "0",
         "REDIS_ENABLED": "false",
         "POOL_ENABLED": "false",
         "UPSTREAM_CACHE_TTL": "0",
         "NO_PROXY": "localhost,127.0.0.1",
     })
     proc = subprocess.Popen([BINARY], env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1)
+    port = _wait_listen_port(proc)
     base = f"http://127.0.0.1:{port}"
     api = Api(base)
     deadline = time.time() + 30
