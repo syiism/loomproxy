@@ -27,16 +27,35 @@ func escapeLike(s string) string {
 //
 // onlyPresent=true 表示空值不入榜：搜索词/书名/章节名没抽到就是这次没发生。
 // 媒介例外——空值要作为「未判定」桶留下，它是「源还没声明媒介」的可见信号。
+//
+// onlyActions 把维度限定在个别接口动作上。书名榜与章节榜**只统计 content**：
+// 一次「打开书目」会连着产生 detail 与 chapter（Legado 还按 nextTocUrl 分多页拉目录），
+// 把这些都计入等于给同一本书凭空乘上几倍——阅读榜要回答「读了什么正文」，不是「点开了什么」。
+// 搜索词不受此限（只有 search 会产生 keyword），媒介也不受此限。
 type subjectDim struct {
 	column      string
 	onlyPresent bool
+	onlyActions []string
 }
 
 var subjectDims = map[string]subjectDim{
 	"keyword": {column: "keyword", onlyPresent: true},
-	"book":    {column: "book_name", onlyPresent: true},
-	"chapter": {column: "chapter_title", onlyPresent: true},
+	"book":    {column: "book_name", onlyPresent: true, onlyActions: []string{"content"}},
+	"chapter": {column: "chapter_title", onlyPresent: true, onlyActions: []string{"content"}},
 	"media":   {column: "media", onlyPresent: false},
+}
+
+// actionAllowed 空名单表示不限动作
+func actionAllowed(allowed []string, action string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, a := range allowed {
+		if a == action {
+			return true
+		}
+	}
+	return false
 }
 
 type subjectItem struct {
@@ -97,6 +116,13 @@ func GetMonitorSubjects(c *gin.Context) {
 		cond += " AND source = ?"
 		args = append(args, sourceFilter)
 	}
+	// 动作白名单取自上面的维度定义（代码内常量，非请求可控），仍一律走绑定参数
+	if len(dim.onlyActions) > 0 {
+		cond += " AND action IN (?" + strings.Repeat(",?", len(dim.onlyActions)-1) + ")"
+		for _, a := range dim.onlyActions {
+			args = append(args, a)
+		}
+	}
 
 	var aggs []subjectAgg
 	if err := db.DB.Model(&models.ApiCallLog{}).
@@ -155,6 +181,9 @@ func GetMonitorSubjects(c *gin.Context) {
 			val = rc.Media
 		}
 		if dim.onlyPresent && val == "" {
+			continue
+		}
+		if !actionAllowed(dim.onlyActions, rc.Action) {
 			continue
 		}
 		var success, empty int64

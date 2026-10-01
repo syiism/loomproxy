@@ -164,9 +164,51 @@ func TestMonitorSubjectMediaPriorityViaPipeline(t *testing.T) {
 	if len(media) != 1 {
 		t.Errorf("fake_b 只该有 video 一桶，实得 %+v", media)
 	}
+	// 详情不再计入书名榜（口径见 subjectDims：book/chapter 只统计 content）
 	book := subjectItems(t, srv, admin, map[string]string{"dim": "book", "source": "fake_b"})
-	if book["某剧"] != 1 {
-		t.Errorf("详情应记到书名「某剧」，实得 %+v", book)
+	if _, ok := book["某剧"]; ok {
+		t.Errorf("详情不该进书名榜，实得 %+v", book)
+	}
+}
+
+// TestMonitorSubjectBookCountsContentOnly 书名榜与章节榜只统计正文接口：
+// 同一本书的 detail/chapter（Legado 打开书目 + 分多页拉目录）不该把这本书凭空乘几倍。
+func TestMonitorSubjectBookCountsContentOnly(t *testing.T) {
+	srv := newTestServer(t)
+	base.ResetMetrics()
+	admin := adminToken(t, srv)
+
+	insert := func(source, action, bookName, chapter string) {
+		t.Helper()
+		row := models.ApiCallLog{
+			Username: "u1", IP: "127.0.0.1", Source: source, Action: action,
+			Status: http.StatusOK, LatencyMs: 10, CreatedAt: time.Now(),
+			BookName: bookName, ChapterTitle: chapter, Media: base.MediaNovel, ResultCount: 1,
+		}
+		if err := db.DB.Create(&row).Error; err != nil {
+			t.Fatalf("写入调用明细失败: %v", err)
+		}
+	}
+	// 一次阅读会话的真实形状：1 次详情 + 2 页目录 + 3 章正文
+	insert("fake_a", "detail", "书名榜只数正文", "")
+	insert("fake_a", "chapter", "书名榜只数正文", "")
+	insert("fake_a", "chapter", "书名榜只数正文", "")
+	insert("fake_a", "content", "书名榜只数正文", "第一章")
+	insert("fake_a", "content", "书名榜只数正文", "第二章")
+	insert("fake_a", "content", "书名榜只数正文", "第三章")
+
+	if got := subjectItems(t, srv, admin, map[string]string{"dim": "book", "source": "fake_a"})["书名榜只数正文"]; got != 3 {
+		t.Errorf("书名榜应只算 3 次正文，实得 %d", got)
+	}
+	chap := subjectItems(t, srv, admin, map[string]string{"dim": "chapter", "source": "fake_a"})
+	for _, name := range []string{"第一章", "第二章", "第三章"} {
+		if chap[name] != 1 {
+			t.Errorf("章节榜缺少 %s 或计数不为 1，实得 %+v", name, chap)
+		}
+	}
+	// 媒介维度不受动作限制：6 条明细都该算进 novel 桶
+	if got := subjectItems(t, srv, admin, map[string]string{"dim": "media", "source": "fake_a"})[base.MediaNovel]; got != 6 {
+		t.Errorf("媒介维度不该被动作过滤，应得 6，实得 %d", got)
 	}
 }
 

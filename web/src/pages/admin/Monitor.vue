@@ -229,8 +229,8 @@ const MEDIAS = [
 ]
 const DIMS = [
   { key: 'keyword', label: '搜索词', column: '搜索词' },
-  { key: 'book', label: '书名', column: '书名' },
-  { key: 'chapter', label: '章节', column: '章节标题' },
+  { key: 'book', label: '书名（正文）', column: '书名' },
+  { key: 'chapter', label: '章节（正文）', column: '章节标题' },
   { key: 'media', label: '媒介', column: '媒介类型' },
 ]
 const mediaLabel = (m) => (MEDIAS.find((x) => x.value === m) || {}).label || '未判定'
