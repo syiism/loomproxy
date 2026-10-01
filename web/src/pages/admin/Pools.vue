@@ -17,8 +17,9 @@
       <div class="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-border">
         <h2 class="font-serif text-lg">{{ p.name }}</h2>
         <UiTag :tone="p.running ? 'green' : 'gray'" :label="p.running ? '运行中' : '未启动'" />
+        <UiTag tone="blue" :label="kindLabel(p.config && p.config.kind)" />
         <div class="text-xs text-text-muted font-mono ml-auto">
-          冷备 {{ p.config.cold_spares }} · 活跃上限 {{ p.config.max_hot }} · 临期续领 {{ p.config.renew_before_sec }}s · 巡检 {{ p.config.maintain_sec }}s
+          冷备 {{ p.config.cold_spares }} · 活跃上限 {{ p.config.max_hot }} · 总号上限 {{ p.config.max_devices > 0 ? p.config.max_devices : '不限' }} · 临期续领 {{ p.config.renew_before_sec }}s · 巡检 {{ p.config.maintain_sec }}s
         </div>
       </div>
 
@@ -64,6 +65,14 @@ import { fmtDate, revealObserve } from '../../utils.js'
 const statusKeys = ['hot', 'cold', 'spent', 'dead']
 const statusLabels = { hot: '活跃', cold: '冷备', spent: '周期用尽', dead: '失效' }
 const statusTones = { hot: 'green', cold: 'blue', spent: 'yellow', dead: 'red' }
+
+// 池形态：Kind 是声明位，框架不据它分叉行为。空值就是墙钟燃烧型（目前唯一的形态）；
+// 遇到没见过的值原样显示，别替管理员猜——这一列存在的意义正是「一排 cold 号未必是池没工作」
+const KIND_LABELS = { burn_wall_clock: '墙钟燃烧型' }
+const kindLabel = (kind) => {
+  const k = kind || 'burn_wall_clock'
+  return KIND_LABELS[k] || k
+}
 
 const loading = ref(true)
 const error = ref('')

@@ -6,6 +6,7 @@ package test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -495,5 +496,53 @@ func TestPoolMaxDevicesGate(t *testing.T) {
 	}
 	if p2.Running() {
 		t.Errorf("这条断言的前提是本池未 Start，Running 应为 false")
+	}
+}
+
+// TestPoolStatusCarriesKind 池形态声明位（待办清单 P6）：框架不据形态分叉行为，
+// 但快照必须带出去——将来出现「用量摊薄型」池时，一排 cold 号会被管理员读成「池没工作」，
+// 标签是唯一的消歧手段。这里同时钉住 /admin/pools 的 JSON 里有 kind。
+func TestPoolStatusCarriesKind(t *testing.T) {
+	srv := newTestServer(t)
+
+	fp := newFakeProvider()
+	fp.poolName = "gate_kind_unset"
+	p := newFakePool(t, pool.New(fp, fakePoolConfig()))
+	if got := p.Status().Config.Kind; got != "" {
+		t.Errorf("未声明形态时应留空（面板把空值读成墙钟燃烧型），实得 %q", got)
+	}
+
+	fp2 := newFakeProvider()
+	fp2.poolName = "gate_kind_burn"
+	cfg2 := fakePoolConfig()
+	cfg2.Kind = pool.KindBurnWallClock
+	p2 := newFakePool(t, pool.New(fp2, cfg2))
+	if got := p2.Status().Config.Kind; got != pool.KindBurnWallClock {
+		t.Errorf("快照 kind = %q，want %q", got, pool.KindBurnWallClock)
+	}
+
+	// 未启动的池也必须带出 kind 与上限：面板读到全零 config 会误判成「没配」
+	if p2.Running() {
+		t.Fatalf("本用例的前提是池未 Start")
+	}
+
+	_, env := doJSON(t, srv, "GET", "/admin/pools", nil, authHeader(adminToken(t, srv)))
+	var pools []struct {
+		Name   string `json:"name"`
+		Config struct {
+			Kind       string `json:"kind"`
+			MaxDevices int    `json:"max_devices"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(env.Data, &pools); err != nil {
+		t.Fatalf("解析 /admin/pools 失败: %v", err)
+	}
+	found := map[string]string{}
+	for _, one := range pools {
+		found[one.Name] = one.Config.Kind
+	}
+	if found["gate_kind_burn"] != pool.KindBurnWallClock {
+		t.Errorf("/admin/pools 里 gate_kind_burn 的 kind = %q，want %q（全部：%+v）",
+			found["gate_kind_burn"], pool.KindBurnWallClock, found)
 	}
 }

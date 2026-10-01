@@ -22,6 +22,7 @@ type Config struct {
 	MaxHot      int           // 热号上限（错误驱动扩容的封顶）
 	MaxDead     int           // dead 号保留上限，超出物理清理
 	MaxDevices  int           // 本池总号数上限（0=不限）：建号会对上游产生不可逆增长时的闸门
+	Kind        string        // 池形态标签（空 = KindBurnWallClock）；框架只透传进快照供面板显示，不据此分支
 	RenewBefore time.Duration // 热号到期前多久续领
 	Interval    time.Duration // 维护协程巡检间隔
 }
@@ -50,6 +51,11 @@ func DefaultConfig() Config {
 	}
 	return c
 }
+
+// KindBurnWallClock 墙钟燃烧型——本框架目前唯一的形态，也是 Kind 留空时的默认含义。
+// 声明位存在的意义是**给面板打标签**：将来若出现「用量摊薄型」（待办清单 P5，一堆 cold
+// 才是常态），管理员看到一排 cold 号不会误读成「池没工作」（P6）。框架不按 Kind 分叉行为。
+const KindBurnWallClock = "burn_wall_clock"
 
 // ErrCapacityReached 池内总号数已到 Config.MaxDevices 上限、无法再新建号。做成 sentinel
 // 是为了让源侧与调用方能 errors.Is 判定，而不是去比字符串。

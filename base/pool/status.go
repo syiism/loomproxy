@@ -13,6 +13,7 @@ type ConfigInfo struct {
 	MaxHot         int `json:"max_hot"`
 	MaxDead        int `json:"max_dead"`
 	MaxDevices     int `json:"max_devices"` // 0=不限
+	Kind           string `json:"kind"`      // 池形态；空即 pool.KindBurnWallClock
 	RenewBeforeSec int `json:"renew_before_sec"`
 	MaintainSec    int `json:"maintain_sec"`
 }
@@ -85,6 +86,7 @@ func (p *Pool) configInfo() ConfigInfo {
 		MaxHot:         p.cfg.MaxHot,
 		MaxDead:        p.cfg.MaxDead,
 		MaxDevices:     p.cfg.MaxDevices,
+		Kind:           p.cfg.Kind,
 		RenewBeforeSec: int(p.cfg.RenewBefore.Seconds()),
 		MaintainSec:    int(p.cfg.Interval.Seconds()),
 	}
