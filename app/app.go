@@ -565,10 +565,7 @@ func prewarmCache(ctx context.Context, cancel context.CancelFunc) {
 			if !prefillDatasourcesAnon(ctx) {
 				continue
 			}
-			if !prefillDataFiles(ctx) {
-				continue
-			}
-			log.Println("缓存预热完成")
+			log.Println("缓存预热完成（只热 /datasources；/data 直读文件不缓存，见待办清单 P16）")
 			cancel()
 			return
 		}
@@ -589,20 +586,6 @@ func prefillDatasourcesAnon(ctx context.Context) bool {
 	_, err = h.Handle(ctx, params)
 	if err != nil {
 		log.Printf("缓存预热 /datasources（匿名）失败: %v", err)
-		return false
-	}
-	return true
-}
-
-func prefillDataFiles(ctx context.Context) bool {
-	handler, err := base.GetOrCreate("data_files", nil)
-	if err != nil {
-		return false
-	}
-
-	_, err = handler.Handle(ctx, map[string]interface{}{})
-	if err != nil {
-		log.Printf("缓存预热 /data（总览）失败: %v", err)
 		return false
 	}
 	return true
@@ -678,7 +661,7 @@ func Run(ctx context.Context) error {
 	// 「标识 → 名称」命名缓存挂 Redis（可用时）：重启不再清空，正文调用的名称维度不再留空
 	initSubjectStore(ctx)
 
-	// 缓存预热：在端口监听前预填充 /datasources 和 /data 的缓存
+	// 缓存预热：在端口监听前预填充 /datasources 的缓存（/data 不缓存——它每次直读文件，见 P16）
 	// 使用 context + cancel 控制预热生命周期，30 秒超时
 	prewarmCtx, prewarmCancel := context.WithTimeout(ctx, 30*time.Second)
 	go prewarmCache(prewarmCtx, prewarmCancel)

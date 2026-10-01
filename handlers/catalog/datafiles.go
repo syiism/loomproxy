@@ -11,7 +11,6 @@ import (
 
 	"loomproxy/base"
 	"loomproxy/conf"
-	"loomproxy/utils"
 )
 
 type FileInfo struct {
@@ -130,7 +129,6 @@ func (h *DataFilesHandler) readFileRaw(source, name string) ([]byte, error) {
 
 func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	var result interface{}
-	hasRawData := false
 
 	parts, _ := params["_datafile_parts"].([]string)
 
@@ -170,7 +168,6 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 				}
 			} else {
 				result = data
-				hasRawData = true
 			}
 		} else {
 			// /data/<分类> — 目录列表
@@ -193,10 +190,6 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 		}
 	}
 
-	if !hasRawData {
-		cacheKey := utils.CacheKey("datafiles", params)
-		utils.DefaultCache().Set(cacheKey, result)
-	}
 	return result, nil
 }
 

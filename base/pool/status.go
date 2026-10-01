@@ -9,13 +9,13 @@ import (
 
 // ConfigInfo 号池运行参数快照
 type ConfigInfo struct {
-	ColdSpares     int `json:"cold_spares"`
-	MaxHot         int `json:"max_hot"`
-	MaxDead        int `json:"max_dead"`
-	MaxDevices     int `json:"max_devices"` // 0=不限
-	Kind           string `json:"kind"`      // 池形态；空即 pool.KindBurnWallClock
-	RenewBeforeSec int `json:"renew_before_sec"`
-	MaintainSec    int `json:"maintain_sec"`
+	ColdSpares     int    `json:"cold_spares"`
+	MaxHot         int    `json:"max_hot"`
+	MaxDead        int    `json:"max_dead"`
+	MaxDevices     int    `json:"max_devices"` // 0=不限
+	Kind           string `json:"kind"`        // 池形态；空即 pool.KindBurnWallClock
+	RenewBeforeSec int    `json:"renew_before_sec"`
+	MaintainSec    int    `json:"maintain_sec"`
 }
 
 // DeviceInfo 号状态快照（标识与凭证已脱敏——它们是上游签名凭证，不得完整外发）
