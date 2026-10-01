@@ -13,6 +13,7 @@ package rank
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -35,6 +36,14 @@ var boards = []struct {
 }
 
 const boardLimit = 20
+
+// sourceOption 数据源筛选项：code 用于查询、name 用于展示。
+// 候选只取启用中的数据源——已下线的源即便窗口里还剩历史明细，也不该出现在下拉里，
+// 否则用户会筛出一个永远点不开的选项。
+type sourceOption struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
 
 type boardEntry struct {
 	Name  string `json:"name"`
@@ -77,9 +86,31 @@ func GetBoards(c *gin.Context) {
 		days = 7
 	}
 
+	// 数据源筛选：同一个关键词在番茄小说与番茄听书里热度不同（fq_hg 是一站五形态），
+	// 不给筛就没法判断该用哪个源去检索
+	sources, err := enabledSources()
+	if err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "数据源列表读取失败")
+		return
+	}
+	sourceFilter := strings.TrimSpace(c.Query("source"))
+	if sourceFilter != "" {
+		known := false
+		for _, o := range sources {
+			if o.Code == sourceFilter {
+				known = true
+				break
+			}
+		}
+		if !known {
+			auth.Fail(c, http.StatusBadRequest, "source 不是启用中的数据源")
+			return
+		}
+	}
+
 	out := make([]boardPayload, 0, len(boards))
 	for _, b := range boards {
-		items, err := subjectrank.Query(b.Dim, days, "", boardLimit)
+		items, err := subjectrank.Query(b.Dim, days, sourceFilter, boardLimit)
 		if err != nil {
 			auth.Fail(c, http.StatusInternalServerError, "榜单统计失败")
 			return
@@ -93,7 +124,23 @@ func GetBoards(c *gin.Context) {
 		}
 		out = append(out, boardPayload{Dim: b.Dim, Title: b.Title, Rows: rows})
 	}
-	auth.Ok(c, gin.H{"days": days, "boards": out, "limit": boardLimit})
+	auth.Ok(c, gin.H{
+		"days": days, "boards": out, "limit": boardLimit,
+		"source": sourceFilter, "sources": sources,
+	})
+}
+
+// enabledSources 启用中的数据源（按 sort_order 排），供前端筛选下拉
+func enabledSources() ([]sourceOption, error) {
+	var rows []models.DataSource
+	if err := db.DB.Where("status = ?", 1).Order("sort_order ASC, name ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]sourceOption, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sourceOption{Code: r.Name, Name: r.DisplayName})
+	}
+	return out, nil
 }
 
 func queryInt(c *gin.Context, key string, def int) int {

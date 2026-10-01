@@ -2,11 +2,17 @@
   <div>
     <PageHeader title="排行榜" subtitle="站内搜索热词与在读书目排名，取自接口调用明细的内容维度（只统计窗口内的真实调用）。">
       <template #actions>
-        <select v-model.number="days" class="input font-mono text-sm w-auto" @change="load">
-          <option :value="1">今天</option>
-          <option :value="7">近 7 天</option>
-          <option :value="30">近 30 天</option>
-        </select>
+        <div class="flex items-center gap-2">
+          <select v-model="source" class="input font-mono text-sm w-auto" @change="load">
+            <option value="">全部数据源</option>
+            <option v-for="o in sources" :key="o.code" :value="o.code">{{ o.name }}</option>
+          </select>
+          <select v-model.number="days" class="input font-mono text-sm w-auto" @change="load">
+            <option :value="1">今天</option>
+            <option :value="7">近 7 天</option>
+            <option :value="30">近 30 天</option>
+          </select>
+        </div>
       </template>
     </PageHeader>
 
@@ -18,7 +24,7 @@
       <section v-for="b in boards" :key="b.dim" class="card reveal">
         <div class="flex items-baseline justify-between gap-3 mb-4">
           <div class="font-serif text-lg font-medium tracking-tight">{{ b.title }}</div>
-          <div class="font-mono text-xs text-text-muted">{{ b.rows.length }} 项 · 合计 {{ b.totalCalls }}</div>
+          <div class="font-mono text-xs text-text-muted">{{ b.rows.length }} 项</div>
         </div>
 
         <UiEmpty v-if="b.rows.length === 0" title="窗口内没有数据" :text="b.emptyHint" />
@@ -36,10 +42,12 @@
 
     <p v-if="!loading && !error && !denied && boards.length" class="mt-5 text-xs leading-relaxed text-text-muted">
       口径：阅读榜只统计正文（content）接口——一次「打开书目」会连着产生详情与多页目录，
-      全计入等于把同一本书凭空乘上几倍；搜索热词榜统计全部搜索请求。名称靠「标识 → 名称」
-      缓存跨请求反查，只在服务进程内留存（24 小时、上限 2 万条），重启后或从未请求过该书的前序
-      接口时，正文条目会因反查不到书名而不入榜。本页只取聚合的名称与次数，不含调用者、时间与
-      数据源明细（那些在管理端「监控」页）；是否对普通用户开放由管理员在「系统设置 · 站点」决定。
+      全计入等于把同一本书凭空乘上几倍；搜索热词榜统计全部搜索请求。同名条目按数据源分开统计，
+      选「全部数据源」时跨源合并计数——想知道该用哪个源检索，就切到具体源看它在该局部的排名。
+      名称靠「标识 → 名称」缓存跨请求反查，只在服务进程内留存（24 小时、上限 2 万条），
+      重启后或从未请求过该书的前序接口时，正文条目会因反查不到书名而不入榜。
+      本页只取聚合的名称与次数，不含调用者、时间与调用明细（那些在管理端「监控」页）；
+      是否对普通用户开放由管理员在「系统设置 · 站点」决定。
     </p>
   </div>
 </template>
@@ -60,6 +68,8 @@ const loading = ref(true)
 const error = ref('')
 const denied = ref(false)
 const days = ref(7)
+const source = ref('')
+const sources = ref([])
 const boards = ref([])
 
 const load = async () => {
@@ -68,13 +78,18 @@ const load = async () => {
   denied.value = false
   try {
     // 公开榜端点：只回聚合的名称与次数，与管理员用的 /admin/monitor/subjects 错开
-    const data = await adminApi.rankBoards(days.value)
+    const data = await adminApi.rankBoards({ days: days.value, source: source.value })
+    sources.value = data.sources || []
     boards.value = (data.boards || []).map(b => ({
       ...b,
       emptyHint: EMPTY_HINTS[b.dim] || '窗口内没有数据。',
-      totalCalls: (b.rows || []).reduce((n, it) => n + (it.total || 0), 0),
     }))
   } catch (e) {
+    // 400（source 已不在启用列表）时清掉筛选条件重新拉全量，避免页面卡在空榜
+    if (e.status === 400 && source.value) {
+      source.value = ''
+      return load()
+    }
     if (e.status === 403) denied.value = true
     else error.value = e.message
   } finally {

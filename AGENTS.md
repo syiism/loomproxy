@@ -206,8 +206,12 @@ scripts/ deploy/    部署脚本与 systemd 单元
   再 `nextTick(revealObserve)`——反过来写会让数据取回来了却整块不可见（`Ranking.vue` 初版即如此）。
 - **排行榜页**（`web/src/pages/Ranking.vue`，路由 `/ranking`，登录即可见）：顶部导航在「概览」与「接入指南」之间。
   数据来自**公开榜端点 `/rank/boards`**（`handlers/rank`，固定两张榜 keyword/book、各 top20、窗口只允许 1/7/30 天、
-  字段只有 `name` + `total`），**与管理端的 `/admin/monitor/subjects` 物理错开**——
+  字段只有 `name` + `total`），并支持 `?source=<数据源>` 按源筛选（候选随响应在 `sources` 里下发，取启用中的
+  数据源；未知/已停用的源返回 400，避免把"筛错了"看起来像"没数据"）——同一个关键词在 `fq_hg` 的
+  小说与听书 tab 上是两份热度，不给筛选用户无法判断该用哪个源检索。
+  **与管理端的 `/admin/monitor/subjects` 物理错开**——
   后者仍带 success_rate/latency/sources/last_called_at 等运维字段，不该整包交给普通用户。
+  卡片头部只标条目数，不显示「合计次数」——合计随窗口与筛选摆动、且容易被读成"独立用户数"。
   开放与否由管理员决定（系统设置 `rank_public_enabled`，默认关闭；关闭时非管理员 403，管理员始终可读）。
 - **两个权限档位共用一份聚合**：`handlers/subjectrank` 是榜单引擎（维度白名单 + 窗口 + 明细与内存缓冲合并），
   管理端与公开端都只调它——口径分叉比多一个包危险。

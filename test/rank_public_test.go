@@ -109,3 +109,72 @@ func TestRankBoardsAccessControl(t *testing.T) {
 		t.Errorf("普通用户访问管理端维度榜应 403，实为 %d", status)
 	}
 }
+
+// TestRankBoardsSourceFilter 公开榜的按数据源筛选：同一个搜索词在两个源里各有一次调用时，
+// 「全部数据源」合并计数、选中某个源时只回该源的计数——否则用户看不出该用哪个源检索。
+func TestRankBoardsSourceFilter(t *testing.T) {
+	srv := newTestServer(t)
+	base.ResetMetrics()
+	admin := adminToken(t, srv)
+
+	if status, env := doJSON(t, srv, "PUT", "/admin/settings/rank_public_enabled",
+		map[string]string{"value": "true"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
+		t.Fatalf("开启公开榜失败: status=%d msg=%s", status, env.Msg)
+	}
+
+	// 一次调用一行：fake_a 两次、fake_b 五次（insertSubjectCall 的数值参数是 result_count，不是次数）
+	for i := 0; i < 2; i++ {
+		insertSubjectCall(t, "fake_a", "search", "同一关键词", "", base.MediaNovel, 3, http.StatusOK)
+	}
+	for i := 0; i < 5; i++ {
+		insertSubjectCall(t, "fake_b", "search", "同一关键词", "", base.MediaAudio, 7, http.StatusOK)
+	}
+
+	rowsOf := func(data map[string]interface{}, dim string) map[string]int64 {
+		out := map[string]int64{}
+		for _, raw := range data["boards"].([]interface{}) {
+			b, _ := raw.(map[string]interface{})
+			if b["dim"] != dim {
+				continue
+			}
+			for _, r := range b["rows"].([]interface{}) {
+				it, _ := r.(map[string]interface{})
+				out[it["name"].(string)] = int64(it["total"].(float64))
+			}
+		}
+		return out
+	}
+
+	// 候选源列表随响应下发（取启用中的数据源）
+	_, all := doJSON(t, srv, "GET", "/rank/boards?days=7", nil, authHeader(admin))
+	d := all.dataMap(t)
+	list, _ := d["sources"].([]interface{})
+	if len(list) < 2 {
+		t.Fatalf("sources 候选应含测试假源，实得 %+v", list)
+	}
+	found := map[string]bool{}
+	for _, raw := range list {
+		o, _ := raw.(map[string]interface{})
+		found[o["code"].(string)] = true
+	}
+	if !found["fake_a"] || !found["fake_b"] {
+		t.Errorf("sources 缺少假源候选: %+v", found)
+	}
+	if got := rowsOf(d, "keyword")["同一关键词"]; got != 7 {
+		t.Errorf("全部数据源应合并为 7，实得 %d", got)
+	}
+
+	// 选中单源后只回该源的计数
+	_, one := doJSON(t, srv, "GET", "/rank/boards?days=7&source=fake_b", nil, authHeader(admin))
+	if got := rowsOf(one.dataMap(t), "keyword")["同一关键词"]; got != 5 {
+		t.Errorf("筛 fake_b 应得 5，实得 %d", got)
+	}
+	if echoed := one.dataMap(t)["source"]; echoed != "fake_b" {
+		t.Errorf("响应应回显 source，实得 %v", echoed)
+	}
+
+	// 未知/未启用的源直接 400，避免返回一张空榜让人以为是没数据
+	if status, _ := doJSON(t, srv, "GET", "/rank/boards?source=nope", nil, authHeader(admin)); status != http.StatusBadRequest {
+		t.Errorf("非法 source 应 400，实为 %d", status)
+	}
+}
