@@ -212,7 +212,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - **两个权限档位共用一份聚合**：`handlers/subjectrank` 是榜单引擎（维度白名单 + 窗口 + 明细与内存缓冲合并），
   管理端与公开端都只调它——口径分叉比多一个包危险。
 - **系统设置页**（`web/src/pages/admin/Settings.vue`）是卡片聚合而非平铺列表：受管 key 按功能分 5 张卡，卡级 diff 保存（逐 key `PUT /admin/settings/:key`）；不在清单内的 key 落入「自定义配置」兜底卡。**seed 新增设置 key 时要同步把字段加进前端 GROUPS 的对应分组**（或确认走兜底卡）。
-- `web/vite.config.js` 已配 dev 代理（`/auth`·`/admin`·`/quota`·`/datasources`·`/data`·`/verify` → `localhost:8081`）。
+- `web/vite.config.js` 已配 dev 代理（`/auth`·`/admin`·`/quota`·`/rank`·`/datasources`·`/data`·`/verify` → `localhost:8081`）。
 - **中间件**：新增一条 = 新建 `middleware/<职责>` 包（或进 `gate` 的对应轴文件）+ `init()` 里一次 `middleware.Register(Def{Scope, Order, Applies, Build})` + `middleware/all/all.go` 加一行空白导入；`app.go` 免改。顺序只改 `middleware/middleware.go` 的 Order 常量，`test/middleware_chain_test.go` 会失败以逼一次审查；同作用域内 Order 撞车或重名在 `Register` 期 `log.Fatalf`（宁启动失败不带病装配）。`middleware` 根包是叶子包，不要给它加子包或 gate 的导入（成环），装载清单只在 `middleware/all`。
 - **测试**：黑盒测试一律放 `test/`（包名 test，只测公开 API，不与源码混放）。单元级用 `httptest` + 直接构造 `conf.Config` 全局指针；HTTP 集成用 `testserver_test.go` 的 `newTestServer(t)`（临时 SQLite + `app.CreateApp()` + `httptest.NewServer`，自动 AutoMigrate + seed，admin/admin1234）。全局态（`conf.Config`·`db.DB`·`utils.DefaultCache`·限流器·号池注册表）跨用例共享，**集成用例禁止 `t.Parallel()`**；`newTestServer` 已清缓存，直接改库后按需 `delCostCache`。
 - **质量门禁**：每次修改完成后 `make build`（含 vet + gofmt + `go test -race`），并**必须 `git commit`**（含 AGENTS.md 同步更新），不留未提交的工作区改动。
