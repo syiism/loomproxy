@@ -173,6 +173,24 @@ func SetSubjectStore(st SubjectStore) {
 	subjectStoreMu.Unlock()
 }
 
+// SubjectStoreHealth 持久化后端**可选**实现的写侧体检面。丢持久化不是致命错（内存缓存仍在），
+// 但如果只有关停日志里那一行，运行期间「正在丢」这件事就没人看得见——面板要能直接读到
+// 排队深度与两类丢失计数（见待办清单 P2）。风格照 base/pool 的 ResourceExpiredClassifier：
+// 接口存在即能力声明，base 不做分支。
+type SubjectStoreHealth interface {
+	PersistHealth() (queued, dropped, failed int64)
+}
+
+// NameCachePersistHealth 返回写侧体检值；未注入后端、或后端没实现体检面时 ok=false
+func NameCachePersistHealth() (queued, dropped, failed int64, ok bool) {
+	st, ok := subjectStoreRef().(SubjectStoreHealth)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	q, d, f := st.PersistHealth()
+	return q, d, f, true
+}
+
 func subjectStoreRef() SubjectStore {
 	subjectStoreMu.RLock()
 	defer subjectStoreMu.RUnlock()

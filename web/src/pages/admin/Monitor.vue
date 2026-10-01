@@ -84,6 +84,10 @@
       <div class="text-xs text-text-muted mt-3 reveal">
         媒介为「未判定」表示源既没声明、响应也没给类型——补 SourceMeta 的 media_type 或 tab 声明即可归位。
         命名缓存当前 {{ subjectCache.books }} 本书名 / {{ subjectCache.chapters }} 条章节名。
+        <span v-if="subjectCache.persist"
+              :class="(subjectCache.persist.dropped > 0 || subjectCache.persist.failed > 0) ? 'text-pale-red-fg' : ''">
+          写 Redis：排队 {{ subjectCache.persist.queued }} 条、队列满丢 {{ subjectCache.persist.dropped }} 条、写失败 {{ subjectCache.persist.failed }} 条<template v-if="subjectCache.persist.dropped > 0 || subjectCache.persist.failed > 0">（丢的是跨重启的名称，内存里这轮仍在）</template>。
+        </span>
       </div>
     </div>
 
@@ -226,7 +230,7 @@ const subjectDays = ref(7)
 const subjectSource = ref('')
 const subjectItems = ref([])
 const sourceOptions = ref([])
-const subjectCache = ref({ books: 0, chapters: 0 })
+const subjectCache = ref({ books: 0, chapters: 0, persist: null })
 let timer = null
 let resetTimer = null
 
@@ -306,7 +310,7 @@ const loadSubjects = async () => {
       source: subjectSource.value || undefined,
     })
     subjectItems.value = data.items || []
-    subjectCache.value = data.name_cache || { books: 0, chapters: 0 }
+    subjectCache.value = data.name_cache || { books: 0, chapters: 0, persist: null }
     nextTick(revealObserve)
   } catch (e) { toast(e.message, 'error') }
 }

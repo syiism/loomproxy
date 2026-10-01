@@ -41,11 +41,16 @@ func GetMonitorSubjects(c *gin.Context) {
 	}
 
 	books, chapters := base.NameCacheStats()
+	cache := gin.H{"books": books, "chapters": chapters}
+	// 写侧体检：接了 Redis 才报 persist（纯内存没有持久化可丢）
+	if queued, dropped, failed, ok := base.NameCachePersistHealth(); ok {
+		cache["persist"] = gin.H{"queued": queued, "dropped": dropped, "failed": failed}
+	}
 	auth.Ok(c, gin.H{
 		"dim":        dimKey,
 		"days":       days,
 		"from":       subjectrank.WindowStart(days),
 		"items":      items,
-		"name_cache": gin.H{"books": books, "chapters": chapters},
+		"name_cache": cache,
 	})
 }
