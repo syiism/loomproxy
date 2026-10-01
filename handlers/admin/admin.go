@@ -84,6 +84,13 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/quotas/plans/:id/data-sources", AddPlanDataSource)
 		g.POST("/quotas/plans/:id/data-sources/batch", BatchAddPlanDataSources)
 		g.DELETE("/quotas/plans/:id/data-sources/:ds_id", RemovePlanDataSource)
+		// 数据源分组（视图与批量操作单位，不参与任何键控，见 models.SourceGroup）
+		g.GET("/source-groups", ListSourceGroups)
+		g.POST("/source-groups", CreateSourceGroup)
+		g.PATCH("/source-groups/:id", UpdateSourceGroup)
+		g.DELETE("/source-groups/:id", DeleteSourceGroup)
+		g.PUT("/source-groups/:id/members", UpdateSourceGroupMembers)
+		g.POST("/source-groups/:id/apply-limits", ApplySourceGroupLimits)
 	}
 }
 
@@ -757,6 +764,8 @@ type updateDataSourceRequest struct {
 	Description *string `json:"description"`
 	Status      *int    `json:"status"`
 	SortOrder   *int    `json:"sort_order"`
+	GroupID     *uint   `json:"group_id"`    // 归入某组（一源至多一组）
+	ClearGroup  bool    `json:"clear_group"` // 显式摘出分组：JSON 里 null 与「不带该字段」无法区分，故单列一个开关
 }
 
 // UpdateDataSource 更新数据源
@@ -789,6 +798,20 @@ func UpdateDataSource(c *gin.Context) {
 	}
 	if req.SortOrder != nil {
 		updates["sort_order"] = *req.SortOrder
+	}
+	if req.GroupID != nil && req.ClearGroup {
+		auth.Fail(c, http.StatusBadRequest, "group_id 与 clear_group 不能同时给")
+		return
+	}
+	if req.ClearGroup {
+		updates["group_id"] = nil
+	} else if req.GroupID != nil {
+		var group models.SourceGroup
+		if err := db.DB.First(&group, *req.GroupID).Error; err != nil {
+			auth.Fail(c, http.StatusNotFound, "分组不存在")
+			return
+		}
+		updates["group_id"] = group.ID
 	}
 	if len(updates) == 0 {
 		auth.Fail(c, http.StatusBadRequest, "无更新字段")

@@ -152,6 +152,7 @@ type DataSource struct {
 	Description string         `gorm:"size:255" json:"description"`              // 描述
 	Status      int            `gorm:"default:1" json:"status"`                  // 1=启用，0=禁用
 	SortOrder   int            `gorm:"default:0" json:"sort_order"`              // 排序
+	GroupID     *uint          `gorm:"index" json:"group_id"`                    // 所属分组，NULL=未分组（一源至多一组，见 SourceGroup）
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
@@ -171,4 +172,24 @@ type QuotaPlanDataSource struct {
 
 func (QuotaPlanDataSource) TableName() string {
 	return "quota_plan_data_sources"
+}
+
+// SourceGroup 数据源分组：管理员自建的**归类与筛选视图**（相当于给数据源打标签），
+// 不参与额度、计费、限速的解析——那些口径的键一律仍是数据源码。
+// 与被移除的历史「平台组」（表 quota_source_groups，曾是 quota_costs / quota_cost_plans /
+// user_quota_overrides 的 group_code 键）无关。
+// 一源至多一组（DataSource.GroupID），删组不删源；按组批量套用限额只是**写入时的批量入口**，
+// 落库仍是每源一行 quota_limits。
+type SourceGroup struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `gorm:"size:64;uniqueIndex;not null" json:"name"`
+	Description string    `gorm:"size:255" json:"description"`
+	Status      int       `gorm:"default:1" json:"status"` // 1=启用，0=停用：停用只在展示侧（首页分节/筛选/下游清单）视作未分组，不影响访问控制与计费
+	SortOrder   int       `gorm:"default:0" json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (SourceGroup) TableName() string {
+	return "source_groups"
 }

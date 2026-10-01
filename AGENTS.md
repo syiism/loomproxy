@@ -35,8 +35,12 @@
 - `base.RegisterSource(SourceMeta{...})` 是路由对账与 seed 播种的**唯一事实来源**；声明位含 `Actions`/`FixedBaseURL`/`SearchTabs`/`LegacyGroups`/`DataFiles`/`MediaType`。
 - 需要新行为优先**补声明位**而不是改骨架；声明值非法在 `RegisterSource` 期 `log.Fatalf`。
 - 路由全是根级 `/{source}/{action}`；链由中间件包的 `Def{Scope,Order,Applies,Build}` 装配，禁止在 `app.go` 手工拼链。
+- **数据源分组**（`source_groups` + `data_sources.group_id`）只是归类与筛选视图：限额/计费/限速/套餐关联的键
+  **一律仍是数据源码**，`POST /admin/source-groups/:id/apply-limits` 也只是批量写入口（落库每源一行）。
+  一源至多一组，删组只把成员回落 NULL 不删源，组改动一律失效 `/datasources` 缓存。
 - 集成测试只用 `testkit/fakesource` 的三个假源，不引入真实上游。
-- 详情：[`docs/架构/处理器自注册与数据源声明位.md`](docs/架构/处理器自注册与数据源声明位.md)
+- 详情：[`docs/架构/处理器自注册与数据源声明位.md`](docs/架构/处理器自注册与数据源声明位.md)、
+  [`docs/方案/数据源分组与首页额度看板.md`](docs/方案/数据源分组与首页额度看板.md)
 
 ## 6. 通用号池（base/pool）
 

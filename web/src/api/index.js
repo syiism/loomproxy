@@ -107,6 +107,13 @@ export const adminApi = {
   createDataSource: (payload) => request('/admin/data-sources', { method: 'POST', body: payload }),
   updateDataSource: (id, payload) => request('/admin/data-sources/' + id, { method: 'PATCH', body: payload }),
   deleteDataSource: (id) => request('/admin/data-sources/' + id, { method: 'DELETE' }),
+  // 数据源分组：归类与筛选视图（标签），不参与额度/计费/限速解析
+  listSourceGroups: () => request('/admin/source-groups'),
+  createSourceGroup: (payload) => request('/admin/source-groups', { method: 'POST', body: payload }),
+  updateSourceGroup: (id, payload) => request('/admin/source-groups/' + id, { method: 'PATCH', body: payload }),
+  deleteSourceGroup: (id) => request('/admin/source-groups/' + id, { method: 'DELETE' }),
+  updateSourceGroupMembers: (id, sourceNames) => request('/admin/source-groups/' + id + '/members', { method: 'PUT', body: { source_names: sourceNames } }),
+  applySourceGroupLimits: (id, payload) => request('/admin/source-groups/' + id + '/apply-limits', { method: 'POST', body: payload }),
   // 套餐-数据源关联
   listPlanDataSources: (planId) => request('/admin/quotas/plans/' + planId + '/data-sources'),
   addPlanDataSource: (planId, dataSourceId) => request('/admin/quotas/plans/' + planId + '/data-sources', { method: 'POST', body: { data_source_id: dataSourceId } }),

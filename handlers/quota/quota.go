@@ -28,6 +28,8 @@ type DashboardSource struct {
 	SourceCode     string          `json:"source_code"`
 	Name           string          `json:"name"`
 	ID             uint            `json:"id"`
+	GroupID        uint            `json:"group_id,omitempty"`
+	GroupName      string          `json:"group_name,omitempty"` // 所属分组名（未分组或组已停用为空）
 	Override       string          `json:"override"`
 	UsedToday      int64           `json:"used_today"`   // 普通用户=自己的消耗；管理员=全站消耗
 	ActiveUsers    int64           `json:"active_users"` // 管理员：当日有消耗的去重用户数
@@ -39,14 +41,24 @@ type DashboardSource struct {
 	Interfaces     []InterfaceCost `json:"interfaces"`
 }
 
+// DashboardGroup 首页筛选栏的分组项：只包含在本次可见源里至少有一个成员的组
+type DashboardGroup struct {
+	ID        uint   `json:"id"`
+	Name      string `json:"name"`
+	SortOrder int    `json:"sort_order"`
+	Count     int64  `json:"count"`
+}
+
 type DashboardResponse struct {
-	Sources      []DashboardSource `json:"sources"`
-	IsAdmin      bool              `json:"is_admin"`
-	PlanName     string            `json:"plan_name"`
-	PlanCode     string            `json:"plan_code"`
-	PlanExpireAt *time.Time        `json:"plan_expire_at"` // 套餐到期时间（null=永久/免费）
-	ActiveUsers  int64             `json:"active_users"`   // 管理员：当日全站去重活跃用户数
-	CallCount    int64             `json:"call_count"`     // 管理员：当日全站调用次数（接口监控口径，含未计费调用）
+	Sources        []DashboardSource `json:"sources"`
+	Groups         []DashboardGroup  `json:"groups"`          // 首页筛选栏的分组项（含计数）
+	UngroupedCount int64             `json:"ungrouped_count"` // 未分组（或所属组已停用）的可见源数
+	IsAdmin        bool              `json:"is_admin"`
+	PlanName       string            `json:"plan_name"`
+	PlanCode       string            `json:"plan_code"`
+	PlanExpireAt   *time.Time        `json:"plan_expire_at"` // 套餐到期时间（null=永久/免费）
+	ActiveUsers    int64             `json:"active_users"`   // 管理员：当日全站去重活跃用户数
+	CallCount      int64             `json:"call_count"`     // 管理员：当日全站调用次数（接口监控口径，含未计费调用）
 }
 
 func nextResetTime() string {
@@ -115,6 +127,14 @@ func Dashboard(c *gin.Context) {
 	}
 
 	planLimits := gate.PlanSourceLimits(planID)
+
+	// 停用的组不参与分节/计数：其成员按未分组渲染（分组只是展示视图，不是准入开关）
+	var enabledGroups []models.SourceGroup
+	db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&enabledGroups)
+	groupNames := make(map[uint]string, len(enabledGroups))
+	for _, g := range enabledGroups {
+		groupNames[g.ID] = g.Name
+	}
 
 	sources := make([]DashboardSource, 0, len(dataSources))
 	for _, ds := range dataSources {
@@ -210,10 +230,21 @@ func Dashboard(c *gin.Context) {
 			}
 		}
 
+		var groupID uint
+		var groupName string
+		if ds.GroupID != nil {
+			if n, ok := groupNames[*ds.GroupID]; ok {
+				groupID = *ds.GroupID
+				groupName = n
+			}
+		}
+
 		sources = append(sources, DashboardSource{
 			ID:             ds.ID,
 			SourceCode:     ds.Name,
 			Name:           ds.DisplayName,
+			GroupID:        groupID,
+			GroupName:      groupName,
 			Override:       "未设置",
 			UsedToday:      used,
 			ActiveUsers:    activeUsers,
@@ -226,12 +257,31 @@ func Dashboard(c *gin.Context) {
 		})
 	}
 
+	// 分组筛选栏：按 enabledGroups 的顺序出，计数为 0 的组不出现（前端「全部」按钮恒在，无需后端补）
+	counted := make(map[uint]int64, len(enabledGroups))
+	var ungrouped int64
+	for _, s := range sources {
+		if s.GroupID == 0 {
+			ungrouped++
+			continue
+		}
+		counted[s.GroupID]++
+	}
+	groupViews := make([]DashboardGroup, 0, len(enabledGroups))
+	for _, g := range enabledGroups {
+		if n := counted[g.ID]; n > 0 {
+			groupViews = append(groupViews, DashboardGroup{ID: g.ID, Name: g.Name, SortOrder: g.SortOrder, Count: n})
+		}
+	}
+
 	resp := DashboardResponse{
-		Sources:      sources,
-		IsAdmin:      isAdmin,
-		PlanName:     plan.Name,
-		PlanCode:     plan.Code,
-		PlanExpireAt: user.PlanExpireAt,
+		Sources:        sources,
+		Groups:         groupViews,
+		UngroupedCount: ungrouped,
+		IsAdmin:        isAdmin,
+		PlanName:       plan.Name,
+		PlanCode:       plan.Code,
+		PlanExpireAt:   user.PlanExpireAt,
 	}
 	if isAdmin {
 		resp.ActiveUsers = gate.ActiveUsersToday("")

@@ -119,6 +119,7 @@ func Init() error {
 		&models.UserSourceConfig{},
 		&models.PlatformSourceConfig{},
 		&models.DataSource{},
+		&models.SourceGroup{},
 		&models.QuotaPlanDataSource{},
 		&models.QuotaCostPlan{},
 		&models.ApiCallLog{},

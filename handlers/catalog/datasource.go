@@ -19,6 +19,8 @@ type DatasourceItem struct {
 	Name      string           `json:"name"`
 	Category  string           `json:"category"`
 	MediaType string           `json:"media_type,omitempty"` // 源声明的默认媒介（tab 级随 search_tab 下发）
+	GroupID   uint             `json:"group_id,omitempty"`
+	Group     string           `json:"group,omitempty"` // 所属分组名：纯视图信息，下游客户端不必依赖（分组不是键）
 	SearchTab []base.SearchTab `json:"search_tab"`
 	Files     []string         `json:"files"`
 }
@@ -159,12 +161,26 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 
 	// 3. 构建响应数据
 
+	// 停用的组不下发组名（其源等同未分组）；组改动会走 InvalidateDatasourcesCache，此处只读一次
+	var enabledGroups []models.SourceGroup
+	db.DB.Where("status = 1").Find(&enabledGroups)
+	groupNames := make(map[uint]string, len(enabledGroups))
+	for _, g := range enabledGroups {
+		groupNames[g.ID] = g.Name
+	}
+
 	data := make([]DatasourceItem, 0, len(dataSources))
 	for _, ds := range dataSources {
 		item := DatasourceItem{
 			ID:       ds.Name,
 			Name:     ds.DisplayName,
 			Category: ds.Category,
+		}
+		if ds.GroupID != nil {
+			if n, ok := groupNames[*ds.GroupID]; ok {
+				item.GroupID = *ds.GroupID
+				item.Group = n
+			}
 		}
 		item.SearchTab = defaultSearchTabs
 		// 源自有形态（多媒介/多站点）时按声明渲染，底座不做分类分支
