@@ -43,7 +43,7 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "legado_import_url", Value: "", Type: "string", Description: "书源 JSON 直链（个人中心「导入书源」按钮，legado:// 拉起阅读 App）"},
 		{Key: "jwt_expire_hours", Value: "168", Type: "number", Description: "登录 token 有效时长（小时），-1 表示永不过期；用户可在个人中心设置自己的时长覆盖"},
 		{Key: "proxy_enabled_sources", Value: "", Type: "string", Description: "启用 IP 代理池的数据源/接口，逗号分隔（如 novel_a/chapter 单接口、novel_a 整源）；留空表示不限制（全部走代理）"},
-		{Key: "rank_public_sources", Value: "", Type: "string", Description: "允许普通用户查看排行榜的数据源，逗号分隔（如 fq_hg,xmly）；留空=不对普通用户开放任何榜单。管理员不受此名单限制"},
+		{Key: "rank_public_sources", Value: "", Type: "string", Description: "允许普通用户查看排行榜的数据源，逗号分隔的数据源码；留空=不对普通用户开放任何榜单。管理员不受此名单限制（面板也可在「数据源列表」逐源开关）"},
 		{Key: "announcement", Value: "", Type: "string", Description: "站内公告（留空=不展示；登录后面板顶部横幅展示，用户可关闭，内容变更后重新展示）"},
 		{Key: "verify_code_scenes", Value: "", Type: "string", Description: "启用验证码校验的场景，逗号分隔（register、forgot_password）；留空=全部关闭，业务行为不变"},
 		{Key: "verify_send_interval_sec", Value: "60", Type: "number", Description: "验证码发送冷却：同一目标两次发码的最小间隔（秒）"},

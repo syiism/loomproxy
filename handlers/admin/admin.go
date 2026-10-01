@@ -711,10 +711,12 @@ type createDataSourceRequest struct {
 func ListDataSources(c *gin.Context) {
 	var dataSources []models.DataSource
 	db.DB.Order("sort_order ASC, id ASC").Find(&dataSources)
-	if dataSources == nil {
-		dataSources = []models.DataSource{}
+	public := rankPublicSet()
+	views := make([]dataSourceView, 0, len(dataSources))
+	for _, ds := range dataSources {
+		views = append(views, dataSourceView{DataSource: ds, RankPublic: public[ds.Name]})
 	}
-	auth.Ok(c, dataSources)
+	auth.Ok(c, views)
 }
 
 // CreateDataSource 创建数据源
@@ -766,6 +768,13 @@ type updateDataSourceRequest struct {
 	SortOrder   *int    `json:"sort_order"`
 	GroupID     *uint   `json:"group_id"`    // 归入某组（一源至多一组）
 	ClearGroup  bool    `json:"clear_group"` // 显式摘出分组：JSON 里 null 与「不带该字段」无法区分，故单列一个开关
+	RankPublic  *bool   `json:"rank_public"` // 公开榜单可见性：写的是设置项 rank_public_sources 的名单，不落源行
+}
+
+// dataSourceView 数据源行 + 两个「存在别处但列表要看」的派生字段
+type dataSourceView struct {
+	models.DataSource
+	RankPublic bool `json:"rank_public"`
 }
 
 // UpdateDataSource 更新数据源
@@ -813,21 +822,35 @@ func UpdateDataSource(c *gin.Context) {
 		}
 		updates["group_id"] = group.ID
 	}
-	if len(updates) == 0 {
+	if len(updates) == 0 && req.RankPublic == nil {
 		auth.Fail(c, http.StatusBadRequest, "无更新字段")
 		return
 	}
 
-	if err := db.DB.Model(&ds).Updates(updates).Error; err != nil {
-		auth.Fail(c, http.StatusInternalServerError, "更新失败")
-		return
+	if len(updates) > 0 {
+		if err := db.DB.Model(&ds).Updates(updates).Error; err != nil {
+			auth.Fail(c, http.StatusInternalServerError, "更新失败")
+			return
+		}
+		if err := db.DB.First(&ds, ds.ID).Error; err != nil {
+			auth.Fail(c, http.StatusInternalServerError, "数据库错误")
+			return
+		}
+		catalog.InvalidateDatasourcesCache()
 	}
-	if err := db.DB.First(&ds, ds.ID).Error; err != nil {
-		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
-		return
+
+	// 榜单可见性存的是设置名单，不是源行——回读一次保证响应与实际名单一致
+	rankPublic := rankPublicSet()[ds.Name]
+	if req.RankPublic != nil {
+		value, err := setSourceRankPublic(ds.Name, *req.RankPublic)
+		if err != nil {
+			auth.Fail(c, http.StatusInternalServerError, "榜单可见性更新失败")
+			return
+		}
+		rankPublic = *req.RankPublic
+		log.Printf("公开榜单放行名单变更: source=%s enable=%v 现名单=%s", ds.Name, rankPublic, value)
 	}
-	catalog.InvalidateDatasourcesCache()
-	auth.Ok(c, ds)
+	auth.Ok(c, dataSourceView{DataSource: ds, RankPublic: rankPublic})
 }
 
 // DeleteDataSource 删除数据源（软删除）
@@ -851,6 +874,10 @@ func DeleteDataSource(c *gin.Context) {
 	if err := db.DB.Delete(&ds).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "删除失败")
 		return
+	}
+	// 顺手把它从公开榜单放行名单里摘掉：留着不会放行任何东西（源已不在），但会让名单越长越脏
+	if _, err := setSourceRankPublic(ds.Name, false); err != nil {
+		log.Printf("WARNING: 从公开榜单名单摘除 %s 失败: %v", ds.Name, err)
 	}
 	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, gin.H{"message": "已删除"})

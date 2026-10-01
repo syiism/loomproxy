@@ -99,6 +99,10 @@ func newTestServer(t *testing.T) *httptest.Server {
 	if conf.Config.CacheMaxSize > 0 {
 		utils.DefaultCache().Clear()
 	}
+	// db.GetSetting 另有一层进程内的 sync.Map（10s TTL），它跟着旧库的值残留：
+	// 不清的话，本用例读到的设置是上一个用例写进那个库的（比如榜单放行名单），
+	// 表现为「新库默认值读出来是非默认值」这种查不出原因的失败
+	db.InvalidateSettingCache("")
 	// 登录/找回密码的按 IP 限频器同为进程级状态（全部用例共享 127.0.0.1），
 	// 逐用例清零，避免累计尝试次数触发锁定导致无关用例失败
 	auth.ResetAttemptLimitersForTest()

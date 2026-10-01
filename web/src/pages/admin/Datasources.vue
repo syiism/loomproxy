@@ -8,6 +8,7 @@
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">数据源列表</h2>
         <button class="btn-primary btn-sm" @click="showCreateDsModal = true">新增数据源</button>
       </div>
+      <p class="text-xs text-text-muted mb-5">「榜单可见」控制该源是否出现在普通用户的公开排行榜，存的仍是设置项 <span class="font-mono">rank_public_sources</span> 的名单（设置页那处编辑的是同一份值）。</p>
       <UiSpinner v-if="dsLoading" />
       <UiEmpty v-else-if="dsError" title="加载失败" :text="dsError" />
       <div v-else class="space-y-3">
@@ -24,6 +25,8 @@
             </div>
             <div class="flex items-center gap-3">
               <UiTag :tone="ds.status === 1 ? 'green' : 'gray'" :label="ds.status === 1 ? '启用' : '禁用'" />
+              <button @click="toggleRankPublic(ds)" :disabled="rankBusy === ds.id" class="text-xs transition-colors"
+                :class="ds.rank_public ? 'text-pale-green-fg' : 'text-text-muted hover:text-text'">{{ ds.rank_public ? '榜单可见' : '榜单隐藏' }}</button>
               <button @click="openPlanPerms(ds)" class="text-xs text-text-muted hover:text-text transition-colors">套餐权限</button>
               <button @click="editDataSource(ds)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
               <button @click="deleteDataSource(ds)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
@@ -33,24 +36,8 @@
       </div>
     </section>
 
-    <!-- 数据源默认地址 -->
-    <section class="mt-12 md:mt-16 reveal">
-      <div class="flex items-end justify-between mb-5 pb-3 border-b border-border">
-        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">默认地址</h2>
-        <button v-if="sourceConfigDirty" class="btn-primary btn-sm" :disabled="savingConfig" @click="saveSourceConfigs">保存</button>
-      </div>
-      <UiSpinner v-if="sourceConfigs === null" />
-      <div v-else class="space-y-3">
-        <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="flex items-center gap-3">
-          <div class="font-mono text-sm min-w-[130px]">{{ cfg.source_display }}</div>
-          <div class="font-mono text-xs text-text-muted min-w-[90px]">{{ cfg.source_name }}</div>
-          <input v-model="cfg.base_url" class="input flex-1 font-mono text-sm" placeholder="留空则需用户传参" @input="sourceConfigDirty = true">
-        </div>
-      </div>
-    </section>
-
     <!-- 分组管理 -->
-    <section class="mt-12 md:mt-16 reveal">
+    <section class="mb-12 md:mb-16 reveal">
       <div class="flex items-end justify-between mb-3 pb-3 border-b border-border">
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">分组管理</h2>
         <button class="btn-primary btn-sm" @click="openCreateGroup">新增分组</button>
@@ -81,6 +68,22 @@
         </div>
       </div>
       <div class="mt-3 font-mono text-xs text-text-muted">未分组数据源: {{ ungroupedCount }}</div>
+    </section>
+
+    <!-- 数据源默认地址 -->
+    <section class="mt-12 md:mt-16 reveal">
+      <div class="flex items-end justify-between mb-5 pb-3 border-b border-border">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">默认地址</h2>
+        <button v-if="sourceConfigDirty" class="btn-primary btn-sm" :disabled="savingConfig" @click="saveSourceConfigs">保存</button>
+      </div>
+      <UiSpinner v-if="sourceConfigs === null" />
+      <div v-else class="space-y-3">
+        <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="flex items-center gap-3">
+          <div class="font-mono text-sm min-w-[130px]">{{ cfg.source_display }}</div>
+          <div class="font-mono text-xs text-text-muted min-w-[90px]">{{ cfg.source_name }}</div>
+          <input v-model="cfg.base_url" class="input flex-1 font-mono text-sm" placeholder="留空则需用户传参" @input="sourceConfigDirty = true">
+        </div>
+      </div>
     </section>
 
     <!-- 新增数据源弹窗 -->
@@ -310,6 +313,24 @@ const loadDataSources = async () => {
   nextTick(revealObserve)
 }
 
+const rankBusy = ref(null)
+
+// 榜单可见性：后端把它写回设置项 rank_public_sources 的名单，这里只翻开关
+const toggleRankPublic = async (ds) => {
+  if (rankBusy.value === ds.id) return
+  rankBusy.value = ds.id
+  const next = !ds.rank_public
+  try {
+    await adminApi.updateDataSource(ds.id, { rank_public: next })
+    ds.rank_public = next
+    toast(next ? `已开放「${ds.display_name}」的公开榜单` : `已关闭「${ds.display_name}」的公开榜单`, 'success')
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    rankBusy.value = null
+  }
+}
+
 // ===== 分组管理 =====
 const groupNameOf = (id) => {
   if (!id) return ''
@@ -452,11 +473,13 @@ const editDataSource = (ds) => {
 const updateDataSource = async () => {
   updatingDs.value = true
   try {
-    const payload = { 
-      ...editDsForm.value, 
+    const payload = {
+      ...editDsForm.value,
       status: editDsForm.value.status ? 1 : 0,
       sort_order: Number(editDsForm.value.sort_order) || 0
     }
+    // 弹窗不编辑榜单可见性：带着它提交会把设置项白写一遍（行上的开关才是入口）
+    delete payload.rank_public
     // 分组：选具体组走 group_id；未分组走 clear_group（二者互斥，group_id=0 会被后端当成非法组 id）
     const gid = Number(payload.group_id)
     if (gid > 0) {
