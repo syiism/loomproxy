@@ -87,8 +87,9 @@
       </div>
     </div>
 
-    <!-- 数据源候选：启用中的源 + 本会话监控里出现过的源（已下线源的历史明细也要能筛，
-         所以用 datalist 而不是 select——下拉可选、也要能手打一个不在列表里的旧源码） -->
+    <!-- 数据源候选：启用中的源 + 本会话监控里出现过的源（下线源在 data_sources 里是硬删的、
+         进不了下拉，而它们的明细是否已被清掉属运维决定，所以用 datalist 而不是 select——
+         下拉可选、也要能手打一个不在列表里的旧源码） -->
     <datalist id="source-options">
       <option v-for="o in sourceOptions" :key="o.code" :value="o.code">{{ o.name }}</option>
     </datalist>
