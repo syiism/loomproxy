@@ -379,6 +379,17 @@ func TestPoolStatusMasksIdent(t *testing.T) {
 	if len(d.Creds) != 1 || d.Creds[0] != "sn" {
 		t.Fatalf("凭证键名 = %v, want [sn]", d.Creds)
 	}
+
+	// 已启动的池必须报告 Running=true：面板「号池」页据此渲染「运行中/未启动」，
+	// Status() 早先漏了这个字段的赋值，运行中的池也恒显示未启动
+	p.Start()
+	st = p.Status()
+	if !st.Running {
+		t.Fatal("已启动的池应报告 Running=true")
+	}
+	if st.Config.MaintainSec == 0 {
+		t.Errorf("运行中的池应带出运行参数，实得 %+v", st.Config)
+	}
 }
 
 // TestPrioritizeClaimedDevices 转正候选排序：已领取且在有效期内的冷备优先，

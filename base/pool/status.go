@@ -43,6 +43,7 @@ const deviceStatusLimit = 50
 func (p *Pool) Status() *Status {
 	st := &Status{
 		Name:    p.Name(),
+		Running: p.Running(),
 		Counts:  map[string]int64{StatusHot: 0, StatusCold: 0, StatusSpent: 0, StatusDead: 0},
 		Devices: make([]DeviceInfo, 0),
 	}
