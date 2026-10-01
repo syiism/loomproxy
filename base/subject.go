@@ -39,7 +39,7 @@ const (
 	SubjectBookMax     = 120
 	SubjectChapterMax  = 200
 	SubjectMediaMax    = 16
-	subjectKeyIdentMax = 512 // 标识只用于查缓存，不落库；这里只做内存保护
+	subjectKeyIdentMax = 512 // 标识既用于查缓存，也随明细落库（供事后回填名称），此处做内存与列宽保护
 )
 
 // Normalize 统一收口：去空白 + 按 rune 截断，保证写进内存环形缓冲与数据库都界内。
@@ -148,26 +148,96 @@ func identKey(source, ident string) string {
 	return source + "|" + ident
 }
 
-// RememberBook 登记「书标识 → 书名 + 媒介」；name 与 media 都空时不登记
-func RememberBook(source, ident, name, media string) {
-	bookNameCache.put(identKey(source, ident), name, media)
+// SubjectStore 命名缓存的持久化后端（可选）。进程内缓存重启即失效，而「标识 → 名称」
+// 本该更长寿——正文/目录请求只带标识，缓存一空这些调用的名称维度就只能是空。
+// base 不认识 Redis（也不该认识），由装配层在启动时注入；未注入即保持纯内存的现行为。
+//
+// 契约：Save* 不得阻塞请求路径（实现方自己排队或静默降级）；Load* 允许失败，
+// 取不到就当没命中——名称留空是合法状态，猜一个才是错。
+type SubjectStore interface {
+	SaveBook(source, ident, name, media string)
+	SaveChapter(source, ident, title string)
+	LoadBook(source, ident string) (name, media string, ok bool)
+	LoadChapter(source, ident string) (title string, ok bool)
 }
 
-// LookupBook 反查书名与媒介；未命中返回两个空串
+var (
+	subjectStoreMu sync.RWMutex
+	subjectStore   SubjectStore
+)
+
+// SetSubjectStore 注入持久化后端（传 nil 退回纯内存）
+func SetSubjectStore(st SubjectStore) {
+	subjectStoreMu.Lock()
+	subjectStore = st
+	subjectStoreMu.Unlock()
+}
+
+func subjectStoreRef() SubjectStore {
+	subjectStoreMu.RLock()
+	defer subjectStoreMu.RUnlock()
+	return subjectStore
+}
+
+// RememberBook 登记「书标识 → 书名 + 媒介」；name 与 media 都空时不登记
+func RememberBook(source, ident, name, media string) {
+	if ident == "" || (name == "" && media == "") {
+		return
+	}
+	bookNameCache.put(identKey(source, ident), name, media)
+	if st := subjectStoreRef(); st != nil {
+		st.SaveBook(source, ident, name, media)
+	}
+}
+
+// LookupBook 反查书名与媒介；内存未命中时问持久化后端，问到就回填内存（不重复外呼）
 func LookupBook(source, ident string) (name, media string) {
-	e := bookNameCache.get(identKey(source, ident))
-	return e.name, e.media
+	key := identKey(source, ident)
+	if e := bookNameCache.get(key); e.name != "" || e.media != "" {
+		return e.name, e.media
+	}
+	st := subjectStoreRef()
+	if st == nil || key == "" {
+		return "", ""
+	}
+	name, media, ok := st.LoadBook(source, ident)
+	if ok && (name != "" || media != "") {
+		bookNameCache.put(key, name, media)
+		return name, media
+	}
+	return "", ""
 }
 
 // RememberChapter 登记「章节标识 → 章节标题」
 func RememberChapter(source, ident, title string) {
+	if ident == "" || title == "" {
+		return
+	}
 	chapterNameCache.put(identKey(source, ident), title, "")
+	if st := subjectStoreRef(); st != nil {
+		st.SaveChapter(source, ident, title)
+	}
 }
 
-// LookupChapter 反查章节标题
+// LookupChapter 反查章节标题；内存未命中时问持久化后端并回填内存
 func LookupChapter(source, ident string) string {
-	return chapterNameCache.get(identKey(source, ident)).name
+	key := identKey(source, ident)
+	if e := chapterNameCache.get(key); e.name != "" {
+		return e.name
+	}
+	st := subjectStoreRef()
+	if st == nil || key == "" {
+		return ""
+	}
+	if title, ok := st.LoadChapter(source, ident); ok && title != "" {
+		chapterNameCache.put(key, title, "")
+		return title
+	}
+	return ""
 }
+
+// SubjectStoreLoaded 命名缓存是否已接持久化后端（管理端据此说明"重启后名称是否还在"）
+func SubjectStoreLoaded() bool { return subjectStoreRef() != nil }
 
 // NameCacheStats 两个命名缓存的当前条目数（供监控页/自检展示缓存是否在工作）
 func NameCacheStats() (books, chapters int) {

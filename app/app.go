@@ -675,6 +675,9 @@ func Run(ctx context.Context) error {
 	// 监控明细落库：缓冲淘汰批量落库 + 关停兜底落库
 	initMonitorPersistence()
 
+	// 「标识 → 名称」命名缓存挂 Redis（可用时）：重启不再清空，正文调用的名称维度不再留空
+	initSubjectStore(ctx)
+
 	// 缓存预热：在端口监听前预填充 /datasources 和 /data 的缓存
 	// 使用 context + cancel 控制预热生命周期，30 秒超时
 	prewarmCtx, prewarmCancel := context.WithTimeout(ctx, 30*time.Second)

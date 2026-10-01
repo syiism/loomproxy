@@ -53,6 +53,7 @@ func RegisterRoutes(r *gin.Engine) {
 		g.GET("/pools", ListPools)
 		g.GET("/monitor/history", GetMonitorHistory)
 		g.POST("/monitor/reset", ResetMonitor)
+		g.POST("/monitor/backfill-subjects", BackfillSubjectNames)
 		g.POST("/redeem-codes", CreateRedeemCodes)
 		g.GET("/redeem-codes", ListRedeemCodes)
 		g.POST("/redeem-codes/:id/revoke", RevokeRedeemCode)

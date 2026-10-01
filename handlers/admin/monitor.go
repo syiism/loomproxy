@@ -103,14 +103,15 @@ func GetMonitor(c *gin.Context) {
 		overallRate = float64(success) / float64(total) * 100
 	}
 	auth.Ok(c, gin.H{
-		"started_at":     started,
-		"total":          total,
-		"success":        success,
-		"failed":         total - success,
-		"success_rate":   overallRate,
-		"lifetime_total": lifetimeTotal,
-		"items":          rows,
-		"recent":         base.RecentCalls(50),
+		"started_at":            started,
+		"total":                 total,
+		"success":               success,
+		"failed":                total - success,
+		"success_rate":          overallRate,
+		"lifetime_total":        lifetimeTotal,
+		"items":                 rows,
+		"recent":                base.RecentCalls(50),
+		"name_store_persistent": base.SubjectStoreLoaded(),
 	})
 }
 

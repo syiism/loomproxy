@@ -47,6 +47,8 @@ func persistCallLogs(calls []base.RecentCall) {
 			Keyword:      rc.Keyword,
 			BookName:     rc.BookName,
 			ChapterTitle: rc.ChapterTitle,
+			BookIdent:    rc.BookIdent,
+			ChapterIdent: rc.ChapterIdent,
 			Media:        rc.Media,
 			ResultCount:  rc.ResultCount,
 		})

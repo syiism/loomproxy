@@ -162,12 +162,13 @@ scripts/ deploy/    部署脚本与 systemd 单元
 全部配置为环境变量（`conf/conf.go` 为权威定义，含默认值）：
 
 - 服务：`SERVER_HOST`·`SERVER_PORT`·`SERVER_LOG_LEVEL`
-- 网络与缓存：`TIMEOUT_CONNECT`·`TIMEOUT_POOL`·`CACHE_TTL`·`CACHE_MAXSIZE`·`UPSTREAM_CACHE_TTL`·`UPSTREAM_CACHE_MAXSIZE`；`REDIS_*`
+- 网络与缓存：`TIMEOUT_CONNECT`·`TIMEOUT_POOL`·`CACHE_TTL`·`CACHE_MAXSIZE`·`UPSTREAM_CACHE_TTL`·`UPSTREAM_CACHE_MAXSIZE`；`REDIS_*`（`REDIS_PASSWORD` 默认为空 = 无密码；`envStr` 把 `.env` 里的空值也当未设置，默认值写死密码会让无密码 Redis 连不上）
 - 熔断：`CIRCUIT_BREAKER_ENABLED`·`_FAILURES`·`_COOLDOWN`
 - 代理：`UPSTREAM_PROXIES`·`UPSTREAM_PROXY_FILE`（5s 热加载）·`UPSTREAM_PROXY_API`·`_API_SCHEME`·`_API_INTERVAL`·`UPSTREAM_PROXY_CHECK_URL`·`UPSTREAM_UA_ROTATE`；动态池自维护水位（低于 5 自动补充，复验存量 + 逐轮拉新）；**哪些接口走代理由系统设置 `proxy_enabled_sources` 决定**（逗号分隔，支持整源与单接口两种粒度，留空=不限制）
 - 号池：`POOL_ENABLED`·`POOL_COLD_SPARES`·`POOL_MAX_HOT`·`POOL_MAX_DEAD`·`POOL_RENEW_BEFORE_SEC`·`POOL_MAINTAIN_SEC`
 - 数据：`DATA_DIR`·`DATA_FILE_GLOB`·`TZ_OFFSET_HOURS`·`ERROR_CODE`·`RETIRED_SOURCES`（本部署已下线的历史数据源码，逗号分隔，默认空；启动时清理其配置表存量行——底座不携带源，清单归部署侧）·`MONITOR_RETENTION_DAYS`（接口调用明细保留天数，**默认 0=永久保留且不清理**；>0 时过期明细删除前先聚合进 `api_call_stats`）
 - 鉴权：`AUTH_ENABLED`·`API_KEYS`·`AUTH_WHITELIST`·`JWT_SECRET`（**生产必须改**，启用鉴权时用默认值直接拒绝启动）·`JWT_EXPIRE_HOURS`·`ADMIN_USERNAME`·`ADMIN_PASSWORD`
+- 缓存：`REDIS_*` 除接口缓存外，也用于「标识→名称」命名缓存的跨重启持久化（见 §9）
 - 数据库：`DB_TYPE`（代码默认 **mysql**，`.env.example` 与镜像默认 sqlite）·`DB_HOST/PORT/USER/PASSWORD/NAME/SSLMODE`；SQLite 路径为 `DATA_DIR/DB_NAME.db`，经 DSN 启用 WAL + `busy_timeout` + `SetMaxOpenConns(1)`（读事务升级写会触发不被 busy_timeout 重试的 `SQLITE_BUSY_SNAPSHOT`，单连接彻底规避）
 
 登录 token 时长解析优先级：用户个人设置 > 系统设置 `jwt_expire_hours` > `JWT_EXPIRE_HOURS` > 168h；任一级取 -1 即永不过期（JWT 不写 exp、会话表写 100 年）。
@@ -179,7 +180,11 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - **限额解析优先级**：用户数据源级覆盖（`user_quota_overrides`，**追加语义**：生效额度 = 套餐限额 + 覆盖值）> 套餐限额（`quota_limits`）> 不限。
 - **速率限制**（`gate.RateLimitMiddleware`）两种口径并存，优先级：套餐级 > 全局，同级内 窗口计数（`limit_count` + `window_sec`，允许突发）> 固定间隔（`interval`，令牌桶容量 1，不可突发）；套餐级配了任一种即不回退全局。同时作用于 IP 维度与用户维度（key 含 planId），两者都放行才放行；管理员豁免全部；配置直查库，保存即生效。
 - **监控**（`base/metrics.go` + `app/monitor.go`）：内存聚合 + 最近调用环形缓冲，缓冲满 250 条批量落 `api_call_logs`；明细保留期由 `MONITOR_RETENTION_DAYS` 决定（**默认 0=永久，`PurgeExpiredCallLogs` 整段 no-op，归档表恒空、明细表即全量**），设了天数才在删除前按 数据源/接口 聚合累加进 `api_call_stats` 永久归档——`lifetimeCounts` 的「归档 + 明细 + 未落库内存」三口径在两种模式下都不重不漏；`GET /admin/monitor`、`/monitor/trend`（7 天是**展示窗口**、与保留期无关，按天×源聚合，合并内存中未落库明细）、`/monitor/history`、`POST /monitor/reset`。
-- **调用明细的内容维度**（`base/subject.go` + `base/legado/observe.go`）：`api_call_logs` 除路由与状态码外，还记录 `keyword`（搜索词）/`book_name`/`chapter_title`/`media`（媒介）/`result_count`。取值来自**规范化响应**而非请求参数——app 在进 handler 前把 `*base.CallSubject` 挂到 `middleware.CtxCallSubject`，handler 返回后 `ObserveCall` 回填，`source/monitor` 在 `c.Next()` 之后读走（所以被管控拦掉的请求各维度为空）。名称靠「标识→名称」命名缓存跨请求反查（search 灌入、content 反查），上限 2 万条 / 24h，按 `source|标识` 隔离。查询端：`/admin/monitor/history` 支持 `keyword`/`book_name`/`chapter_title` contains 筛选（LIKE 通配符已转义）与 `media_type` 等值；`GET /admin/monitor/subjects?dim=keyword|book|chapter|media&days=&source=` 出维度榜（含 0 结果次数、涉及数据源数、命名缓存条目数）。
+- **调用明细的内容维度**（`base/subject.go` + `base/legado/observe.go`）：`api_call_logs` 除路由与状态码外，还记录 `keyword`（搜索词）/`book_name`/`chapter_title`/`media`（媒介）/`result_count`。取值来自**规范化响应**而非请求参数——app 在进 handler 前把 `*base.CallSubject` 挂到 `middleware.CtxCallSubject`，handler 返回后 `ObserveCall` 回填，`source/monitor` 在 `c.Next()` 之后读走（所以被管控拦掉的请求各维度为空）。名称靠「标识→名称」命名缓存跨请求反查（search 灌入、content 反查），上限 2 万条 / 24h，按 `source|标识` 隔离。
+  该缓存可挂 Redis（`REDIS_ENABLED` 且可达时由 `app.initSubjectStore` 注入 `base.SubjectStore`）从而**跨重启存活**；
+  未启用或连不上就是纯内存（现状行为），`/admin/monitor` 的 `name_store_persistent` 字段说明当前是哪种。
+  明细同时记 `book_ident`/`chapter_ident`：名称当时反查不到（缓存未命中）也先留标识，等映射建立后由
+  `POST /admin/monitor/backfill-subjects` 幂等回填（单次上限 5000 行，只补反查得到的，猜不出就留着）。查询端：`/admin/monitor/history` 支持 `keyword`/`book_name`/`chapter_title` contains 筛选（LIKE 通配符已转义）与 `media_type` 等值；`GET /admin/monitor/subjects?dim=keyword|book|chapter|media&days=&source=` 出维度榜（含 0 结果次数、涉及数据源数、命名缓存条目数）。
   `dim=book`/`dim=chapter` **只统计 `action='content'`** 的明细（动作白名单写在 `subjectDims` 里，SQL 与内存两条读取路径都过滤）：一次打开书目会产生 detail 与分多页的 chapter，全计入会把同一本书凭空乘几倍——榜单回答「读了什么正文」而非「点开了什么」。`keyword` 与 `media` 不受动作限制。
 - **自动拉黑**（`middleware/ipblock/autoblock.go`）：滑动窗口统计数据源路由的 403/429，达阈值写黑名单（`source=auto`）；回环地址永不自动拉黑；开关与阈值走系统设置（`auto_block_enabled`·`auto_block_threshold`·`auto_block_window_sec`）。
 - 历史字段名注意：`quota_costs` / `quota_cost_plans` / `user_quota_overrides` 的 `group_code` 列**实际存的是数据源码**（组概念已移除，启动时按各源 `LegacyGroups` 声明把存量组码行展开为每源一行并删除组行；无声明则组行留在库中不生效）。同理，本部署下线的历史源由环境变量 `RETIRED_SOURCES` 声明，seed 据此清理其在各配置表的存量行（`db.cleanupRemovedSources`，历史用量流水保留）。

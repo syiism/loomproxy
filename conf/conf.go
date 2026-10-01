@@ -243,7 +243,7 @@ func Load() {
 		RedisEnabled:  envBool("REDIS_ENABLED", true),
 		RedisHost:     envStr("REDIS_HOST", "localhost"),
 		RedisPort:     envInt("REDIS_PORT", 6379),
-		RedisPassword: envStr("REDIS_PASSWORD", "123456"),
+		RedisPassword: envStr("REDIS_PASSWORD", ""), // 默认无密码：envStr 把 .env 里的空值也当未设置，默认值写死一个密码就等于让"无密码的 Redis"连不上
 		RedisDB:       envInt("REDIS_DB", 0),
 
 		JWTSecret:      envStr("JWT_SECRET", "loomproxy-default-secret-change-me"),

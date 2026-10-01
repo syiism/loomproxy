@@ -30,6 +30,11 @@ type RecentCall struct {
 	Keyword      string `json:"keyword,omitempty"`
 	BookName     string `json:"book_name,omitempty"`
 	ChapterTitle string `json:"chapter_title,omitempty"`
+	// 标识与名称一起记：正文/目录请求只带 bookId/itemId，名称要靠进程内命名缓存反查，
+	// 重启后缓存空了就只能查到标识。名字当时补不上不代表永远补不上——
+	// 标识落库后，缓存重新建立起来时可以按 (source, 标识) 回填一次（见 /admin/monitor/backfill-subjects）。
+	BookIdent    string `json:"book_ident,omitempty"`
+	ChapterIdent string `json:"chapter_ident,omitempty"`
 	Media        string `json:"media,omitempty"` // 枚举见 media.go；空 = 未判定
 	ResultCount  int    `json:"result_count"`
 }
@@ -110,6 +115,8 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 		rc.Keyword = subject.Keyword
 		rc.BookName = subject.BookName
 		rc.ChapterTitle = subject.ChapterTitle
+		rc.BookIdent = subject.BookKey
+		rc.ChapterIdent = subject.ChapterKey
 		rc.Media = subject.Media
 		rc.ResultCount = subject.ResultCount
 	}
