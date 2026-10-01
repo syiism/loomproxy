@@ -17,7 +17,7 @@
     </PageHeader>
 
     <UiSpinner v-if="loading" />
-    <UiEmpty v-else-if="denied" title="榜单未开放" text="管理员尚未在「系统设置 · 站点」开启「普通用户可见排行榜」。" />
+    <UiEmpty v-else-if="denied" title="榜单未开放" text="管理员尚未在「系统设置 · 站点」的「可见榜单的数据源」里勾选任何数据源。" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
 
     <div v-else-if="boards.length" class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 items-start">

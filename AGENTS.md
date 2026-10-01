@@ -151,7 +151,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 3. **用户自助 API 密钥**（`/apikey`，JWT 会话保护）：创建（`lp_` 前缀，明文可随时查回，每人上限 10 个）/ 列表 / 撤销。网关匹配到用户密钥时**注入归属身份**，计费/配额/监控/套餐门控按归属用户生效；静态 env 键保持匿名语义。密钥不适用于面板会话接口。
 4. **会话**：JWT 的 `jti` 对应 `auth_sessions` 行（设备名/IP/最后活跃）；两层鉴权都校验会话未被吊销且未过期，**无 jti 的旧 token 一律 401**。删除/禁用用户、找回密码都会吊销相应会话。
 
-关键路由分组：`/auth/*`（register·login（用户名或邮箱）·forgot-password·me·password·logout）、`/verify/*`（场景化验证码，`GET /verify/config` 供前端决定是否渲染输入框；发码通道 `mock`/`http` 模板适配器由系统设置切换，默认全部场景关闭）、`/quota/dashboard` 与 `/quota/usage-logs`、`/user/*`（baseUrl 配置·导入书源·卡密兑换）、`/rank/boards`（排行榜聚合榜，JWT 会话保护，是否放行普通用户由系统设置 `rank_public_enabled` 决定，默认关闭）、`/admin/*`（详见 §9）、`/datasources`·`/data`（免鉴权，Redis 缓存）、`/announcement`、`/panel`。
+关键路由分组：`/auth/*`（register·login（用户名或邮箱）·forgot-password·me·password·logout）、`/verify/*`（场景化验证码，`GET /verify/config` 供前端决定是否渲染输入框；发码通道 `mock`/`http` 模板适配器由系统设置切换，默认全部场景关闭）、`/quota/dashboard` 与 `/quota/usage-logs`、`/user/*`（baseUrl 配置·导入书源·卡密兑换）、`/rank/boards`（排行榜聚合榜，JWT 会话保护，放行范围由系统设置 `rank_public_sources` **按数据源**指定，留空=不开放）、`/admin/*`（详见 §9）、`/datasources`·`/data`（免鉴权，Redis 缓存）、`/announcement`、`/panel`。
 
 ## 8. 弹性获取栈与配置
 
@@ -214,7 +214,11 @@ scripts/ deploy/    部署脚本与 systemd 单元
   **与管理端的 `/admin/monitor/subjects` 物理错开**——
   后者仍带 success_rate/latency/sources/last_called_at 等运维字段，不该整包交给普通用户。
   卡片头部只标条目数，不显示「合计次数」——合计随窗口与筛选摆动、且容易被读成"独立用户数"。
-  开放与否由管理员决定（系统设置 `rank_public_enabled`，默认关闭；关闭时非管理员 403，管理员始终可读）。
+  放行范围由管理员按**数据源**指定（系统设置 `rank_public_sources`，逗号分隔，留空=谁都不开放）：
+  名单外的源既不能单独筛（403），也不会被"全部数据源"那次合并统计算进去（`subjectrank.Query` 的
+  `allowSources` 在 SQL 与内存两条路径上都收口），候选列表也只剩名单内的源——
+  只校验传入参数而不收窄合并统计，等于名单形同虚设。管理员不受名单限制。
+  设置页用 `widget: 'sources'`（复选框组，候选来自 `/datasources`，值以逗号分隔存库）。
 - **监控页的数据源筛选用 `datalist` 而非 `select`**（`Monitor.vue` 的维度榜与历史调用两处共用一份候选）：
   候选来自 `/datasources`（启用中的源，带展示名），但**已下线的源在 `data_sources` 里是硬删的**，
   下拉里不会出现、而它们在 `api_call_logs` 里仍有大量历史明细——管理员必须能手打旧源码筛历史，
@@ -237,7 +241,8 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - 号池与设备凭证（`pool_devices.attrs`）属上游签名凭证：接口响应与日志只出脱敏值（保留前 8 后 4），管理面板不展示原值。
 - **许可与合规**：代码按 AGPL-3.0 发布（`LICENSE`），使用条件见 `DISCLAIMER.md`。引入新依赖前确认许可证与 AGPL 兼容（`go.mod` 是唯一的依赖清单，别绕过）；不要把凭证、上游签名参数或真实 `.env` 内容写进仓库、文档与测试夹具。`api_call_logs` 的内容维度是用户阅读/调用行为数据，默认永久保留（`MONITOR_RETENTION_DAYS=0`），对外部署前必须按合规要求设定保留期。
 - **调用明细含用户阅读内容**（搜索词/书名/章节名/媒介）：属敏感行为数据，**明细**只经 `/admin/*`（后端 `AdminRequired()`）暴露给管理员，不进访问日志、不出网关；
-  管理员可用 `rank_public_enabled` 把**聚合榜**（`/rank/boards`：两个维度、top20、只有名称与次数）放开给登录用户——
+  管理员可按**数据源**把**聚合榜**（`/rank/boards`：两个维度、top20、只有名称与次数）放开给登录用户
+  （`rank_public_sources`）——
   聚合不等于明细，但窗口越短稀有词越容易反推到个人，所以公开端的窗口取值被代码钉死为 1/7/30 天且不接受更细的筛选；默认永久保留（`MONITOR_RETENTION_DAYS=0`）意味着这些记录长期驻库——对外部署前按合规要求设定保留天数。
 - 面板路由守卫在前端，真正可信的权限校验是后端 `AdminRequired()`——后端是唯一信任边界。
 

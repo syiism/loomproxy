@@ -34,7 +34,7 @@ func GetMonitorSubjects(c *gin.Context) {
 	sourceFilter := c.Query("source")
 
 	// 管理端上限 50 条，并允许按数据源筛
-	items, err := subjectrank.Query(dimKey, days, sourceFilter, 50)
+	items, err := subjectrank.Query(dimKey, days, sourceFilter, 50, nil) // 管理端不限源
 	if err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误: "+err.Error())
 		return

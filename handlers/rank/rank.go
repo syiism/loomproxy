@@ -23,7 +23,10 @@ import (
 	"loomproxy/models"
 )
 
-const settingKeyPublic = "rank_public_enabled"
+// settingPublicSources 源级白名单：逗号分隔的数据源码，**留空=不对普通用户开放任何榜单**。
+// 比一个总开关多一层，因为榜是跨源合并计数的——只允许看番茄红果时，
+// 不传 source 的那次"全部数据源"统计也必须只数它，否则未授权源的热度照样漏出去。
+const settingPublicSources = "rank_public_sources"
 
 // 公开榜的维度与条数上限：维度白名单在这里也钉一次，
 // 免得以后有人往 boards 里加 chapter/media 就当"只是多个字段"
@@ -73,9 +76,14 @@ func isAdmin(c *gin.Context) bool {
 
 // GetBoards 返回两张榜的聚合条目（只含名称与次数）
 func GetBoards(c *gin.Context) {
-	if db.GetSetting(settingKeyPublic) != "true" && !isAdmin(c) {
-		auth.Fail(c, http.StatusForbidden, "榜单尚未对普通用户开放，可请管理员在「系统设置 · 站点」开启")
-		return
+	admin := isAdmin(c)
+	var allow []string // nil = 不限（管理员）；非 nil = 只统计这些源
+	if !admin {
+		allow = splitList(db.GetSetting(settingPublicSources))
+		if len(allow) == 0 {
+			auth.Fail(c, http.StatusForbidden, "榜单未对普通用户开放，可请管理员在「系统设置 · 站点」按数据源勾选")
+			return
+		}
 	}
 
 	days := subjectrank.NormalizeDays(queryInt(c, "days", 7))
@@ -106,11 +114,25 @@ func GetBoards(c *gin.Context) {
 			auth.Fail(c, http.StatusBadRequest, "source 不是启用中的数据源")
 			return
 		}
+		if !sourceIn(allow, sourceFilter) {
+			auth.Fail(c, http.StatusForbidden, "该数据源的榜单未开放")
+			return
+		}
+	}
+	// 非管理员看到的候选也只剩被开放的源——列未开放的源本身就是信息
+	if allow != nil {
+		filtered := make([]sourceOption, 0, len(allow))
+		for _, o := range sources {
+			if sourceIn(allow, o.Code) {
+				filtered = append(filtered, o)
+			}
+		}
+		sources = filtered
 	}
 
 	out := make([]boardPayload, 0, len(boards))
 	for _, b := range boards {
-		items, err := subjectrank.Query(b.Dim, days, sourceFilter, boardLimit)
+		items, err := subjectrank.Query(b.Dim, days, sourceFilter, boardLimit, allow)
 		if err != nil {
 			auth.Fail(c, http.StatusInternalServerError, "榜单统计失败")
 			return
@@ -126,8 +148,35 @@ func GetBoards(c *gin.Context) {
 	}
 	auth.Ok(c, gin.H{
 		"days": days, "boards": out, "limit": boardLimit,
-		"source": sourceFilter, "sources": sources,
+		"source": sourceFilter, "sources": sources, "unrestricted": admin,
 	})
+}
+
+// splitList 逗号分隔列表 → 去空去重切片；返回 nil 仅当输入为空（区分"不限"与"零个"由调用方决定）
+func splitList(raw string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+func sourceIn(allow []string, code string) bool {
+	if allow == nil {
+		return true // 管理员不限
+	}
+	for _, a := range allow {
+		if a == code {
+			return true
+		}
+	}
+	return false
 }
 
 // enabledSources 启用中的数据源（按 sort_order 排），供前端筛选下拉
@@ -161,7 +210,7 @@ func queryInt(c *gin.Context, key string, def int) int {
 	return n
 }
 
-// RegisterRoutes 挂载 /rank 路由（JWT 会话保护；是否放行由 rank_public_enabled 决定）
+// RegisterRoutes 挂载 /rank 路由（JWT 会话保护；放行范围由 rank_public_sources 按源决定）
 func RegisterRoutes(r *gin.Engine) {
 	g := r.Group("/rank")
 	g.Use(auth.AuthRequired())

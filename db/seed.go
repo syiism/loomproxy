@@ -43,7 +43,7 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "legado_import_url", Value: "", Type: "string", Description: "书源 JSON 直链（个人中心「导入书源」按钮，legado:// 拉起阅读 App）"},
 		{Key: "jwt_expire_hours", Value: "168", Type: "number", Description: "登录 token 有效时长（小时），-1 表示永不过期；用户可在个人中心设置自己的时长覆盖"},
 		{Key: "proxy_enabled_sources", Value: "", Type: "string", Description: "启用 IP 代理池的数据源/接口，逗号分隔（如 novel_a/chapter 单接口、novel_a 整源）；留空表示不限制（全部走代理）"},
-		{Key: "rank_public_enabled", Value: "false", Type: "bool", Description: "是否允许普通用户查看排行榜（/rank/boards 只回名称与次数的聚合；关闭时仅管理员可见）"},
+		{Key: "rank_public_sources", Value: "", Type: "string", Description: "允许普通用户查看排行榜的数据源，逗号分隔（如 fq_hg,xmly）；留空=不对普通用户开放任何榜单。管理员不受此名单限制"},
 		{Key: "announcement", Value: "", Type: "string", Description: "站内公告（留空=不展示；登录后面板顶部横幅展示，用户可关闭，内容变更后重新展示）"},
 		{Key: "verify_code_scenes", Value: "", Type: "string", Description: "启用验证码校验的场景，逗号分隔（register、forgot_password）；留空=全部关闭，业务行为不变"},
 		{Key: "verify_send_interval_sec", Value: "60", Type: "number", Description: "验证码发送冷却：同一目标两次发码的最小间隔（秒）"},
@@ -59,6 +59,20 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "auto_block_enabled", Value: "false", Type: "bool", Description: "IP 自动拉黑开关：滑动窗口内 403/429 次数达阈值自动加入黑名单（回环地址永不自动拉黑）"},
 		{Key: "auto_block_threshold", Value: "30", Type: "number", Description: "IP 自动拉黑阈值：窗口内允许的 403/429 次数上限"},
 		{Key: "auto_block_window_sec", Value: "60", Type: "number", Description: "IP 自动拉黑统计窗口（秒）"},
+	}
+
+	// 已废弃的设置键：策略换了形态时把旧键清掉，否则它会以「未被管理的 key」形式
+	// 赖在面板「自定义配置」卡里，看起来像一个还能生效的开关。
+	// rank_public_enabled（bool 总开关）被 rank_public_sources（按源白名单）取代。
+	for _, gone := range []string{"rank_public_enabled"} {
+		var n int64
+		db.Model(&models.SystemSetting{}).Unscoped().Where("`key` = ?", gone).Count(&n)
+		if n > 0 {
+			if err := db.Unscoped().Where("`key` = ?", gone).Delete(&models.SystemSetting{}).Error; err != nil {
+				return err
+			}
+			log.Printf("已移除废弃设置项: %s（由按源白名单取代）", gone)
+		}
 	}
 
 	for _, setting := range settings {

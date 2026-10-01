@@ -2,7 +2,8 @@ package test
 
 // 公开排行榜的权限边界：
 //   - 匿名不可读（JWT 会话保护）
-//   - 是否放行普通用户由管理员用系统设置 rank_public_enabled 决定，默认关闭
+//   - 放行范围由管理员用系统设置 rank_public_sources 按**数据源**指定，留空=谁都不开放
+//   - 不在名单内的源：既不能单独筛（403），也不会被"全部数据源"那次合并统计算进去
 //   - 放行时也只回「名称 + 次数」，管理端才有的调用者/时间/延迟/数据源维度一律不出现在这里
 //   - 与 /admin/monitor/subjects 错开：普通用户打管理端点仍是 403
 
@@ -30,7 +31,7 @@ func TestRankBoardsAccessControl(t *testing.T) {
 		t.Fatalf("匿名访问公开榜应 401，实为 %d", status)
 	}
 
-	// 2) 默认关闭：普通用户 403，管理员仍可读
+	// 2) 名单为空（默认）：普通用户 403，管理员仍可读
 	status, env := doJSON(t, srv, "GET", "/rank/boards", nil, authHeader(user))
 	if status != http.StatusForbidden {
 		t.Fatalf("开关关闭时普通用户应 403，实为 %d（msg=%s）", status, env.Msg)
@@ -39,9 +40,9 @@ func TestRankBoardsAccessControl(t *testing.T) {
 		t.Fatalf("管理员在开关关闭时也应可读，实为 %d（msg=%s）", status, env.Msg)
 	}
 
-	// 3) 管理员开启后，普通用户可读，且字段被削到只剩名称与次数
-	if status, env = doJSON(t, srv, "PUT", "/admin/settings/rank_public_enabled",
-		map[string]string{"value": "true"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
+	// 3) 管理员按源开放后，普通用户可读，且字段被削到只剩名称与次数
+	if status, env = doJSON(t, srv, "PUT", "/admin/settings/rank_public_sources",
+		map[string]string{"value": "fake_a,fake_b"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
 		t.Fatalf("开启开关失败: status=%d msg=%s", status, env.Msg)
 	}
 	status, env = doJSON(t, srv, "GET", "/rank/boards?days=7", nil, authHeader(user))
@@ -117,8 +118,8 @@ func TestRankBoardsSourceFilter(t *testing.T) {
 	base.ResetMetrics()
 	admin := adminToken(t, srv)
 
-	if status, env := doJSON(t, srv, "PUT", "/admin/settings/rank_public_enabled",
-		map[string]string{"value": "true"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
+	if status, env := doJSON(t, srv, "PUT", "/admin/settings/rank_public_sources",
+		map[string]string{"value": "fake_a,fake_b"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
 		t.Fatalf("开启公开榜失败: status=%d msg=%s", status, env.Msg)
 	}
 
@@ -176,5 +177,69 @@ func TestRankBoardsSourceFilter(t *testing.T) {
 	// 未知/未启用的源直接 400，避免返回一张空榜让人以为是没数据
 	if status, _ := doJSON(t, srv, "GET", "/rank/boards?source=nope", nil, authHeader(admin)); status != http.StatusBadRequest {
 		t.Errorf("非法 source 应 400，实为 %d", status)
+	}
+}
+
+// TestRankBoardsSourceAllowlist 名单是"按源"而不是"按请求参数"：
+// 只放开 fake_a 时，fake_b 既不能单独筛，也不会被「全部数据源」那次合并统计算进去
+// ——否则用户只要不传 source 就能看到未授权源的热度，名单等于没有。
+func TestRankBoardsSourceAllowlist(t *testing.T) {
+	srv := newTestServer(t)
+	base.ResetMetrics()
+	admin := adminToken(t, srv)
+	user := registerUser(t, srv, "allow_u1", "allow_u1@example.com", "pass1234")
+
+	if status, env := doJSON(t, srv, "PUT", "/admin/settings/rank_public_sources",
+		map[string]string{"value": "fake_a"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
+		t.Fatalf("设置源名单失败: status=%d msg=%s", status, env.Msg)
+	}
+	insertSubjectCall(t, "fake_a", "search", "只放开的源", "", base.MediaNovel, 1, http.StatusOK)
+	// 一次调用一行（insertSubjectCall 的数值参数是 result_count，不是次数——踩过两次了）
+	for i := 0; i < 9; i++ {
+		insertSubjectCall(t, "fake_b", "search", "只放开的源", "", base.MediaAudio, 1, http.StatusOK)
+	}
+
+	countOf := func(t *testing.T, token, query string) int64 {
+		t.Helper()
+		_, env := doJSON(t, srv, "GET", "/rank/boards"+query, nil, authHeader(token))
+		if env.Code != 0 {
+			t.Fatalf("%s 期望成功，实得 msg=%s", query, env.Msg)
+		}
+		for _, raw := range env.dataMap(t)["boards"].([]interface{}) {
+			b, _ := raw.(map[string]interface{})
+			if b["dim"] != "keyword" {
+				continue
+			}
+			for _, r := range b["rows"].([]interface{}) {
+				it, _ := r.(map[string]interface{})
+				if it["name"] == "只放开的源" {
+					return int64(it["total"].(float64))
+				}
+			}
+		}
+		return -1
+	}
+
+	if got := countOf(t, user, "?days=7"); got != 1 {
+		t.Errorf("不传 source 时也只该统计被放开的 fake_a（1 次），实得 %d", got)
+	}
+	if status, _ := doJSON(t, srv, "GET", "/rank/boards?source=fake_b", nil, authHeader(user)); status != http.StatusForbidden {
+		t.Errorf("筛未放开的源应 403，实为 %d", status)
+	}
+
+	// 候选列表也只剩被放开的源：列出未授权源本身就是信息
+	_, env := doJSON(t, srv, "GET", "/rank/boards", nil, authHeader(user))
+	codes := map[string]bool{}
+	for _, raw := range env.dataMap(t)["sources"].([]interface{}) {
+		o, _ := raw.(map[string]interface{})
+		codes[o["code"].(string)] = true
+	}
+	if !codes["fake_a"] || codes["fake_b"] {
+		t.Errorf("候选应只剩 fake_a，实得 %+v", codes)
+	}
+
+	// 管理员不受名单限制：同一时刻仍能看到两个源的合并值（1+9）与全部候选
+	if got := countOf(t, admin, "?days=7"); got != 10 {
+		t.Errorf("管理员应看到合并后的 10 次，实得 %d", got)
 	}
 }

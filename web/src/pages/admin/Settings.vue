@@ -35,6 +35,14 @@
                 :rows="f.rows || 3"
                 :disabled="fieldDisabled(f)"
               ></textarea>
+              <div v-else-if="f.widget === 'sources'" class="flex flex-wrap gap-x-4 gap-y-2">
+                <label v-if="sourceChoices.length === 0" class="text-xs text-text-muted">暂无启用中的数据源</label>
+                <label v-for="o in sourceChoices" :key="o.code" class="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input type="checkbox" class="accent-accent" :value="o.code" :checked="sourceList(f.key).includes(o.code)" @change="toggleSource(f.key, o.code, $event.target.checked)">
+                  <span>{{ o.name }}</span>
+                  <span class="font-mono text-xs text-text-muted">{{ o.code }}</span>
+                </label>
+              </div>
               <template v-else-if="f.widget === 'json'">
                 <textarea
                   v-model="form[f.key]"
@@ -162,7 +170,7 @@ import UiField from '../../components/UiField.vue'
 import UiSwitch from '../../components/UiSwitch.vue'
 import UiSpinner from '../../components/UiSpinner.vue'
 import UiEmpty from '../../components/UiEmpty.vue'
-import { adminApi } from '../../api/index.js'
+import { adminApi, miscApi } from '../../api/index.js'
 import { toast, revealObserve } from '../../utils.js'
 
 const PROTECTED = ['register_enabled', 'default_role', 'default_quota_plan']
@@ -176,7 +184,7 @@ const GROUPS = [
       { key: 'site_name', label: '站点名称', widget: 'text' },
       { key: 'maintenance_mode', label: '维护模式', widget: 'switch' },
       { key: 'announcement', label: '站内公告', widget: 'textarea', rows: 4 },
-      { key: 'rank_public_enabled', label: '普通用户可见排行榜', widget: 'switch' },
+      { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources' },
       { key: 'legado_import_url', label: '书源导入链接', widget: 'text' },
     ],
   },
@@ -250,6 +258,22 @@ const customEntries = computed(() => list.value.filter(s => !MANAGED_KEYS.has(s.
 
 // gate: 'providerHttp' 表示仅 http 通道可编辑（mock 下置灰）
 const fieldDisabled = (f) => f.gate === 'providerHttp' && form.value.verify_provider === 'mock'
+
+// sources widget：复选框组 <-> 逗号分隔字符串（库里存的就是 proxy_enabled_sources 那种形态）
+const sourceChoices = ref([])
+const sourceList = (key) => String(form.value[key] ?? '').split(',').map(x => x.trim()).filter(Boolean)
+const toggleSource = (key, code, on) => {
+  const cur = sourceList(key)
+  const next = on ? [...new Set([...cur, code])] : cur.filter(c => c !== code)
+  form.value[key] = next.join(',')
+}
+
+const loadSourceChoices = async () => {
+  try {
+    const list = await miscApi.datasources()
+    sourceChoices.value = (list || []).map(d => ({ code: d.id, name: d.name || d.id }))
+  } catch (e) { /* 拉不到候选时仍可手改库值，不阻塞设置页 */ }
+}
 
 // json widget：本地即时校验（后端同样会校验并压缩，这里只是让坏值当场可见）
 const jsonState = ref({})
@@ -387,6 +411,6 @@ const confirmDelete = async () => {
   } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
 }
 
-onMounted(() => { revealObserve() })
+onMounted(() => { load(); loadSourceChoices(); revealObserve() })
 load()
 </script>

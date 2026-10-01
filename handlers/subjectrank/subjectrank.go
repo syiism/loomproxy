@@ -89,6 +89,16 @@ func ValidDim(key string) bool {
 
 func normalizeDim(key string) string { return strings.ToLower(strings.TrimSpace(key)) }
 
+// sourceAllowed 白名单命中判定（内存侧合并用，与 SQL 的 source IN (...) 同一口径）
+func sourceAllowed(allowed []string, source string) bool {
+	for _, a := range allowed {
+		if a == source {
+			return true
+		}
+	}
+	return false
+}
+
 func actionAllowed(allowed []string, action string) bool {
 	if len(allowed) == 0 {
 		return true
@@ -102,8 +112,10 @@ func actionAllowed(allowed []string, action string) bool {
 }
 
 // Query 聚合某维度在窗口内的榜单，按调用次数降序取前 limit 条（limit<=0 不截断）。
-// sourceFilter 非空时只统计该数据源。
-func Query(dimKey string, days int, sourceFilter string, limit int) ([]Item, error) {
+// sourceFilter 非空时只统计该数据源；allowSources 非 nil 时把统计范围**钉死在这份白名单内**
+// （含 sourceFilter 为空时的合并统计——否则「全部数据源」这一档会把未授权源的热度漏出去）。
+// allowSources 为空切片表示零个源可见，非 nil 即生效；传 nil 表示不限制。
+func Query(dimKey string, days int, sourceFilter string, limit int, allowSources []string) ([]Item, error) {
 	key := normalizeDim(dimKey)
 	dim, ok := Dims[key]
 	if !ok {
@@ -119,6 +131,15 @@ func Query(dimKey string, days int, sourceFilter string, limit int) ([]Item, err
 	if sourceFilter != "" {
 		cond += " AND source = ?"
 		args = append(args, sourceFilter)
+	}
+	if allowSources != nil {
+		if len(allowSources) == 0 {
+			return []Item{}, nil // 白名单是空集：没有任何源可见，不必查库
+		}
+		cond += " AND source IN (?" + strings.Repeat(",?", len(allowSources)-1) + ")"
+		for _, s := range allowSources {
+			args = append(args, s)
+		}
 	}
 	if len(dim.OnlyActions) > 0 {
 		cond += " AND action IN (?" + strings.Repeat(",?", len(dim.OnlyActions)-1) + ")"
@@ -169,6 +190,9 @@ func Query(dimKey string, days int, sourceFilter string, limit int) ([]Item, err
 	// 合并内存中尚未落库的明细（缓冲满 250 条才批量落库，低流量时近期记录几乎都在内存里）
 	for _, rc := range base.RecentCalls(0) {
 		if rc.Time.Before(from) || (sourceFilter != "" && rc.Source != sourceFilter) {
+			continue
+		}
+		if allowSources != nil && !sourceAllowed(allowSources, rc.Source) {
 			continue
 		}
 		if !actionAllowed(dim.OnlyActions, rc.Action) {
