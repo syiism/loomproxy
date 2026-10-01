@@ -27,7 +27,7 @@
             <div class="min-w-0 flex-1">
               <div class="truncate text-sm" :title="it.name">{{ it.name }}</div>
               <div class="mt-1 flex flex-wrap items-center gap-1.5">
-                <UiTag v-for="s in it.sources" :key="s" tone="pale-gray" :label="s" />
+                <UiTag v-for="s in it.sources" :key="s" tone="gray" :label="s" />
                 <span v-if="it.empty_results" class="font-mono text-xs text-pale-yellow-fg"
                       :title="'返回 2xx 但结果为 0 的次数'">空结果 {{ it.empty_results }}</span>
                 <span v-if="it.last_called_at" class="font-mono text-xs text-text-muted">{{ relTime(it.last_called_at) }}</span>
@@ -96,11 +96,13 @@ const load = async () => {
         totalCalls: items.reduce((n, it) => n + (it.total || 0), 0),
       }
     })
-    nextTick(revealObserve)
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
+    // 必须在 loading 落回 false 之后再观察：卡片的 .reveal 此刻才存在于 DOM，
+    // 而 revealObserve 只观察调用时已存在的 .reveal:not(.in)，观察不到就永远停在 opacity:0
+    nextTick(revealObserve)
   }
 }
 

@@ -200,6 +200,9 @@ scripts/ deploy/    部署脚本与 systemd 单元
   `json.Compact` 校验并压成单行（只吃 token 间空白，字符串内容与转义原样保留），非法即 400——
   坏值在写入时拒绝，比在运行时（如发码静默失败）发现便宜。type 由 `db/seed.go` 声明并在启动时对账，
   面板不提供改类型入口，所以老库的 `string` 行会跟着声明走。
+- **`reveal` 动画依赖观察时机**：`.reveal` 默认 `opacity:0`，由 `utils.revealObserve()` 给元素加 `.in` 才显现，
+  而它只观察**调用那一刻已存在**的 `.reveal:not(.in)`。所以异步页面必须先把 `loading` 置回 false、
+  再 `nextTick(revealObserve)`——反过来写会让数据取回来了却整块不可见（`Ranking.vue` 初版即如此）。
 - **排行榜页**（`web/src/pages/Ranking.vue`，路由 `/ranking`，`meta.admin`）：顶部导航在「概览」与「接入指南」之间，
   非管理员不显示。数据全部来自 `/admin/monitor/subjects`（`dim=keyword` 搜索热词榜、`dim=book` 阅读榜，各取 top20），
   不新增后端端点——调用明细是用户阅读行为数据，按 §11 只经 `/admin/*` 暴露。
