@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -181,8 +182,20 @@ func GetUser(c *gin.Context) {
 
 type updateUserRequest struct {
 	Nickname *string `json:"nickname"`
-	Email    *string `json:"email"`
+	Email    *string `json:"email" binding:"omitempty,email"`
 	Status   *int    `json:"status"`
+}
+
+// isDuplicateKeyErr 跨方言识别唯一约束冲突（MySQL 1062 / SQLite 与 PostgreSQL 的文案不同）。
+// 预检挡不住并发窗口，所以写入侧也要能把它归到 409 而不是 500。
+func isDuplicateKeyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Duplicate entry") ||
+		strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "duplicate key value violates")
 }
 
 // UpdateUser 更新用户信息
@@ -201,10 +214,11 @@ func UpdateUser(c *gin.Context) {
 	if req.Email != nil {
 		cleaned := strings.ToLower(strings.TrimSpace(*req.Email))
 		if cleaned == "" {
-			updates["email"] = nil
-		} else {
-			updates["email"] = cleaned
+			// users.email 声明为 not null，写 NULL 会撞约束变成 500；历史 NULL 行只读不改
+			auth.Fail(c, http.StatusBadRequest, "邮箱不能清空，请保留原邮箱或填写新邮箱")
+			return
 		}
+		updates["email"] = cleaned
 	}
 	if req.Status != nil {
 		updates["status"] = *req.Status
@@ -215,7 +229,35 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
+	// 邮箱唯一性预检（与建用户、注册同一口径）：users.email 的唯一索引**覆盖软删除行**，
+	// 注销账号仍占着邮箱。缺这一步时约束冲突会一路撞到驱动，变成没头没尾的 500。
+	// 占用者 id 写进文案：管理员据此决定是换邮箱还是释放注销账号的占用。
+	uid, _ := strconv.ParseUint(id, 10, 64)
+	if email, ok := updates["email"]; ok {
+		var holder models.User
+		err := db.DB.Unscoped().Where("email = ? AND id <> ?", email, uid).First(&holder).Error
+		if err == nil {
+			if holder.DeletedAt.Valid {
+				auth.Fail(c, http.StatusConflict,
+					"该邮箱已被注销账号占用（用户 #"+strconv.FormatUint(uint64(holder.ID), 10)+"），不可分配")
+			} else {
+				auth.Fail(c, http.StatusConflict,
+					"邮箱已被用户 #"+strconv.FormatUint(uint64(holder.ID), 10)+" 使用")
+			}
+			return
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			auth.Fail(c, http.StatusInternalServerError, "数据库错误")
+			return
+		}
+	}
+
 	if err := db.DB.Model(&models.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		if isDuplicateKeyErr(err) { // 预检与写入之间被人抢注，兜底成 409 而不是 500
+			auth.Fail(c, http.StatusConflict, "用户名或邮箱已被占用")
+			return
+		}
+		log.Printf("ERROR: 更新用户 %s 失败: %v", id, err)
 		auth.Fail(c, http.StatusInternalServerError, "更新失败")
 		return
 	}

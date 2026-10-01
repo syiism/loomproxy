@@ -177,6 +177,65 @@ func TestRegisterReuseSoftDeleted(t *testing.T) {
 	loginUser(t, srv, "frank", "pass1234")
 }
 
+// TestUpdateUserEmailConflict 回归：管理侧改邮箱撞唯一索引时必须 409 说明占用者，
+// 而不是让约束错误一路撞到驱动变成没头没尾的 500（users.email 的唯一索引覆盖软删除行）
+func TestUpdateUserEmailConflict(t *testing.T) {
+	srv := newTestServer(t)
+	admin := authHeader(adminToken(t, srv))
+
+	registerUser(t, srv, "helen", "helen@example.com", "pass1234")
+	registerUser(t, srv, "ivan", "ivan@example.com", "pass1234")
+	ivan := userIDByName(t, "ivan")
+
+	// 活用户的邮箱被抢：409 且点名占用者
+	status, env := doJSON(t, srv, http.MethodPatch, "/admin/users/"+itoa(ivan), map[string]interface{}{
+		"email": "helen@example.com",
+	}, admin)
+	if status != http.StatusConflict {
+		t.Fatalf("改生存者邮箱 status = %d, want 409（msg=%s）", status, env.Msg)
+	}
+	if !strings.Contains(env.Msg, itoa(userIDByName(t, "helen"))) {
+		t.Errorf("文案应点名占用者 id，实得 %q", env.Msg)
+	}
+
+	// 注销用户的邮箱同样被占用：409 且提示「注销」
+	doJSON(t, srv, http.MethodDelete, "/admin/users/"+itoa(userIDByName(t, "helen")), nil, admin)
+	status, env = doJSON(t, srv, http.MethodPatch, "/admin/users/"+itoa(ivan), map[string]interface{}{
+		"email": "helen@example.com",
+	}, admin)
+	if status != http.StatusConflict {
+		t.Fatalf("改成注销账号的邮箱 status = %d, want 409（msg=%s）", status, env.Msg)
+	}
+	if !strings.Contains(env.Msg, "注销") {
+		t.Errorf("文案应区分注销账号占用，实得 %q", env.Msg)
+	}
+
+	// 自己填回自己的邮箱不算冲突
+	registerUser(t, srv, "judy", "judy@example.com", "pass1234")
+	status, env = doJSON(t, srv, http.MethodPatch, "/admin/users/"+itoa(userIDByName(t, "judy")), map[string]interface{}{
+		"email": "judy@example.com",
+	}, admin)
+	if status != http.StatusOK || env.Code != 0 {
+		t.Fatalf("邮箱不变应成功（status=%d code=%d msg=%s）", status, env.Code, env.Msg)
+	}
+
+	// 置空邮箱：users.email 声明 not null，写 NULL 会撞约束变 500，必须在入口挡成 400
+	status, env = doJSON(t, srv, http.MethodPatch, "/admin/users/"+itoa(ivan), map[string]interface{}{
+		"email": "",
+	}, admin)
+	if status != http.StatusBadRequest {
+		t.Fatalf("清空邮箱 status = %d, want 400（msg=%s）", status, env.Msg)
+	}
+
+	// 非法邮箱同样 400，不落库
+	status, env = doJSON(t, srv, http.MethodPatch, "/admin/users/"+itoa(ivan), map[string]interface{}{
+		"email": "not-an-email",
+	}, admin)
+	if status != http.StatusBadRequest {
+		t.Fatalf("非法邮箱 status = %d, want 400（msg=%s）", status, env.Msg)
+	}
+}
+
 // TestLogoutRevokesSession logout 吊销当前会话，原 token 立即失效
 func TestLogoutRevokesSession(t *testing.T) {
 	srv := newTestServer(t)

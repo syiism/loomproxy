@@ -387,12 +387,13 @@ const saveEdit = async () => {
   submitting.value = true
   try {
     const id = editUser.value.id
-    await adminApi.updateUser(id, {
-      nickname: editForm.value.nickname,
-      email: editForm.value.email,
-      status: editForm.value.status,
-    })
     const oldPlan = editUser.value.plan_id || null
+    // PATCH 语义：只提交改过的字段——历史行邮箱为空时，整体提交会带上空串被后端拒掉
+    const payload = {}
+    if (editForm.value.nickname !== (editUser.value.nickname || '')) payload.nickname = editForm.value.nickname
+    if (editForm.value.email !== (editUser.value.email || '')) payload.email = editForm.value.email
+    if (editForm.value.status !== editUser.value.status) payload.status = editForm.value.status
+    if (Object.keys(payload).length) await adminApi.updateUser(id, payload)
     if (editForm.value.plan_id !== oldPlan) {
       await adminApi.updateUserPlan(id, editForm.value.plan_id)
     }
