@@ -22,7 +22,6 @@ web/dist/
 Thumbs.db
 *.log
 
-docs/
 /loomproxy-go-static
 
 # Python 测试
