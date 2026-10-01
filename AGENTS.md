@@ -45,6 +45,8 @@
 ## 6. 通用号池（base/pool）
 
 - Provider 三钩子 `Create`/`Refresh`/`Claim`（**Claim 必须叠加无损**）+ 可选 `ResourceExpiredClassifier`；状态机 `hot`/`cold`/`spent`/`dead`，表 `pool_devices`。
+- 水位参数是 `ColdSpares`/`MaxHot`/`MaxDead`，**总号数上限是另一个声明位 `Config.MaxDevices`**（0=不限，
+  判在框架的建号入口，报 `ErrCapacityReached`）——建号会对上游产生不可逆增长的源用它，别在源内自己数行。
 - 现有形态是**墙钟燃烧型**：只保持 1 个活跃号 + N 个冷备，临期续领、用尽换号、错误驱动扩容。
 - 底座不携带任何 Provider，号池列表为空是正常状态；面板读 `GET /admin/pools`（凭证只列键名）。
 - 详情：[`docs/架构/号池框架.md`](docs/架构/号池框架.md)

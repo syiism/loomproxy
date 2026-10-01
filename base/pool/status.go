@@ -12,6 +12,7 @@ type ConfigInfo struct {
 	ColdSpares     int `json:"cold_spares"`
 	MaxHot         int `json:"max_hot"`
 	MaxDead        int `json:"max_dead"`
+	MaxDevices     int `json:"max_devices"` // 0=不限
 	RenewBeforeSec int `json:"renew_before_sec"`
 	MaintainSec    int `json:"maintain_sec"`
 }
@@ -44,6 +45,7 @@ func (p *Pool) Status() *Status {
 	st := &Status{
 		Name:    p.Name(),
 		Running: p.Running(),
+		Config:  p.configInfo(),
 		Counts:  map[string]int64{StatusHot: 0, StatusCold: 0, StatusSpent: 0, StatusDead: 0},
 		Devices: make([]DeviceInfo, 0),
 	}
@@ -58,13 +60,6 @@ func (p *Pool) Status() *Status {
 	}
 
 	p.mu.Lock()
-	st.Config = ConfigInfo{
-		ColdSpares:     p.cfg.ColdSpares,
-		MaxHot:         p.cfg.MaxHot,
-		MaxDead:        p.cfg.MaxDead,
-		RenewBeforeSec: int(p.cfg.RenewBefore.Seconds()),
-		MaintainSec:    int(p.cfg.Interval.Seconds()),
-	}
 	st.Counts[StatusHot] = int64(len(p.hot))
 	st.Counts[StatusCold] = int64(len(p.cold))
 	for _, d := range p.hot {
@@ -80,6 +75,19 @@ func (p *Pool) Status() *Status {
 	st.Counts[StatusDead] = countByStatus(p.Name(), StatusDead)
 	st.Devices = append(st.Devices, listDevices(p.Name(), deviceStatusLimit, StatusSpent, StatusDead)...)
 	return st
+}
+
+// configInfo 运行参数快照：不取锁也不碰库（构造期就定了）。未启动的池也要带出 config——
+// 面板读到全零 config 会被误读成「没配上限」
+func (p *Pool) configInfo() ConfigInfo {
+	return ConfigInfo{
+		ColdSpares:     p.cfg.ColdSpares,
+		MaxHot:         p.cfg.MaxHot,
+		MaxDead:        p.cfg.MaxDead,
+		MaxDevices:     p.cfg.MaxDevices,
+		RenewBeforeSec: int(p.cfg.RenewBefore.Seconds()),
+		MaintainSec:    int(p.cfg.Interval.Seconds()),
+	}
 }
 
 func fillCountsFromDB(st *Status, name string) {

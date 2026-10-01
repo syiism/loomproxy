@@ -31,6 +31,7 @@ type fakeProvider struct {
 	claimExtend time.Duration         // 单次领取延长的有效期（零值=1 小时）
 	created     int
 	claims      map[string]int
+	poolName    string // 非空则覆盖池名：一条用例里建多个假池时避免 (pool, ident) 唯一索引撞车
 }
 
 func newFakeProvider() *fakeProvider {
@@ -41,7 +42,12 @@ func newFakeProvider() *fakeProvider {
 	}
 }
 
-func (f *fakeProvider) Name() string { return fakePoolName }
+func (f *fakeProvider) Name() string {
+	if f.poolName != "" {
+		return f.poolName
+	}
+	return fakePoolName
+}
 
 func (f *fakeProvider) Create(_ context.Context) (*pool.Device, error) {
 	f.created++
@@ -416,5 +422,78 @@ func TestPrioritizeClaimedDevices(t *testing.T) {
 		if got[i].Ident != ident {
 			t.Fatalf("第 %d 位 = %s, want %s", i, got[i].Ident, ident)
 		}
+	}
+}
+
+// TestPoolMaxDevicesGate 池级总号数上限（待办清单 P4）：建号对上游是不可逆增长，
+// 这道闸门该在框架里，而不是每个会建号的源各自数一遍 pool_devices。
+func TestPoolMaxDevicesGate(t *testing.T) {
+	newTestServer(t)
+
+	// 假 Provider 的 ident 是确定性的，池名默认固定——一条用例里建三个池会在 (pool, ident)
+	// 唯一索引上撞车，所以给每个池换个名字
+
+	// 1) 已到顶：池里唯一的号是 dead，Acquire 需要补号，补号被上限判住，且错误可 errors.Is 判定
+	prov := newFakeProvider()
+	cfg := fakePoolConfig()
+	cfg.ColdSpares = 1
+	cfg.MaxDevices = 1
+	prov.poolName = "gate_cap"
+	p := newFakePool(t, pool.New(prov, cfg))
+	if err := db.DB.Create(&models.PoolDevice{
+		Pool: p.Name(), Ident: "已判死的号", Status: pool.StatusDead,
+	}).Error; err != nil {
+		t.Fatalf("预置 dead 号失败: %v", err)
+	}
+	if _, err := p.Acquire(); !errors.Is(err, pool.ErrCapacityReached) {
+		t.Fatalf("补号应被总号数上限判住并给出 ErrCapacityReached，实得 %v", err)
+	}
+	if prov.created != 0 {
+		t.Errorf("到顶后仍向上游建了 %d 个号（应在建号前就判住）", prov.created)
+	}
+
+	// 2) 补冷备时被拦在门外：ColdSpares 想建 5 个，池内总数只到 2
+	prov2 := newFakeProvider()
+	cfg2 := fakePoolConfig()
+	cfg2.ColdSpares = 5
+	cfg2.MaxDevices = 2
+	prov2.poolName = "gate_topup"
+	p2 := newFakePool(t, pool.New(prov2, cfg2))
+	if _, err := p2.Acquire(); err != nil {
+		t.Fatalf("首次 Acquire 失败: %v", err)
+	}
+	p2.Maintain()
+	var rows int64
+	if err := db.DB.Model(&models.PoolDevice{}).Where("pool = ?", p2.Name()).Count(&rows).Error; err != nil {
+		t.Fatalf("数池内行失败: %v", err)
+	}
+	if rows > 2 || prov2.created > 2 {
+		t.Errorf("池内 %d 行、上游建号 %d 次，都不该越过 MaxDevices=2", rows, prov2.created)
+	}
+	if rows < 1 {
+		t.Errorf("上限判过了头：池内一个号都没有")
+	}
+
+	// 3) 0 = 不限：同配置不设上限时，冷备照 ColdSpares 补齐（这条防的是「零值被当成上限」）
+	prov3 := newFakeProvider()
+	cfg3 := fakePoolConfig()
+	cfg3.ColdSpares = 3
+	cfg3.MaxDevices = 0
+	prov3.poolName = "gate_uncapped"
+	p3 := newFakePool(t, pool.New(prov3, cfg3))
+	if _, err := p3.Acquire(); err != nil {
+		t.Fatalf("不设上限时 Acquire 失败: %v", err)
+	}
+	p3.Maintain()
+	if n := p3.HotCount() + p3.ColdCount(); n < 3 {
+		t.Errorf("MaxDevices=0 应不限：池内只有 %d 个号，而冷备目标是 3", n)
+	}
+
+	// 4) 快照要带出上限，且未启动的池也带（面板读到全零 config 会误判成「没配」）
+	if got := p2.Status().Config.MaxDevices; got != 2 {
+		t.Errorf("快照 max_devices = %d，want 2", got)
+	}
+	if p2.Running() {
+		t.Errorf("这条断言的前提是本池未 Start，Running 应为 false")
 	}
 }

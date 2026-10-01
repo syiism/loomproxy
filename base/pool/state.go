@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -20,6 +21,7 @@ type Config struct {
 	ColdSpares  int           // 冷备号数量（未领取、不过期）
 	MaxHot      int           // 热号上限（错误驱动扩容的封顶）
 	MaxDead     int           // dead 号保留上限，超出物理清理
+	MaxDevices  int           // 本池总号数上限（0=不限）：建号会对上游产生不可逆增长时的闸门
 	RenewBefore time.Duration // 热号到期前多久续领
 	Interval    time.Duration // 维护协程巡检间隔
 }
@@ -49,8 +51,13 @@ func DefaultConfig() Config {
 	return c
 }
 
+// ErrCapacityReached 池内总号数已到 Config.MaxDevices 上限、无法再新建号。做成 sentinel
+// 是为了让源侧与调用方能 errors.Is 判定，而不是去比字符串。
+var ErrCapacityReached = errors.New("号池已达总号数上限")
+
 func (c Config) withDefaults() Config {
 	d := DefaultConfig()
+	// MaxDevices 刻意不参与零值回填：0 的语义就是「不限」，填成默认值反而把不限制的池锁死
 	if c.ColdSpares == 0 {
 		c.ColdSpares = d.ColdSpares
 	}
@@ -235,7 +242,8 @@ func (p *Pool) Acquire() (*Device, error) {
 	row, err := p.promoteLocked()
 	if err != nil {
 		if _, cerr := p.createColdLocked(); cerr != nil {
-			return nil, fmt.Errorf("无可用号: %v", err)
+			// 两个错都带上：只报「无可用号」会让人看不出是补号被上限拦了还是上游真没号了
+			return nil, fmt.Errorf("无可用号: %w（补建号: %w）", err, cerr)
 		}
 		row, err = p.promoteLocked()
 	}
@@ -391,8 +399,19 @@ func (p *Pool) promoteLocked() (*models.PoolDevice, error) {
 	return nil, fmt.Errorf("无可用冷备号")
 }
 
-// createColdLocked 新建一个冷备号（只建号不领取，不过期）（调用方持锁）
+// createColdLocked 新建一个冷备号（只建号不领取，不过期）（调用方持锁）。
+// MaxDevices 判在这里而不是让每个源自己数——「建号会对上游产生不可逆增长」是池的共性
+// （待办清单 P4）。计数含 spent/dead，与源侧原先自己实现的口径一致：判死清理腾出的名额重新可用。
 func (p *Pool) createColdLocked() (*models.PoolDevice, error) {
+	if p.cfg.MaxDevices > 0 {
+		var n int64
+		if err := db.DB.Model(&models.PoolDevice{}).Where("pool = ?", p.Name()).Count(&n).Error; err != nil {
+			return nil, err
+		}
+		if n >= int64(p.cfg.MaxDevices) {
+			return nil, fmt.Errorf("%w: %s（上限 %d，现有 %d）", ErrCapacityReached, p.Name(), p.cfg.MaxDevices, n)
+		}
+	}
 	dev, err := p.provider.Create(context.Background())
 	if err != nil {
 		return nil, err
