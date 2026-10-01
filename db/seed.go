@@ -485,29 +485,81 @@ func seedQuotaCosts(db *gorm.DB) error {
 	return nil
 }
 
-func seedDataSources(db *gorm.DB) error {
+// builtinPlanCodes 三个内置套餐：新建的数据源默认三个都进（与 seedPlanDataSources 的空表引导同构）。
+var builtinPlanCodes = []string{"free", "vip", "admin"}
+
+// seedDataSources 按声明播种 data_sources，并**返回本轮新建的源名**。
+// 新建即补套餐关联是这里做的：否则存量库上新增的源进不了任何套餐，访问控制一律 403
+// （seedPlanDataSources 只在关联表整表为空时引导，新增源赶不上那次引导——P12）。
+// 反过来，已存在的源**不再自动补关联**：管理员在面板手工摘掉的关联不该被下次重启悄悄塞回来。
+func seedDataSources(db *gorm.DB) ([]string, error) {
 	if sourceSeedProvider == nil {
 		log.Println("未注入数据源声明（SetSourceSeedProvider），跳过 data_sources 播种")
-		return nil
+		return nil, nil
 	}
+	var created []string
 	for _, ds := range sourceSeedProvider() {
 		var count int64
 		db.Model(&models.DataSource{}).Where("name = ?", ds.Name).Count(&count)
-		if count == 0 {
-			if err := db.Create(&models.DataSource{
-				Name:        ds.Name,
-				DisplayName: ds.DisplayName,
-				Category:    ds.Category,
-				Description: ds.Description,
-				Status:      ds.Status,
-				SortOrder:   ds.SortOrder,
-			}).Error; err != nil {
-				return err
-			}
-			log.Printf("Created data source: %s", ds.Name)
+		if count > 0 {
+			continue
+		}
+		row := models.DataSource{
+			Name:        ds.Name,
+			DisplayName: ds.DisplayName,
+			Category:    ds.Category,
+			Description: ds.Description,
+			Status:      ds.Status,
+			SortOrder:   ds.SortOrder,
+		}
+		if err := db.Create(&row).Error; err != nil {
+			return created, err
+		}
+		created = append(created, ds.Name)
+		log.Printf("Created data source: %s", ds.Name)
+		if err := attachSourceToBuiltinPlans(db, row.ID, row.Name); err != nil {
+			return created, err
 		}
 	}
+	return created, nil
+}
+
+// attachSourceToBuiltinPlans 把一个源补进它尚缺的内置套餐（幂等：已有行就跳过）。
+func attachSourceToBuiltinPlans(db *gorm.DB, dsID uint, name string) error {
+	for _, code := range builtinPlanCodes {
+		var plan models.QuotaPlan
+		if err := db.Where("code = ?", code).First(&plan).Error; err != nil {
+			continue // 该内置套餐不在这次的库里（例如未播种的空库），交给调用方的其它步骤
+		}
+		var n int64
+		db.Model(&models.QuotaPlanDataSource{}).
+			Where("plan_id = ? AND data_source_id = ?", plan.ID, dsID).Count(&n)
+		if n > 0 {
+			continue
+		}
+		if err := db.Create(&models.QuotaPlanDataSource{PlanID: plan.ID, DataSourceID: dsID}).Error; err != nil {
+			return err
+		}
+		log.Printf("已将新增数据源 %s 加入套餐 %s（新增源默认对全部内置套餐可用）", name, code)
+	}
 	return nil
+}
+
+// warnUnlinkedSources 存量库里「一行套餐关联都没有」的源对所有人都是 403，
+// 但自动补会把管理员的有意摘除也抹掉——所以只告警，不写数据。
+func warnUnlinkedSources(db *gorm.DB) {
+	var sources []models.DataSource
+	if err := db.Find(&sources).Error; err != nil {
+		return
+	}
+	for _, ds := range sources {
+		var n int64
+		db.Model(&models.QuotaPlanDataSource{}).Where("data_source_id = ?", ds.ID).Count(&n)
+		if n == 0 {
+			log.Printf("警告：数据源 %s 未关联任何套餐，其接口对所有人返回 403；"+
+				"确需开放请在管理面板「数据源 → 套餐关联」勾选，确要下线请把该源置为禁用", ds.Name)
+		}
+	}
 }
 
 func seedPlanDataSources(db *gorm.DB) error {
@@ -565,12 +617,13 @@ func Seed(db *gorm.DB) error {
 	if err := seedQuotaCosts(db); err != nil {
 		return err
 	}
-	if err := seedDataSources(db); err != nil {
+	if _, err := seedDataSources(db); err != nil {
 		return err
 	}
 	if err := seedPlanDataSources(db); err != nil {
 		return err
 	}
+	warnUnlinkedSources(db)
 	if err := seedAdmin(db); err != nil {
 		return err
 	}
