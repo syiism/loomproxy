@@ -52,7 +52,8 @@
         <select v-model="subjectDays" class="input input-sm w-24" @change="loadSubjects">
           <option v-for="d in [1, 3, 7, 30]" :key="d" :value="d">近 {{ d }} 天</option>
         </select>
-        <input v-model="subjectSource" placeholder="数据源" class="input input-sm w-28 font-mono" @keydown.enter="loadSubjects">
+        <input v-model="subjectSource" list="source-options" placeholder="数据源"
+               class="input input-sm w-36 font-mono" @keydown.enter="loadSubjects" @change="loadSubjects">
       </div>
       <UiEmpty v-if="subjectItems.length === 0" title="该窗口内没有可统计的内容维度"
                text="只有真正拿到响应、且源声明了媒介的调用才会入榜。" />
@@ -85,6 +86,12 @@
         命名缓存当前 {{ subjectCache.books }} 本书名 / {{ subjectCache.chapters }} 条章节名。
       </div>
     </div>
+
+    <!-- 数据源候选：启用中的源 + 本会话监控里出现过的源（已下线源的历史明细也要能筛，
+         所以用 datalist 而不是 select——下拉可选、也要能手打一个不在列表里的旧源码） -->
+    <datalist id="source-options">
+      <option v-for="o in sourceOptions" :key="o.code" :value="o.code">{{ o.name }}</option>
+    </datalist>
 
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
@@ -143,7 +150,8 @@
 
     <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-3 reveal">
       <div class="font-serif text-lg font-medium tracking-tight flex-1">历史调用</div>
-      <input v-model="historyFilter.source" placeholder="数据源" class="input input-sm sm:w-32 font-mono" @keydown.enter="loadHistory(1)">
+      <input v-model="historyFilter.source" list="source-options" placeholder="数据源"
+             class="input input-sm sm:w-36 font-mono" @keydown.enter="loadHistory(1)" @change="loadHistory(1)">
       <input v-model="historyFilter.username" placeholder="调用者" class="input input-sm sm:w-32 font-mono" @keydown.enter="loadHistory(1)">
       <input v-model="historyFilter.keyword" placeholder="搜索词" class="input input-sm sm:w-32" @keydown.enter="loadHistory(1)">
       <input v-model="historyFilter.bookName" placeholder="书名" class="input input-sm sm:w-32" @keydown.enter="loadHistory(1)">
@@ -196,7 +204,7 @@ import UiTag from '../../components/UiTag.vue'
 import UiSpinner from '../../components/UiSpinner.vue'
 import UiEmpty from '../../components/UiEmpty.vue'
 import UiPagination from '../../components/UiPagination.vue'
-import { adminApi } from '../../api/index.js'
+import { adminApi, miscApi } from '../../api/index.js'
 import { fmtDate, toast, revealObserve } from '../../utils.js'
 
 const loading = ref(true)
@@ -216,6 +224,7 @@ const subjectDim = ref('keyword')
 const subjectDays = ref(7)
 const subjectSource = ref('')
 const subjectItems = ref([])
+const sourceOptions = ref([])
 const subjectCache = ref({ books: 0, chapters: 0 })
 let timer = null
 let resetTimer = null
@@ -323,6 +332,14 @@ watch(autoRefresh, (v) => {
   if (v) timer = setInterval(() => load(true), 10000)
 })
 
-onMounted(() => { load(); loadSubjects(); loadHistory(1); revealObserve() })
+// 候选来自 /datasources（启用中的源，带展示名），加载失败不影响筛选本身（仍可手输）
+const loadSourceOptions = async () => {
+  try {
+    const list = await miscApi.datasources()
+    sourceOptions.value = (list || []).map(d => ({ code: d.id, name: d.name || d.id }))
+  } catch (e) { /* 静默：筛选手输仍可用 */ }
+}
+
+onMounted(() => { load(); loadSubjects(); loadHistory(1); loadSourceOptions(); revealObserve() })
 onUnmounted(() => { clearInterval(timer); clearTimeout(resetTimer) })
 </script>
