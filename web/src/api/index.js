@@ -76,6 +76,8 @@ export const adminApi = {
   getMonitor: () => request('/admin/monitor'),
   getMonitorTrend: () => request('/admin/monitor/trend'),
   // 内容维度榜单：dim ∈ keyword|book|chapter|media
+  // 公开排行榜（登录用户可读，是否放行由系统设置 rank_public_enabled 决定）
+  rankBoards: (days = 7) => request('/rank/boards', { query: { days } }),
   getMonitorSubjects: ({ dim, days, source } = {}) =>
     request('/admin/monitor/subjects', { query: { dim, days: days || undefined, source: source || undefined } }),
   listPools: () => request('/admin/pools'),

@@ -29,6 +29,7 @@ import (
 	"loomproxy/handlers/auth"
 	_ "loomproxy/handlers/catalog"
 	"loomproxy/handlers/quota"
+	"loomproxy/handlers/rank"
 	"loomproxy/handlers/userconfig"
 	"loomproxy/handlers/verify"
 	"loomproxy/lifecycle"
@@ -391,6 +392,7 @@ func CreateApp() *gin.Engine {
 	quota.RegisterRoutes(r)
 	userconfig.RegisterRoutes(r)
 	apikey.RegisterRoutes(r)
+	rank.RegisterRoutes(r)
 	registerPprofRoutes(r)
 
 	registeredRoutes := registerHandlers(r)

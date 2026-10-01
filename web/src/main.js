@@ -31,7 +31,7 @@ const routes = [
   { path: '/register', component: Register, meta: { public: true } },
   { path: '/forgot-password', component: ForgotPassword, meta: { public: true } },
   { path: '/dashboard', component: Dashboard },
-  { path: '/ranking', component: Ranking, meta: { admin: true } },
+  { path: '/ranking', component: Ranking },
   { path: '/datasources', component: Datasources },
   { path: '/profile', component: Profile },
   { path: '/admin', component: Admin, meta: { admin: true } },

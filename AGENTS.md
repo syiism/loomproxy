@@ -151,7 +151,7 @@ scripts/ deploy/    部署脚本与 systemd 单元
 3. **用户自助 API 密钥**（`/apikey`，JWT 会话保护）：创建（`lp_` 前缀，明文可随时查回，每人上限 10 个）/ 列表 / 撤销。网关匹配到用户密钥时**注入归属身份**，计费/配额/监控/套餐门控按归属用户生效；静态 env 键保持匿名语义。密钥不适用于面板会话接口。
 4. **会话**：JWT 的 `jti` 对应 `auth_sessions` 行（设备名/IP/最后活跃）；两层鉴权都校验会话未被吊销且未过期，**无 jti 的旧 token 一律 401**。删除/禁用用户、找回密码都会吊销相应会话。
 
-关键路由分组：`/auth/*`（register·login（用户名或邮箱）·forgot-password·me·password·logout）、`/verify/*`（场景化验证码，`GET /verify/config` 供前端决定是否渲染输入框；发码通道 `mock`/`http` 模板适配器由系统设置切换，默认全部场景关闭）、`/quota/dashboard` 与 `/quota/usage-logs`、`/user/*`（baseUrl 配置·导入书源·卡密兑换）、`/admin/*`（详见 §9）、`/datasources`·`/data`（免鉴权，Redis 缓存）、`/announcement`、`/panel`。
+关键路由分组：`/auth/*`（register·login（用户名或邮箱）·forgot-password·me·password·logout）、`/verify/*`（场景化验证码，`GET /verify/config` 供前端决定是否渲染输入框；发码通道 `mock`/`http` 模板适配器由系统设置切换，默认全部场景关闭）、`/quota/dashboard` 与 `/quota/usage-logs`、`/user/*`（baseUrl 配置·导入书源·卡密兑换）、`/rank/boards`（排行榜聚合榜，JWT 会话保护，是否放行普通用户由系统设置 `rank_public_enabled` 决定，默认关闭）、`/admin/*`（详见 §9）、`/datasources`·`/data`（免鉴权，Redis 缓存）、`/announcement`、`/panel`。
 
 ## 8. 弹性获取栈与配置
 
@@ -204,9 +204,13 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - **`reveal` 动画依赖观察时机**：`.reveal` 默认 `opacity:0`，由 `utils.revealObserve()` 给元素加 `.in` 才显现，
   而它只观察**调用那一刻已存在**的 `.reveal:not(.in)`。所以异步页面必须先把 `loading` 置回 false、
   再 `nextTick(revealObserve)`——反过来写会让数据取回来了却整块不可见（`Ranking.vue` 初版即如此）。
-- **排行榜页**（`web/src/pages/Ranking.vue`，路由 `/ranking`，`meta.admin`）：顶部导航在「概览」与「接入指南」之间，
-  非管理员不显示。数据全部来自 `/admin/monitor/subjects`（`dim=keyword` 搜索热词榜、`dim=book` 阅读榜，各取 top20），
-  不新增后端端点——调用明细是用户阅读行为数据，按 §11 只经 `/admin/*` 暴露。
+- **排行榜页**（`web/src/pages/Ranking.vue`，路由 `/ranking`，登录即可见）：顶部导航在「概览」与「接入指南」之间。
+  数据来自**公开榜端点 `/rank/boards`**（`handlers/rank`，固定两张榜 keyword/book、各 top20、窗口只允许 1/7/30 天、
+  字段只有 `name` + `total`），**与管理端的 `/admin/monitor/subjects` 物理错开**——
+  后者仍带 success_rate/latency/sources/last_called_at 等运维字段，不该整包交给普通用户。
+  开放与否由管理员决定（系统设置 `rank_public_enabled`，默认关闭；关闭时非管理员 403，管理员始终可读）。
+- **两个权限档位共用一份聚合**：`handlers/subjectrank` 是榜单引擎（维度白名单 + 窗口 + 明细与内存缓冲合并），
+  管理端与公开端都只调它——口径分叉比多一个包危险。
 - **系统设置页**（`web/src/pages/admin/Settings.vue`）是卡片聚合而非平铺列表：受管 key 按功能分 5 张卡，卡级 diff 保存（逐 key `PUT /admin/settings/:key`）；不在清单内的 key 落入「自定义配置」兜底卡。**seed 新增设置 key 时要同步把字段加进前端 GROUPS 的对应分组**（或确认走兜底卡）。
 - `web/vite.config.js` 已配 dev 代理（`/auth`·`/admin`·`/quota`·`/datasources`·`/data`·`/verify` → `localhost:8081`）。
 - **中间件**：新增一条 = 新建 `middleware/<职责>` 包（或进 `gate` 的对应轴文件）+ `init()` 里一次 `middleware.Register(Def{Scope, Order, Applies, Build})` + `middleware/all/all.go` 加一行空白导入；`app.go` 免改。顺序只改 `middleware/middleware.go` 的 Order 常量，`test/middleware_chain_test.go` 会失败以逼一次审查；同作用域内 Order 撞车或重名在 `Register` 期 `log.Fatalf`（宁启动失败不带病装配）。`middleware` 根包是叶子包，不要给它加子包或 gate 的导入（成环），装载清单只在 `middleware/all`。
@@ -222,7 +226,9 @@ scripts/ deploy/    部署脚本与 systemd 单元
 - 密码 bcrypt 哈希；用户软删除，其用户名/邮箱进入黑名单（注册与建用户查重走 `Unscoped()`，冲突返回 409 提示「已被注销账号占用」）；邮箱可空但唯一。
 - 号池与设备凭证（`pool_devices.attrs`）属上游签名凭证：接口响应与日志只出脱敏值（保留前 8 后 4），管理面板不展示原值。
 - **许可与合规**：代码按 AGPL-3.0 发布（`LICENSE`），使用条件见 `DISCLAIMER.md`。引入新依赖前确认许可证与 AGPL 兼容（`go.mod` 是唯一的依赖清单，别绕过）；不要把凭证、上游签名参数或真实 `.env` 内容写进仓库、文档与测试夹具。`api_call_logs` 的内容维度是用户阅读/调用行为数据，默认永久保留（`MONITOR_RETENTION_DAYS=0`），对外部署前必须按合规要求设定保留期。
-- **调用明细含用户阅读内容**（搜索词/书名/章节名/媒介）：属敏感行为数据，只经 `/admin/*`（后端 `AdminRequired()`）暴露给管理员，不进访问日志、不出网关；默认永久保留（`MONITOR_RETENTION_DAYS=0`）意味着这些记录长期驻库——对外部署前按合规要求设定保留天数。
+- **调用明细含用户阅读内容**（搜索词/书名/章节名/媒介）：属敏感行为数据，**明细**只经 `/admin/*`（后端 `AdminRequired()`）暴露给管理员，不进访问日志、不出网关；
+  管理员可用 `rank_public_enabled` 把**聚合榜**（`/rank/boards`：两个维度、top20、只有名称与次数）放开给登录用户——
+  聚合不等于明细，但窗口越短稀有词越容易反推到个人，所以公开端的窗口取值被代码钉死为 1/7/30 天且不接受更细的筛选；默认永久保留（`MONITOR_RETENTION_DAYS=0`）意味着这些记录长期驻库——对外部署前按合规要求设定保留天数。
 - 面板路由守卫在前端，真正可信的权限校验是后端 `AdminRequired()`——后端是唯一信任边界。
 
 ## 12. 已知取舍

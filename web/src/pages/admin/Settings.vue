@@ -176,6 +176,7 @@ const GROUPS = [
       { key: 'site_name', label: '站点名称', widget: 'text' },
       { key: 'maintenance_mode', label: '维护模式', widget: 'switch' },
       { key: 'announcement', label: '站内公告', widget: 'textarea', rows: 4 },
+      { key: 'rank_public_enabled', label: '普通用户可见排行榜', widget: 'switch' },
       { key: 'legado_import_url', label: '书源导入链接', widget: 'text' },
     ],
   },

@@ -11,7 +11,7 @@
         </div>
         <nav class="hidden md:flex gap-6 md:gap-7 items-center">
           <router-link to="/dashboard" class="text-sm transition-colors" :class="navClass('/dashboard')">概览</router-link>
-          <router-link v-if="admin" to="/ranking" class="text-sm transition-colors" :class="navClass('/ranking')">排行榜</router-link>
+          <router-link to="/ranking" class="text-sm transition-colors" :class="navClass('/ranking')">排行榜</router-link>
           <router-link to="/datasources" class="text-sm transition-colors" :class="navClass('/datasources')">接入指南</router-link>
           <router-link to="/profile" class="text-sm transition-colors" :class="navClass('/profile')">个人中心</router-link>
           <router-link v-if="admin" to="/admin" class="text-sm transition-colors" :class="navClass('/admin', true)">管理</router-link>
@@ -159,7 +159,7 @@ const sidebarCollapsed = ref(false)
 const userTabs = [
   { to: '/dashboard', label: '概览' },
   // 排行榜取自 /admin/monitor/subjects（后端 AdminRequired），数据是用户阅读行为，只给管理员看
-  { to: '/ranking', label: '排行榜', adminOnly: true },
+  { to: '/ranking', label: '排行榜' },
   { to: '/datasources', label: '接入指南' },
   { to: '/profile', label: '个人中心' },
 ]
