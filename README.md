@@ -107,7 +107,7 @@ docker compose up -d --build
 | 路由 | 说明 |
 |---|---|
 | `GET /` | 服务状态页 |
-| `GET /datasources` | 数据源列表（按用户套餐过滤，Redis 缓存，管理端变更写时失效） |
+| `GET /datasources` | 数据源列表（按用户套餐过滤，Redis 缓存，管理端变更写时失效；`AUTH_ENABLED=true` 时需带凭证——它不在默认 `AUTH_WHITELIST` 里） |
 | `GET /data`、`GET /data/:source/:name` | 数据源静态 JSON 文件 |
 | `/{source}/{action}` | 标准动作：search / detail / chapter / content / explore 等 |
 | `/auth/*` | 注册、登录（用户名或邮箱）、找回密码、个人信息、登录设备会话管理 |
