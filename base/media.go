@@ -164,3 +164,37 @@ func scalarToString(v interface{}) string {
 	}
 	return ""
 }
+
+// MediaValues 已声明媒介枚举的固定顺序。按媒介筛选的白名单必须用它而不是 IsValidMedia：
+// 后者接受空串（「源没声明媒介」是合法状态），拿来做入参校验会把垃圾空值也放行。
+func MediaValues() []string {
+	return []string{MediaNovel, MediaAudio, MediaComic, MediaVideo}
+}
+
+// MediaOption 一个媒介候选：value 进查询、label 进展示
+type MediaOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// MediaCandidates 出可以直接渲染的媒介候选（枚举顺序稳定，不含空值）
+func MediaCandidates() []MediaOption {
+	vals := MediaValues()
+	out := make([]MediaOption, 0, len(vals))
+	for _, m := range vals {
+		out = append(out, MediaOption{Value: m, Label: MediaLabel(m)})
+	}
+	return out
+}
+
+// IsMediaValue 严格判定 m 是枚举内的媒介值。与 IsValidMedia 的区别是有意的：
+// 后者认空串（「源没声明媒介」是合法状态），而入参校验要的是「调用方确实给了一个合法值」。
+// 公开端点与管理端点共用这一份，免得两处各写一个循环然后各自漂移。
+func IsMediaValue(m string) bool {
+	for _, v := range MediaValues() {
+		if v == m {
+			return true
+		}
+	}
+	return false
+}

@@ -112,10 +112,11 @@ func actionAllowed(allowed []string, action string) bool {
 }
 
 // Query 聚合某维度在窗口内的榜单，按调用次数降序取前 limit 条（limit<=0 不截断）。
-// sourceFilter 非空时只统计该数据源；allowSources 非 nil 时把统计范围**钉死在这份白名单内**
+// sourceFilter 非空时只统计该数据源；mediaFilter 非空时只统计该媒介（一站多形态的源
+// 不切开就没法看「同一本书在听书侧有多热」）；allowSources 非 nil 时把统计范围**钉死在这份白名单内**
 // （含 sourceFilter 为空时的合并统计——否则「全部数据源」这一档会把未授权源的热度漏出去）。
 // allowSources 为空切片表示零个源可见，非 nil 即生效；传 nil 表示不限制。
-func Query(dimKey string, days int, sourceFilter string, limit int, allowSources []string) ([]Item, error) {
+func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int, allowSources []string) ([]Item, error) {
 	key := normalizeDim(dimKey)
 	dim, ok := Dims[key]
 	if !ok {
@@ -131,6 +132,10 @@ func Query(dimKey string, days int, sourceFilter string, limit int, allowSources
 	if sourceFilter != "" {
 		cond += " AND source = ?"
 		args = append(args, sourceFilter)
+	}
+	if mediaFilter != "" {
+		cond += " AND media = ?"
+		args = append(args, mediaFilter)
 	}
 	if allowSources != nil {
 		if len(allowSources) == 0 {
@@ -189,7 +194,8 @@ func Query(dimKey string, days int, sourceFilter string, limit int, allowSources
 
 	// 合并内存中尚未落库的明细（缓冲满 250 条才批量落库，低流量时近期记录几乎都在内存里）
 	for _, rc := range base.RecentCalls(0) {
-		if rc.Time.Before(from) || (sourceFilter != "" && rc.Source != sourceFilter) {
+		if rc.Time.Before(from) || (sourceFilter != "" && rc.Source != sourceFilter) ||
+			(mediaFilter != "" && rc.Media != mediaFilter) {
 			continue
 		}
 		if allowSources != nil && !sourceAllowed(allowSources, rc.Source) {
@@ -259,6 +265,9 @@ func Query(dimKey string, days int, sourceFilter string, limit int, allowSources
 			Where("created_at >= ? AND "+dim.Column+" = ?", from, items[i].Name)
 		if sourceFilter != "" {
 			q = q.Where("source = ?", sourceFilter)
+		}
+		if mediaFilter != "" {
+			q = q.Where("media = ?", mediaFilter)
 		}
 		if err := q.Order("id DESC").First(&last).Error; err == nil {
 			t := last.CreatedAt

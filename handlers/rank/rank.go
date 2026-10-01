@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"loomproxy/base"
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/handlers/subjectrank"
@@ -119,6 +120,14 @@ func GetBoards(c *gin.Context) {
 			return
 		}
 	}
+	// 媒介筛选：一站多形态（同一源的 Novel/Audio/Comic/Video）在榜上算同一个源，
+	// 不给按媒介筛就只能看合并数。白名单取 base 的枚举——IsValidMedia 认空值，不能拿来校验入参
+	mediaFilter := strings.TrimSpace(c.Query("media"))
+	if mediaFilter != "" && !base.IsMediaValue(mediaFilter) {
+		auth.Fail(c, http.StatusBadRequest, "media 不是合法媒介（novel/audio/comic/video）")
+		return
+	}
+
 	// 非管理员看到的候选也只剩被开放的源——列未开放的源本身就是信息
 	if allow != nil {
 		filtered := make([]sourceOption, 0, len(allow))
@@ -132,7 +141,7 @@ func GetBoards(c *gin.Context) {
 
 	out := make([]boardPayload, 0, len(boards))
 	for _, b := range boards {
-		items, err := subjectrank.Query(b.Dim, days, sourceFilter, boardLimit, allow)
+		items, err := subjectrank.Query(b.Dim, days, sourceFilter, mediaFilter, boardLimit, allow)
 		if err != nil {
 			auth.Fail(c, http.StatusInternalServerError, "榜单统计失败")
 			return
@@ -149,6 +158,7 @@ func GetBoards(c *gin.Context) {
 	auth.Ok(c, gin.H{
 		"days": days, "boards": out, "limit": boardLimit,
 		"source": sourceFilter, "sources": sources, "unrestricted": admin,
+		"media": mediaFilter, "medias": base.MediaCandidates(),
 	})
 }
 

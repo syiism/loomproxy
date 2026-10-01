@@ -76,11 +76,11 @@ export const adminApi = {
   getMonitor: () => request('/admin/monitor'),
   getMonitorTrend: () => request('/admin/monitor/trend'),
   // 内容维度榜单：dim ∈ keyword|book|chapter|media
-  // 公开排行榜（登录用户可读，是否放行由系统设置 rank_public_enabled 决定）
-  rankBoards: ({ days = 7, source } = {}) =>
-    request('/rank/boards', { query: { days, source: source || undefined } }),
-  getMonitorSubjects: ({ dim, days, source } = {}) =>
-    request('/admin/monitor/subjects', { query: { dim, days: days || undefined, source: source || undefined } }),
+  // 公开排行榜（登录用户可读；放行范围由设置项 rank_public_sources 按数据源决定）
+  rankBoards: ({ days = 7, source, media } = {}) =>
+    request('/rank/boards', { query: { days, source: source || undefined, media: media || undefined } }),
+  getMonitorSubjects: ({ dim, days, source, media } = {}) =>
+    request('/admin/monitor/subjects', { query: { dim, days: days || undefined, source: source || undefined, media: media || undefined } }),
   listPools: () => request('/admin/pools'),
   resetMonitor: () => request('/admin/monitor/reset', { method: 'POST' }),
   getMonitorHistory: ({ page = 1, pageSize = 20, source, username, action, keyword, bookName, chapterTitle, mediaType } = {}) =>

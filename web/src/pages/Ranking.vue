@@ -3,6 +3,10 @@
     <PageHeader title="排行榜" subtitle="站内搜索热词与在读书目排名，取自接口调用明细的内容维度（只统计窗口内的真实调用）。">
       <template #actions>
         <div class="flex items-center gap-2">
+          <select v-model="media" class="input font-mono text-sm w-auto" @change="load">
+            <option value="">全部媒介</option>
+            <option v-for="o in medias" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
           <select v-model="source" class="input font-mono text-sm w-auto" @change="load">
             <option value="">全部数据源</option>
             <option v-for="o in sources" :key="o.code" :value="o.code">{{ o.name }}</option>
@@ -44,6 +48,8 @@
       口径：阅读榜只统计正文（content）接口——一次「打开书目」会连着产生详情与多页目录，
       全计入等于把同一本书凭空乘上几倍；搜索热词榜统计全部搜索请求。同名条目按数据源分开统计，
       选「全部数据源」时跨源合并计数——想知道该用哪个源检索，就切到具体源看它在该局部的排名。
+      一个源有多种形态（小说/听书/漫画/短剧/漫剧）时用「全部媒介」切开，否则同一本书的两种形态
+      会被加成一条；媒介未判定的调用不计入任何单一媒介。
       名称靠「标识 → 名称」缓存跨请求反查（上限 2 万条、24 小时；服务接了 Redis 时跨重启存活，
       未接时重启即清空）。缓存里没有映射时正文条目会因反查不到书名而不入榜。
       本页只取聚合的名称与次数，不含调用者、时间与调用明细（那些在管理端「监控」页）；
@@ -70,6 +76,8 @@ const denied = ref(false)
 const days = ref(7)
 const source = ref('')
 const sources = ref([])
+const media = ref('')
+const medias = ref([])
 const boards = ref([])
 
 const load = async () => {
@@ -78,16 +86,18 @@ const load = async () => {
   denied.value = false
   try {
     // 公开榜端点：只回聚合的名称与次数，与管理员用的 /admin/monitor/subjects 错开
-    const data = await adminApi.rankBoards({ days: days.value, source: source.value })
+    const data = await adminApi.rankBoards({ days: days.value, source: source.value, media: media.value })
     sources.value = data.sources || []
+    medias.value = data.medias || []
     boards.value = (data.boards || []).map(b => ({
       ...b,
       emptyHint: EMPTY_HINTS[b.dim] || '窗口内没有数据。',
     }))
   } catch (e) {
-    // 400（source 已不在启用列表）时清掉筛选条件重新拉全量，避免页面卡在空榜
-    if (e.status === 400 && source.value) {
+    // 400（source 已不在启用列表、或 media 不在枚举里）时清掉筛选条件重拉全量，避免卡在空榜
+    if (e.status === 400 && (source.value || media.value)) {
       source.value = ''
+      media.value = ''
       return load()
     }
     if (e.status === 403) denied.value = true

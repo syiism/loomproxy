@@ -32,9 +32,15 @@ func GetMonitorSubjects(c *gin.Context) {
 	n, _ := strconv.Atoi(c.DefaultQuery("days", "7"))
 	days := subjectrank.NormalizeDays(n)
 	sourceFilter := c.Query("source")
+	// 媒介筛选与公开端点同一份枚举（/admin/monitor/history 那边叫 media_type，口径一致）
+	mediaFilter := strings.TrimSpace(c.Query("media"))
+	if mediaFilter != "" && !base.IsMediaValue(mediaFilter) {
+		auth.Fail(c, http.StatusBadRequest, "media 不是合法媒介（novel/audio/comic/video）")
+		return
+	}
 
-	// 管理端上限 50 条，并允许按数据源筛
-	items, err := subjectrank.Query(dimKey, days, sourceFilter, 50, nil) // 管理端不限源
+	// 管理端上限 50 条，并允许按数据源与媒介筛
+	items, err := subjectrank.Query(dimKey, days, sourceFilter, mediaFilter, 50, nil) // 管理端不限源
 	if err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误: "+err.Error())
 		return

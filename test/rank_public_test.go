@@ -243,3 +243,78 @@ func TestRankBoardsSourceAllowlist(t *testing.T) {
 		t.Errorf("管理员应看到合并后的 10 次，实得 %d", got)
 	}
 }
+
+// TestRankBoardsMediaFilter 公开榜的按媒介筛选（待办清单 P3）：一个源里多种形态共用一个源码时，
+// 不切开就只能看合并数。同时钉住候选随响应下发、非法值 400、合法但无数据时回空榜而不是报错。
+func TestRankBoardsMediaFilter(t *testing.T) {
+	srv := newTestServer(t)
+	base.ResetMetrics()
+	admin := adminToken(t, srv)
+
+	if status, env := doJSON(t, srv, "PUT", "/admin/settings/rank_public_sources",
+		map[string]string{"value": "fake_a"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
+		t.Fatalf("开启公开榜失败: status=%d msg=%s", status, env.Msg)
+	}
+
+	// 阅读榜只统计 content 动作：同名同书、两种媒介各若干次
+	for i := 0; i < 3; i++ {
+		insertSubjectCall(t, "fake_a", "content", "", "跨形态的书", base.MediaNovel, 1, http.StatusOK)
+	}
+	for i := 0; i < 2; i++ {
+		insertSubjectCall(t, "fake_a", "content", "", "跨形态的书", base.MediaAudio, 1, http.StatusOK)
+	}
+
+	bookRow := func(query string) (map[string]interface{}, int64) {
+		t.Helper()
+		status, env := doJSON(t, srv, "GET", "/rank/boards?days=7"+query, nil, authHeader(admin))
+		if status != http.StatusOK {
+			t.Fatalf("GET /rank/boards?%s status=%d msg=%s", query, status, env.Msg)
+		}
+		d := env.dataMap(t)
+		for _, raw := range d["boards"].([]interface{}) {
+			b, _ := raw.(map[string]interface{})
+			if b["dim"] != "book" {
+				continue
+			}
+			for _, r := range b["rows"].([]interface{}) {
+				it, _ := r.(map[string]interface{})
+				if it["name"] == "跨形态的书" {
+					return d, int64(it["total"].(float64))
+				}
+			}
+		}
+		return d, -1
+	}
+
+	d, got := bookRow("")
+	if got != 5 {
+		t.Errorf("不筛媒介应合并为 5，实得 %d", got)
+	}
+	// 候选随响应下发（枚举顺序稳定：novel/audio/comic/video）
+	opts, ok := d["medias"].([]interface{})
+	if !ok || len(opts) != 4 {
+		t.Fatalf("medias 候选应含四个媒介，实得 %+v", d["medias"])
+	}
+	if opts[0].(map[string]interface{})["value"] != base.MediaNovel {
+		t.Errorf("medias 首位应为 %s，实得 %+v", base.MediaNovel, opts[0])
+	}
+
+	if _, got := bookRow("&media=novel"); got != 3 {
+		t.Errorf("筛 novel 应得 3，实得 %d", got)
+	}
+	if _, got := bookRow("&media=audio"); got != 2 {
+		t.Errorf("筛 audio 应得 2，实得 %d", got)
+	}
+	// 合法媒介但没有该媒介的数据：回空榜（不是 400），与「筛了个没人的源」同一口径
+	if _, got := bookRow("&media=comic"); got != -1 {
+		t.Errorf("筛 comic 应无该条目，实得 %d", got)
+	}
+	// 非法媒介 400：空榜会让人以为「真没人读这个形态」
+	if status, _ := doJSON(t, srv, "GET", "/rank/boards?media=纸质书", nil, authHeader(admin)); status != http.StatusBadRequest {
+		t.Errorf("非法 media 应 400，实为 %d", status)
+	}
+	// 管理端维度榜同口径（两处共用引擎，别一边能筛一边静默忽略）
+	if status, _ := doJSON(t, srv, "GET", "/admin/monitor/subjects?dim=book&media=nope", nil, authHeader(admin)); status != http.StatusBadRequest {
+		t.Errorf("管理端非法 media 应 400，实为 %d", status)
+	}
+}
