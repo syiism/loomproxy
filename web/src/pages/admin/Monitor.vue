@@ -55,12 +55,17 @@
         <input v-model="subjectSource" list="source-options" placeholder="数据源"
                class="input input-sm w-36 font-mono" @keydown.enter="loadSubjects" @change="loadSubjects">
       </div>
+      <div class="mb-2 text-xs text-text-muted">
+        两列口径不同：<b>访问人数</b>是同数据源内按用户去重（匿名退到 IP，跨源相加不重复去重），
+        <b>请求数</b>是接口调用条数。书名榜按<b>访问人数</b>排序（一条正文明细就是一章，按次数排等于把「谁在读」排成「被翻了多少章」），
+        其余维度仍按请求数排序；成功率与平均耗时一律按请求数算。
+      </div>
       <UiEmpty v-if="subjectItems.length === 0" title="该窗口内没有可统计的内容维度"
                text="只有真正拿到响应、且源声明了媒介的调用才会入榜。" />
       <div v-else class="table-wrap overflow-x-auto">
         <table class="table-base">
           <thead>
-            <tr><th>{{ subjectColumn }}</th><th>次数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th><th>最大耗时</th><th>0 结果</th><th>数据源</th><th>最近</th></tr>
+            <tr><th>{{ subjectColumn }}</th><th>访问人数</th><th>请求数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th><th>最大耗时</th><th>0 结果</th><th>数据源</th><th>最近</th></tr>
           </thead>
           <tbody>
             <tr v-for="(s, i) in subjectItems" :key="i">
@@ -68,7 +73,8 @@
                 <UiTag v-if="subjectDim === 'media'" :tone="mediaTone(s.name)" :label="s.label || mediaLabel(s.name)" />
                 <div v-else class="max-w-56 truncate text-sm" :title="s.name">{{ s.name }}</div>
               </td>
-              <td class="font-mono text-xs">{{ s.total }}</td>
+              <td class="font-mono text-xs">{{ s.visitors }}</td>
+              <td class="font-mono text-xs">{{ s.requests }}</td>
               <td class="font-mono text-xs">{{ s.success }}</td>
               <td class="font-mono text-xs">{{ s.failed }}</td>
               <td class="font-mono text-xs" :style="{ color: rateColor(s.success_rate) }">{{ s.success_rate.toFixed(1) }}%</td>

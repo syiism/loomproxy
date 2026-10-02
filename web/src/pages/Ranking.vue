@@ -28,7 +28,7 @@
       <section v-for="b in boards" :key="b.dim" class="card reveal">
         <div class="flex items-baseline justify-between gap-3 mb-4">
           <div class="font-serif text-lg font-medium tracking-tight">{{ b.title }}</div>
-          <div class="font-mono text-xs text-text-muted">{{ b.rows.length }} 项</div>
+          <div class="font-mono text-xs text-text-muted">{{ b.metric }} · {{ b.rows.length }} 项</div>
         </div>
 
         <UiEmpty v-if="b.rows.length === 0" title="窗口内没有数据" :text="b.emptyHint" />
@@ -39,15 +39,19 @@
               <div class="truncate text-sm" :title="it.name">{{ it.name }}</div>
             </div>
             <span class="shrink-0 font-serif text-lg tracking-tight">{{ it.total }}</span>
+            <span class="w-4 shrink-0 font-mono text-xs text-text-muted">{{ b.unit }}</span>
           </li>
         </ol>
       </section>
     </div>
 
     <p v-if="!loading && !error && !denied && boards.length" class="mt-5 text-xs leading-relaxed text-text-muted">
-      口径：阅读榜只统计正文（content）接口——一次「打开书目」会连着产生详情与多页目录，
-      全计入等于把同一本书凭空乘上几倍；搜索热词榜统计全部搜索请求。同名条目按数据源分开统计，
-      选「全部数据源」时跨源合并计数——想知道该用哪个源检索，就切到具体源看它在该局部的排名。
+      口径：两张榜的数字**不同义**——阅读榜是「访问人数」（同数据源内按用户去重，匿名按 IP，
+      跨源相加不再去重），搜索热词榜是「搜索次数」。阅读榜只统计正文（content）接口，
+      一次「打开书目」会连着产生详情与多页目录，全计入等于把同一本书凭空乘上几倍；
+      而一条正文明细就是一章，按次数排会把「谁在读」写成「被翻了多少章」，所以按人数计。
+      同名条目按数据源分开统计，选「全部数据源」时跨源合并计数——想知道该用哪个源检索，
+      就切到具体源看它在该局部的排名。
       一个源有多种形态（小说/听书/漫画/短剧/漫剧）时用「全部媒介」切开，否则同一本书的两种形态
       会被加成一条；媒介未判定的调用不计入任何单一媒介。
       名称靠「标识 → 名称」缓存跨请求反查（上限 2 万条、24 小时；服务接了 Redis 时跨重启存活，

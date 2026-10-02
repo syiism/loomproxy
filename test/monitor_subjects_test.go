@@ -57,6 +57,13 @@ func mustOK(t *testing.T, srv *httptest.Server, token, path string) {
 
 // subjectItems 维度榜单的 items（name → total）
 func subjectItems(t *testing.T, srv *httptest.Server, admin string, kv map[string]string) map[string]int64 {
+	return subjectItemsField(t, srv, admin, kv, "total")
+}
+
+// subjectItemsField 按指定字段取榜单条目（total / requests / visitors）。
+// total 是「这个维度用来排名的那个数」，书名榜是人数、其余是次数（见 P18），
+// 所以断言口径时要显式说要读哪一列。
+func subjectItemsField(t *testing.T, srv *httptest.Server, admin string, kv map[string]string, field string) map[string]int64 {
 	t.Helper()
 	status, env := doJSON(t, srv, "GET", "/admin/monitor/subjects"+buildQuery(kv), nil, authHeader(admin))
 	if status != http.StatusOK {
@@ -67,8 +74,8 @@ func subjectItems(t *testing.T, srv *httptest.Server, admin string, kv map[strin
 	for _, r := range raw {
 		it, _ := r.(map[string]interface{})
 		name, _ := it["name"].(string)
-		total, _ := it["total"].(float64)
-		out[name] = int64(total)
+		v, _ := it[field].(float64)
+		out[name] = int64(v)
 	}
 	return out
 }
@@ -197,8 +204,17 @@ func TestMonitorSubjectBookCountsContentOnly(t *testing.T) {
 	insert("fake_a", "content", "书名榜只数正文", "第二章")
 	insert("fake_a", "content", "书名榜只数正文", "第三章")
 
-	if got := subjectItems(t, srv, admin, map[string]string{"dim": "book", "source": "fake_a"})["书名榜只数正文"]; got != 3 {
-		t.Errorf("书名榜应只算 3 次正文，实得 %d", got)
+	bookReq := subjectItemsField(t, srv, admin, map[string]string{"dim": "book", "source": "fake_a"}, "requests")
+	if got := bookReq["书名榜只数正文"]; got != 3 {
+		t.Errorf("书名榜请求数应只算 3 次正文（detail 与两页目录不计），实得 %d", got)
+	}
+	// 排名数字按 P18 走人数：一个人读完三章 = 1 个访问者、3 次请求
+	bookVis := subjectItemsField(t, srv, admin, map[string]string{"dim": "book", "source": "fake_a"}, "visitors")
+	if got := bookVis["书名榜只数正文"]; got != 1 {
+		t.Errorf("书名榜人数应只算 1 个访问者（u1 读了三章），实得 %d", got)
+	}
+	if got := subjectItems(t, srv, admin, map[string]string{"dim": "book", "source": "fake_a"})["书名榜只数正文"]; got != 1 {
+		t.Errorf("书名榜 total 应等于人数口径（1），实得 %d", got)
 	}
 	chap := subjectItems(t, srv, admin, map[string]string{"dim": "chapter", "source": "fake_a"})
 	for _, name := range []string{"第一章", "第二章", "第三章"} {

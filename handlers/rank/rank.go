@@ -32,11 +32,13 @@ const settingPublicSources = "rank_public_sources"
 // 公开榜的维度与条数上限：维度白名单在这里也钉一次，
 // 免得以后有人往 boards 里加 chapter/media 就当"只是多个字段"
 var boards = []struct {
-	Dim   string `json:"-"`
-	Title string `json:"title"`
+	Dim    string `json:"-"`
+	Title  string `json:"title"`
+	Unit   string // 排名数字的单位（人 / 次）——两张榜口径不同，不标出来就会被统一读成「热度」
+	Metric string
 }{
-	{Dim: "keyword", Title: "搜索热词榜"},
-	{Dim: "book", Title: "阅读榜"},
+	{Dim: "keyword", Title: "搜索热词榜", Unit: "次", Metric: "搜索次数"},
+	{Dim: "book", Title: "阅读榜", Unit: "人", Metric: "访问人数（同数据源内按用户去重）"},
 }
 
 const boardLimit = 20
@@ -55,9 +57,11 @@ type boardEntry struct {
 }
 
 type boardPayload struct {
-	Dim   string       `json:"dim"`
-	Title string       `json:"title"`
-	Rows  []boardEntry `json:"rows"`
+	Dim    string       `json:"dim"`
+	Title  string       `json:"title"`
+	Metric string       `json:"metric"` // 口径写在数据里：面板换文案不用改端点，前端也不用猜
+	Unit   string       `json:"unit"`   // 排名数字的单位（人 / 次），与 Metric 同义但短到能贴在数字后面
+	Rows   []boardEntry `json:"rows"`
 }
 
 // isAdmin 当前会话是否管理员：查库取角色（与 auth.AdminRequired 同一口径，
@@ -153,7 +157,7 @@ func GetBoards(c *gin.Context) {
 			}
 			rows = append(rows, boardEntry{Name: it.Name, Total: it.Total})
 		}
-		out = append(out, boardPayload{Dim: b.Dim, Title: b.Title, Rows: rows})
+		out = append(out, boardPayload{Dim: b.Dim, Title: b.Title, Metric: b.Metric, Unit: b.Unit, Rows: rows})
 	}
 	auth.Ok(c, gin.H{
 		"days": days, "boards": out, "limit": boardLimit,

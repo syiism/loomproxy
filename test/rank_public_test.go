@@ -8,6 +8,7 @@ package test
 //   - 与 /admin/monitor/subjects 错开：普通用户打管理端点仍是 403
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -256,12 +257,16 @@ func TestRankBoardsMediaFilter(t *testing.T) {
 		t.Fatalf("开启公开榜失败: status=%d msg=%s", status, env.Msg)
 	}
 
-	// 阅读榜只统计 content 动作：同名同书、两种媒介各若干次
+	// 阅读榜只统计 content 动作：同一本书、两种媒介各若干次。
+	// 每条都换一个用户（P18 之后书名榜按人数排名）：这样 5/3/2 这三个期望在
+	// 「人数」与「次数」两种口径下取值一致，本用例验的还是**媒介筛选**，不是排名口径
 	for i := 0; i < 3; i++ {
-		insertSubjectCall(t, "fake_a", "content", "", "跨形态的书", base.MediaNovel, 1, http.StatusOK)
+		insertCall(t, "fake_a", "content", fmt.Sprintf("media_novel_%d", i), fmt.Sprintf("10.8.0.%d", i),
+			"跨形态的书", "", "媒介章节", base.MediaNovel, http.StatusOK)
 	}
 	for i := 0; i < 2; i++ {
-		insertSubjectCall(t, "fake_a", "content", "", "跨形态的书", base.MediaAudio, 1, http.StatusOK)
+		insertCall(t, "fake_a", "content", fmt.Sprintf("media_audio_%d", i), fmt.Sprintf("10.8.1.%d", i),
+			"跨形态的书", "", "媒介章节", base.MediaAudio, http.StatusOK)
 	}
 
 	bookRow := func(query string) (map[string]interface{}, int64) {
