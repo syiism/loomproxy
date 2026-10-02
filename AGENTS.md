@@ -19,7 +19,7 @@
 
 ## 3. 构建、运行与部署
 
-- 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` + 手写 SQL 的保留字/反引号扫描 → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
+- 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` + 手写 SQL 的保留字/反引号扫描 + 前端未定义类扫描 → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
 - 配置优先级：进程环境变量 > 工作目录 `.env` > 可执行文件目录 `.env`。
 - 手工换装（不走 `scripts/deploy.sh`）有三查：**备份先验非空**、**scp 后核远端 md5 一致才 install**、**重启后按启动契约核对日志关键行**而非只看 `is-active`（`Restart=always` 会把崩溃循环伪装成运行中）。
@@ -105,6 +105,8 @@
 - **审计类写入不许吞错**：只为留档而写的表（如 `redemption_logs`）插入失败必须打服务端日志；
   列宽按**用户输入的最坏形态**定，不是按我们自己生成的形态定。SQLite 不检查列宽，这类只在 MySQL 暴露。
 - 前端复用既有组件与 `@layer components` 基样类；`reveal` 动画依赖观察时机（先 `loading=false` 再 `nextTick(revealObserve)`）。
+- **自定义类写了就得有定义**（`btn-*`/`card`/`table-*`/`label`/`checkbox`…）：Tailwind 对不存在的类静默跳过，
+  错类名不红构建、不红用例——**已由 `make vet` 扫**（`scripts/check-css-classes.sh`，P31）。
 - 黑盒测试一律放 `test/`，集成用例禁止 `t.Parallel()`；改动完成后 `make build` 且必须 `git commit`。
 - **断言写完做一次变异验证**：把被测改动反转跑一次，确认用例真的会红——绿灯只证明它没挡住现状，不证明它能挡住错误。
 - **机制性坑记在** [`docs/规范/踩坑判据.md`](docs/规范/踩坑判据.md)（症状 → 真因 → 一句可执行的判据 → 固化去处）；

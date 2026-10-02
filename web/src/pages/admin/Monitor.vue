@@ -76,7 +76,7 @@
               <tr v-for="(r, i) in coverage" :key="i">
                 <td class="font-mono text-xs">{{ r.source }} <span class="text-text-muted">/ {{ r.action }}</span></td>
                 <td class="font-mono text-xs">{{ r.rows }}</td>
-                <td v-for="m in pctCells(r)" :key="m.k" class="font-mono text-xs" :style="m.bad ? 'color:#b1263a' : ''">{{ m.text }}</td>
+                <td v-for="m in pctCells(r)" :key="m.k" class="font-mono text-xs" :style="m.bad ? 'color:#b1263a' : ''">{{ m.text }}<span v-if="m.bad" class="text-text-muted"> ·低</span></td>
               </tr>
             </tbody>
           </table>
