@@ -32,7 +32,8 @@
 
 ## 5. 处理器自注册与数据源声明位
 
-- `base.RegisterSource(SourceMeta{...})` 是路由对账与 seed 播种的**唯一事实来源**；声明位含 `Actions`/`FixedBaseURL`/`SearchTabs`/`LegacyGroups`/`DataFiles`/`MediaType`。
+- `base.RegisterSource(SourceMeta{...})` 是路由对账与 seed 播种的**唯一事实来源**；声明位含 `Actions`/`FixedBaseURL`/`SearchTabs`/`LegacyGroups`/`DataFiles`/`MediaType`/**`OnBoot`**。
+- **源的启动动作放 `OnBoot`，不要放包 `init()`**：`conf.Load()` 在 `app.Run` 里才读 `.env`，init 阶段 `os.Getenv` 只能看到真实环境变量（症状是「.env 改了不生效」）；`OnBoot` 跑在 `db.Init` 之后、`pool.StartAll()` 之前，登记号池与初始导入都在这里。
 - 需要新行为优先**补声明位**而不是改骨架；声明值非法在 `RegisterSource` 期 `log.Fatalf`。
 - 路由全是根级 `/{source}/{action}`；链由中间件包的 `Def{Scope,Order,Applies,Build}` 装配，禁止在 `app.go` 手工拼链。
 - **数据源分组**（`source_groups` + `data_sources.group_id`）只是归类与筛选视图：限额/计费/限速/套餐关联的键

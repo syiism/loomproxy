@@ -33,6 +33,37 @@ type SourceMeta struct {
 	// 都没给出类型时兜底。多媒介源（一站同时载小说/听书/漫画/短剧）不要填默认值——那只会把
 	// 误判固化，应由 SearchTabs 逐项声明 + 让响应自带的类型说话。空 = 未声明。
 	MediaType string `json:"media_type,omitempty"`
+	// OnBoot 是**装配后钩子**：由 app.Run 在「配置已加载、数据库已连接、号池尚未启动」这一刻
+	// 按登记顺序调用一次，然后才 `pool.StartAll()`。
+	//
+	// 为什么需要它而不是让源包在 `init()` 里做完：`conf.Load()` 读 `.env` 是在 app.Run 里发生的，
+	// 而包 `init()` 早于 main —— 在 init 里 `os.Getenv("XXX_MAX_DEVICES")` 读不到 `.env` 的值，
+	// 只有真实进程环境变量读得到。症状是「在 .env 里改了却没生效」，而且没人会怀疑时序。
+	// 需要读源自有开关、连库做初始导入、或登记号池（希望启动日志里就看见它）的源，把这件事放这里。
+	//
+	// 钩子自己要保持幂等（重复调用不出新状态）：生产只在启动时跑一次，但测试环境可能反复装配。
+	// 返回 error 只记日志、不阻断启动——一个源的启动准备失败，不该让别人也跟着起不来。
+	OnBoot func() error `json:"-"`
+}
+
+// RunSourceBoots 依次执行各数据源声明的 OnBoot（按 SortOrder 的稳定登记顺序）。
+// 由 app.Run 在 pool.StartAll 之前调用；单个钩子 panic 不拖垮启动。
+func RunSourceBoots() {
+	for _, m := range DeclaredSources() {
+		if m.OnBoot == nil {
+			continue
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("数据源 %s 的启动准备 panic（已跳过，服务继续启动）: %v", m.Code, r)
+				}
+			}()
+			if err := m.OnBoot(); err != nil {
+				log.Printf("数据源 %s 的启动准备失败（服务继续启动）: %v", m.Code, err)
+			}
+		}()
+	}
 }
 
 // DataFileDesc 源声明的附属数据文件说明：Name 为文件名（不含 .json）

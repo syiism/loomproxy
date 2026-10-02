@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 
 	"loomproxy/base"
 )
@@ -39,6 +40,14 @@ const (
 
 // Actions 假源声明的动作集：seed 据此播种 quota_costs，app 据此对账路由
 var Actions = []string{"search", "detail", "chapter", "content", "explore"}
+
+// OnBoot 注入点（只挂在假源 A 上）：验「装配后钩子」这一声明位本身——
+// 用例在 base.RunSourceBoots() 之前设 BootHook，跑完清掉。
+// BootCount 由包装器自增，所以钩子 panic 时也留得下痕迹。
+var (
+	BootCount atomic.Int64
+	BootHook  func() error
+)
 
 // handler 最小可用的数据源处理器：走 base 弹性栈取上游，不做任何归一化
 type handler struct {
@@ -90,7 +99,20 @@ func Register() {
 		}, nil, ""},
 	}
 	for i, s := range sources {
+		var boot func() error
+		if s.code == A {
+			// 假源的启动准备是**测试时注入**的：默认什么都不做（免得每条用例都多跑一段），
+			// 只有验 OnBoot 的用例在调用 base.RunSourceBoots() 之前设上它
+			boot = func() error {
+				BootCount.Add(1)
+				if BootHook != nil {
+					return BootHook()
+				}
+				return nil
+			}
+		}
 		if err := base.RegisterSource(base.SourceMeta{
+			OnBoot:       boot,
 			Code:         s.code,
 			Display:      s.display,
 			Category:     "fake",

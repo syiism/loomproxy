@@ -666,7 +666,12 @@ func Run(ctx context.Context) error {
 	prewarmCtx, prewarmCancel := context.WithTimeout(ctx, 30*time.Second)
 	go prewarmCache(prewarmCtx, prewarmCancel)
 
-	// 号池启动即初始化（由各数据源经 pool.Register 登记）：提前完成存量号分类与
+	// 数据源的装配后准备（conf.Load 与 db.Init 都已发生，见 base.SourceMeta.OnBoot）：
+	// 读源自有开关、做初始导入、登记自己的号池——都必须在 pool.StartAll 之前完成，
+	// 否则池装载时看不到刚导入的号（面板看得见、取号取不到）
+	base.RunSourceBoots()
+
+	// 号池启动即初始化（由各数据源登记）：提前完成存量号分类与
 	// 首个活跃号转正，启动日志即可确认号池状态；POOL_ENABLED=false 时整体跳过
 	go pool.StartAll()
 
