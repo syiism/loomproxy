@@ -45,6 +45,7 @@ func persistCallLogs(calls []base.RecentCall) {
 			Source:       rc.Source,
 			Action:       rc.Action,
 			Status:       rc.Status,
+			InBandError:  rc.InBandError,
 			LatencyMs:    rc.LatencyMs,
 			CreatedAt:    rc.Time,
 			Keyword:      rc.Keyword,
@@ -85,8 +86,10 @@ func PurgeExpiredCallLogs() {
 	}
 	var aggs []aggRow
 	if err := db.DB.Model(&models.ApiCallLog{}).
+		// 成功 = 2xx 且非带内失败（P22）。IS NOT TRUE 对 NULL 也成立：旧行没有这一列的值，
+		// 仍按纯 HTTP 口径计成功，不会因为列后加而被读成失败
 		Select("source, action, COUNT(*) AS total, "+
-			"SUM(CASE WHEN status >= 200 AND status < 300 THEN 1 ELSE 0 END) AS success, "+
+			"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success, "+
 			"COALESCE(SUM(latency_ms), 0) AS latency_sum, COALESCE(MAX(latency_ms), 0) AS max_latency").
 		Where("created_at < ?", cutoff).
 		Group("source, action").

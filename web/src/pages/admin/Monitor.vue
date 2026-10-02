@@ -57,11 +57,12 @@
       </div>
       <div v-if="coverage.length" class="mb-3 overflow-x-auto">
         <div class="text-xs text-text-muted mb-1.5">
-          内容维度覆盖率（窗口内已落库明细，按 源×接口）——哪一格常年不满，就是那个源的采集在漏，不用等榜上出现空条目再猜
+          内容维度覆盖率（窗口内已落库明细，按 源×接口）——哪一格常年不满，先看同行的失败与带内失败：
+          失败请求（含带内失败）天然五维全空，是「缺格子的合理成因」，剩下的缺口才是采集在漏
         </div>
         <table class="table-base">
           <thead>
-            <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th></tr>
+            <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th><th>带内失败</th></tr>
           </thead>
           <tbody>
             <tr v-for="(r, i) in coverage" :key="i">
@@ -73,6 +74,7 @@
         </table>
         <div class="text-xs text-text-muted mt-1.5">
           只统计 5 条以上的组合；search/explore 返回的是一批书，书名一栏留空是正常状态（所以不标红）。
+          失败 = HTTP 层失败 + 带内失败；带内失败指 HTTP 200 但正文是错误载荷（Legado 书源对参数缺失/上游失败的传统写法）。
         </div>
       </div>
       <div v-else-if="coverageError" class="mb-3 text-xs text-pale-red-fg">
@@ -169,7 +171,7 @@
               <td class="font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
               <td><UiTag tone="blue" :label="r.source" /></td>
               <td class="font-mono text-xs">{{ r.action }}</td>
-              <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}</td>
+              <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></td>
               <td class="font-mono text-xs">{{ r.latency_ms }}ms</td>
               <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
               <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
@@ -212,7 +214,7 @@
             <td class="font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
             <td><UiTag tone="blue" :label="r.source" /></td>
             <td class="font-mono text-xs">{{ r.action }}</td>
-            <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}</td>
+            <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></td>
             <td class="font-mono text-xs">{{ r.latency_ms }}ms</td>
             <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
             <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
@@ -292,6 +294,7 @@ const pctCells = (r) => ([
   { k: 'chapter', text: pct(r.has_chapter_title, r.rows) + '%', bad: r.action === 'chapter' && pct(r.has_chapter_title, r.rows) < 90 },
   { k: 'media', text: pct(r.has_media, r.rows) + '%', bad: pct(r.has_media, r.rows) < 90 },
   { k: 'failed', text: String(r.failed), bad: false },
+  { k: 'inband', text: String(r.in_band_failed || 0), bad: (r.in_band_failed || 0) > 0 },
 ])
 
 const rateColor = (r) => r >= 95 ? '#346538' : r >= 80 ? '#956400' : '#9F2F2D'

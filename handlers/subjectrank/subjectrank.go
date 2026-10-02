@@ -156,7 +156,8 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 	if err := db.DB.Model(&models.ApiCallLog{}).
 		Select(dim.Column+" AS name, source, COUNT(*) AS total, "+
 			"COUNT(DISTINCT "+visitorExpr+") AS visitors, "+
-			"SUM(CASE WHEN status >= 200 AND status < 300 THEN 1 ELSE 0 END) AS success, "+
+			// 成功 = 2xx 且非带内失败（P22）；IS NOT TRUE 对 NULL 成立，旧行仍按纯 HTTP 口径
+			"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success, "+
 			"COALESCE(SUM(latency_ms), 0) AS latency, COALESCE(MAX(latency_ms), 0) AS max, "+
 			"SUM(CASE WHEN status >= 200 AND status < 300 AND result_count = 0 THEN 1 ELSE 0 END) AS empty_count").
 		Where(cond, args...).
@@ -205,7 +206,7 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 	}
 	for _, rc := range pending {
 		var success, empty, visitors int64
-		if rc.Status >= 200 && rc.Status < 300 {
+		if rc.Status >= 200 && rc.Status < 300 && !rc.InBandError {
 			success = 1
 			if rc.ResultCount == 0 {
 				empty = 1
@@ -329,6 +330,7 @@ func dimCondition(dim Dim, from time.Time, sourceFilter, mediaFilter string, all
 type pendingCall struct {
 	Name, Source, Who string
 	Status            int
+	InBandError       bool
 	LatencyMs         int64
 	ResultCount       int
 }
@@ -367,7 +369,8 @@ func pendingCalls(dim Dim, key string, from time.Time, sourceFilter, mediaFilter
 		}
 		out = append(out, pendingCall{
 			Name: val, Source: rc.Source, Who: who,
-			Status: rc.Status, LatencyMs: rc.LatencyMs, ResultCount: rc.ResultCount,
+			Status: rc.Status, InBandError: rc.InBandError,
+			LatencyMs: rc.LatencyMs, ResultCount: rc.ResultCount,
 		})
 	}
 	return out
@@ -422,6 +425,8 @@ func visitorKey(name, source, who string) string {
 // 缺失一律由 `rows - 有` 推出来——不给两种空值各留一条口径的机会。
 // 「哪个动作本就不该有书名」也随数据下发（`expect_book`）：search/explore 返回的是一批书，
 // 没有"这一本"可言，它们的 0% 是正常状态，不该标红。
+// 失败请求（HTTP 失败与带内失败，见 `failed`/`in_band_failed`）天然五维全空，
+// 它们是「缺格子的合理成因」而不是「采集在漏」的证据——读格子先看这两个数。
 //
 // 口径是**已落库明细**：环形缓冲里那 ≤200 条不在此列（这条统计是健康度，不是实时榜）。
 
@@ -437,7 +442,11 @@ type CoverageRow struct {
 	HasChapterTitle int64 `json:"has_chapter_title"`
 	HasKeyword      int64 `json:"has_keyword"`
 	HasMedia        int64 `json:"has_media"`
-	Failed          int64 `json:"failed"`
+	// Failed 失败请求数 = HTTP 层失败 + 带内失败（P22：200 但正文是错误载荷的请求，
+	// 只有标出来覆盖率才读得懂——一格不满可能只是请求在失败，不是采集在漏）。
+	// InBandFailed 是其中带内的那部分；两者之差才是真正的 HTTP 层失败。
+	Failed       int64 `json:"failed"`
+	InBandFailed int64 `json:"in_band_failed"`
 	// ExpectBook 该动作是否理应记到书名/书目标识：为真才谈得上"缺失"。
 	// 面板据此决定要不要标红，而不是对着一片合法的 0% 报警。
 	ExpectBook bool `json:"expect_book"`
@@ -480,7 +489,9 @@ func Coverage(days int, sourceFilter string, allowSources []string) ([]CoverageR
 			"SUM(CASE WHEN COALESCE(chapter_title,'') <> '' THEN 1 ELSE 0 END) AS has_chapter_title, "+
 			"SUM(CASE WHEN COALESCE(keyword,'') <> '' THEN 1 ELSE 0 END) AS has_keyword, "+
 			"SUM(CASE WHEN COALESCE(media,'') <> '' THEN 1 ELSE 0 END) AS has_media, "+
-			"SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS failed").
+			// IS TRUE 对 NULL 成立：旧行没有这一列的值，只按 status >= 400 计失败
+			"SUM(CASE WHEN status >= 400 OR in_band_error IS TRUE THEN 1 ELSE 0 END) AS failed, "+
+			"SUM(CASE WHEN in_band_error IS TRUE THEN 1 ELSE 0 END) AS in_band_failed").
 		Where(cond, args...).
 		Group("source, action").
 		Scan(&rows).Error; err != nil {

@@ -6,14 +6,17 @@ import "time"
 // 由内存环形缓冲淘汰时批量落库 + 服务关停时兜底落库。
 // 保留期由 MONITOR_RETENTION_DAYS 决定：默认 0=永久保留且不清理，>0 时写入方顺带清理。
 type ApiCallLog struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Username  string    `gorm:"size:64;index" json:"username"` // 调用者用户名（API Key/匿名为空）
-	IP        string    `gorm:"size:64" json:"ip"`             // 调用者客户端 IP
-	Source    string    `gorm:"size:32;index" json:"source"`   // 数据源码
-	Action    string    `gorm:"size:32" json:"action"`         // 接口动作，如 search
-	Status    int       `json:"status"`                        // HTTP 状态码
-	LatencyMs int64     `json:"latency_ms"`                    // 耗时（毫秒）
-	CreatedAt time.Time `gorm:"index" json:"created_at"`       // 调用时间
+	ID       uint   `gorm:"primaryKey" json:"id"`
+	Username string `gorm:"size:64;index" json:"username"` // 调用者用户名（API Key/匿名为空）
+	IP       string `gorm:"size:64" json:"ip"`             // 调用者客户端 IP
+	Source   string `gorm:"size:32;index" json:"source"`   // 数据源码
+	Action   string `gorm:"size:32" json:"action"`         // 接口动作，如 search
+	Status   int    `json:"status"`                        // HTTP 状态码
+	// 带内失败（P22）：HTTP 200 但正文是 ContentType=="error" 的错误载荷。
+	// 列 NOT NULL 默认 false——成功/失败口径在 SQL 里直接用它，NULL 会把旧行读成第三种状态。
+	InBandError bool      `gorm:"not null;default:false" json:"in_band_error"`
+	LatencyMs   int64     `json:"latency_ms"`              // 耗时（毫秒）
+	CreatedAt   time.Time `gorm:"index" json:"created_at"` // 调用时间
 	// 内容维度：由 base/legado 从规范化响应回填，没抽到就是空串（不建 index——
 	// 面板是 contains LIKE 筛选，B-tree 用不上，只换来写放大）
 	Keyword      string `gorm:"size:128" json:"keyword"`       // 搜索词

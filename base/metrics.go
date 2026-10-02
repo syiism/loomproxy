@@ -19,13 +19,16 @@ type ActionMetrics struct {
 
 // RecentCall 一次调用的明细记录（供监控页展示最近调用）
 type RecentCall struct {
-	Time      time.Time `json:"time"`
-	Username  string    `json:"username"`
-	IP        string    `json:"ip"`
-	Source    string    `json:"source"`
-	Action    string    `json:"action"`
-	Status    int       `json:"status"`
-	LatencyMs int64     `json:"latency_ms"`
+	Time     time.Time `json:"time"`
+	Username string    `json:"username"`
+	IP       string    `json:"ip"`
+	Source   string    `json:"source"`
+	Action   string    `json:"action"`
+	Status   int       `json:"status"`
+	// InBandError 带内失败（P22）：HTTP 200 但正文是 ContentType=="error" 的错误载荷。
+	// 监控读数把它计入失败；HTTP 状态、IP 封禁计数与额度计费不受它影响。
+	InBandError bool  `json:"in_band_error,omitempty"`
+	LatencyMs   int64 `json:"latency_ms"`
 	// 内容维度（由 legado.ObserveCall 从规范化响应回填；没抽到就是空串）
 	Keyword      string `json:"keyword,omitempty"`
 	BookName     string `json:"book_name,omitempty"`
@@ -90,7 +93,10 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 		am[action] = m
 	}
 	m.Total++
-	if status >= 200 && status < 300 {
+	// 失败 = HTTP 层失败 + 带内失败（P22：200 但正文是 ContentType=="error" 的错误载荷，
+	// 只可能出现在拿到了规范化响应的请求上）。只影响监控读数；IP 封禁与计费仍只看 HTTP。
+	inBand := subject != nil && subject.InBandError
+	if status >= 200 && status < 300 && !inBand {
 		m.Success++
 	} else {
 		m.Failed++
@@ -103,13 +109,14 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 	m.LastStatus = status
 
 	rc := RecentCall{
-		Time:      now,
-		Username:  username,
-		IP:        ip,
-		Source:    source,
-		Action:    action,
-		Status:    status,
-		LatencyMs: ms,
+		Time:        now,
+		Username:    username,
+		IP:          ip,
+		Source:      source,
+		Action:      action,
+		Status:      status,
+		InBandError: inBand,
+		LatencyMs:   ms,
 	}
 	if subject != nil {
 		rc.Keyword = subject.Keyword

@@ -2,6 +2,7 @@ package legado
 
 import (
 	"strconv"
+	"strings"
 
 	"loomproxy/base"
 )
@@ -114,6 +115,12 @@ func observeChapterList(source string, subj *base.CallSubject, items []ChapterIt
 }
 
 func observeContent(source string, subj *base.CallSubject, contentType string, data map[string]interface{}) {
+	// 带内错误（P22）：源在参数缺失/上游失败时返回 ContentType=="error" 的正文，HTTP 仍是 200。
+	// "error" 不是任何合法媒介，媒介照旧留空；这里只把这次调用标成带内失败，
+	// 让监控的成功率/覆盖率读数能把它数成失败。不动响应本身——那是产品口径（P22②）。
+	if strings.EqualFold(contentType, "error") {
+		subj.InBandError = true
+	}
 	media := base.MediaFromContentType(contentType)
 	if media == "" {
 		media = base.NormalizeMediaName(contentType)

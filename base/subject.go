@@ -27,6 +27,11 @@ type CallSubject struct {
 	ChapterTitle string `json:"chapter_title"`
 	Media        string `json:"media"` // 枚举见 media.go；空 = 未判定
 	ResultCount  int    `json:"result_count"`
+	// InBandError 带内失败（待办清单 P22）：HTTP 200 但正文是 ContentType=="error" 的
+	// 错误载荷（Legado 书源对参数缺失/上游失败的传统写法）。HTTP 读数看不出它，
+	// 不标出来的话，失败的正文请求就以「成功 + 内容维度全空」的形状混进明细，
+	// 成功率、覆盖率、榜三处读数一起说谎。只标观测，不改响应、不动计费。
+	InBandError bool `json:"-"`
 	// 内部标识：只用于查命名缓存，不对外暴露（面板展示的是名称）
 	BookKey    string `json:"-"`
 	ChapterKey string `json:"-"`

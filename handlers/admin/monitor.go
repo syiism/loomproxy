@@ -199,8 +199,9 @@ func GetMonitorTrend(c *gin.Context) {
 	}
 	var rows []row
 	if err := db.DB.Model(&models.ApiCallLog{}).
+		// 成功 = 2xx 且非带内失败（P22）；IS NOT TRUE 对 NULL 成立，旧行仍按纯 HTTP 口径
 		Select(dateExpr+" AS day, source, COUNT(*) AS total, "+
-			"SUM(CASE WHEN status >= 200 AND status < 300 THEN 1 ELSE 0 END) AS success").
+			"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success").
 		Where("created_at >= ?", firstDay).
 		Group(dateExpr + ", source").
 		Scan(&rows).Error; err != nil {
@@ -233,12 +234,12 @@ func GetMonitorTrend(c *gin.Context) {
 		key := rc.Time.Format("2006-01-02") + "|" + rc.Source
 		if idx, ok := merged[key]; ok {
 			rows[idx].Total++
-			if rc.Status >= 200 && rc.Status < 300 {
+			if rc.Status >= 200 && rc.Status < 300 && !rc.InBandError {
 				rows[idx].Success++
 			}
 		} else {
 			var success int64
-			if rc.Status >= 200 && rc.Status < 300 {
+			if rc.Status >= 200 && rc.Status < 300 && !rc.InBandError {
 				success = 1
 			}
 			merged[key] = len(rows)
