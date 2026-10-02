@@ -749,19 +749,35 @@ func (p *Pool) Cooldown(ident string, until time.Time, reason string) {
 }
 
 // UpdatePayload 写回某个号的嵌套凭证载荷（会话 cookie 刷新后回写这类场景）。
-// 框架不解析内容，只负责落库与同步内存里的号。
+// 框架不解析内容，只负责落库。优先改**内存里那一份**再落库：只写库的话，
+// Acquire 返回的仍是旧的内存行，症状是「回写了新 cookie，下一个请求又拿到过期的」，
+// 且只有重启才自愈。库中号（spent/dead）不在内存里，退回按库取一份。
 func (p *Pool) UpdatePayload(ident string, payload []byte) error {
 	if db.DB == nil {
 		return fmt.Errorf("数据库未就绪")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	row := p.rowByIdent(ident)
+	row := p.memRowLocked(ident)
 	if row == nil {
-		return fmt.Errorf("号池 %s 中不存在号 %s", p.Name(), ident)
+		if row = p.rowByIdent(ident); row == nil {
+			return fmt.Errorf("号池 %s 中不存在号 %s", p.Name(), ident)
+		}
 	}
 	row.Payload = string(payload)
 	return db.DB.Select("Payload").Save(row).Error
+}
+
+// memRowLocked 在内存的三个集合里按标识找号（调用方持锁）
+func (p *Pool) memRowLocked(ident string) *models.PoolDevice {
+	for _, list := range [][]*models.PoolDevice{p.hot, p.cold, p.cooldown} {
+		for _, d := range list {
+			if d.Ident == ident {
+				return d
+			}
+		}
+	}
+	return nil
 }
 
 // CooldownCount 当前冷却中的号数（spread 池的可观测口径：可用 = HotCount，冷却 = 这个数）

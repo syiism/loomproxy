@@ -790,6 +790,23 @@ func TestPoolSpreadPayloadAndSnapshot(t *testing.T) {
 	if got := deviceRow(t, fp.Name(), dev.Ident).Payload; got != string(nested) {
 		t.Fatalf("UpdatePayload 未落库：库里的 payload = %q", got)
 	}
+	// 取号也要立刻拿到新载荷：Acquire 返回的是内存里那一份行，只写库等于池继续发旧凭证
+	back := false
+	for i := 0; i < 3 && !back; i++ {
+		got, err := p.Acquire()
+		if err != nil {
+			t.Fatalf("回写后 Acquire 失败: %v", err)
+		}
+		if got.Ident == dev.Ident {
+			back = true
+			if string(got.Payload) != string(nested) {
+				t.Fatalf("Acquire 仍返回旧载荷（内存行没跟着更新）：%q", got.Payload)
+			}
+		}
+	}
+	if !back {
+		t.Fatal("三轮轮询都没取回刚回写载荷的那个号")
+	}
 	p.Cooldown(dev.Ident, time.Now().Add(time.Hour), "设备被冻一小时")
 
 	st := p.Status()
