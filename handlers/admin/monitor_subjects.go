@@ -46,6 +46,9 @@ func GetMonitorSubjects(c *gin.Context) {
 		return
 	}
 
+	// 自我观测：哪一格没采到，本该由系统说，而不是靠人肉写 SQL 去猜
+	coverage, covErr := subjectrank.Coverage(days, sourceFilter, nil)
+
 	books, chapters := base.NameCacheStats()
 	cache := gin.H{"books": books, "chapters": chapters}
 	// 写侧体检：接了 Redis 才报 persist（纯内存没有持久化可丢）
@@ -53,10 +56,13 @@ func GetMonitorSubjects(c *gin.Context) {
 		cache["persist"] = gin.H{"queued": queued, "dropped": dropped, "failed": failed}
 	}
 	auth.Ok(c, gin.H{
-		"dim":        dimKey,
-		"days":       days,
-		"from":       subjectrank.WindowStart(days),
-		"items":      items,
-		"name_cache": cache,
+		"dim":   dimKey,
+		"days":  days,
+		"from":  subjectrank.WindowStart(days),
+		"items": items,
+		// 覆盖率统计失败不该让整页挂掉：榜单本身还能看，这里只回一条说明
+		"coverage":       coverage,
+		"coverage_error": covErr != nil,
+		"name_cache":     cache,
 	})
 }

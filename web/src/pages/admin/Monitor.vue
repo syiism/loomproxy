@@ -55,6 +55,29 @@
         <input v-model="subjectSource" list="source-options" placeholder="数据源"
                class="input input-sm w-36 font-mono" @keydown.enter="loadSubjects" @change="loadSubjects">
       </div>
+      <div v-if="coverage.length" class="mb-3 overflow-x-auto">
+        <div class="text-xs text-text-muted mb-1.5">
+          内容维度覆盖率（窗口内已落库明细，按 源×接口）——哪一格常年不满，就是那个源的采集在漏，不用等榜上出现空条目再猜
+        </div>
+        <table class="table-base">
+          <thead>
+            <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(r, i) in coverage" :key="i">
+              <td class="font-mono text-xs">{{ r.source }} <span class="text-text-muted">/ {{ r.action }}</span></td>
+              <td class="font-mono text-xs">{{ r.rows }}</td>
+              <td v-for="m in pctCells(r)" :key="m.k" class="font-mono text-xs" :style="m.bad ? 'color:#b1263a' : ''">{{ m.text }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="text-xs text-text-muted mt-1.5">
+          只统计 5 条以上的组合；search/explore 返回的是一批书，书名一栏留空是正常状态（所以不标红）。
+        </div>
+      </div>
+      <div v-else-if="coverageError" class="mb-3 text-xs text-pale-red-fg">
+        内容维度覆盖率统计失败（不影响下面的榜单，刷新或缩短窗口再试）。
+      </div>
       <div class="mb-2 text-xs text-text-muted">
         两列口径不同：<b>访问人数</b>是同数据源内按用户去重（匿名退到 IP，跨源相加不重复去重），
         <b>请求数</b>是接口调用条数。书名榜按<b>访问人数</b>排序（一条正文明细就是一章，按次数排等于把「谁在读」排成「被翻了多少章」），
@@ -257,6 +280,20 @@ const mediaLabel = (m) => (MEDIAS.find((x) => x.value === m) || {}).label || '�
 const mediaTone = (m) => (MEDIAS.find((x) => x.value === m) || {}).tone || 'gray'
 const subjectColumn = computed(() => (DIMS.find((d) => d.key === subjectDim.value) || {}).column || '名称')
 
+// coverage：后端按 源×接口 数「有值的行」，缺失由总数相减得出（NULL 与空串不必分两套判据）。
+// expect_book 为假的动作（search/explore）本就没有"这一本"，空不是缺陷，所以不标红
+const coverage = ref([])
+// 覆盖率只是一格体检，统计失败时整页还能看——所以后端把它拆成 coverage_error 单独下发
+const coverageError = ref(false)
+const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0)
+const pctCells = (r) => ([
+  { k: 'book', text: pct(r.has_book_name, r.rows) + '%', bad: r.expect_book && pct(r.has_book_name, r.rows) < 90 },
+  { k: 'ident', text: pct(r.has_book_ident, r.rows) + '%', bad: r.expect_book && pct(r.has_book_ident, r.rows) < 90 },
+  { k: 'chapter', text: pct(r.has_chapter_title, r.rows) + '%', bad: r.action === 'chapter' && pct(r.has_chapter_title, r.rows) < 90 },
+  { k: 'media', text: pct(r.has_media, r.rows) + '%', bad: pct(r.has_media, r.rows) < 90 },
+  { k: 'failed', text: String(r.failed), bad: false },
+])
+
 const rateColor = (r) => r >= 95 ? '#346538' : r >= 80 ? '#956400' : '#9F2F2D'
 const statusColor = (s) => s >= 500 ? '#9F2F2D' : s >= 400 ? '#956400' : '#346538'
 
@@ -316,6 +353,8 @@ const loadSubjects = async () => {
       source: subjectSource.value || undefined,
     })
     subjectItems.value = data.items || []
+    coverage.value = data.coverage || []
+    coverageError.value = !!data.coverage_error
     subjectCache.value = data.name_cache || { books: 0, chapters: 0, persist: null }
     nextTick(revealObserve)
   } catch (e) { toast(e.message, 'error') }

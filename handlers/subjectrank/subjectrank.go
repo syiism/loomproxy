@@ -411,3 +411,108 @@ func landedVisitors(dim Dim, cond string, args []interface{}, pending []pendingC
 func visitorKey(name, source, who string) string {
 	return name + "\x00" + source + "\x00" + who
 }
+
+// —— 内容维度覆盖率（监控的自我观测）———————————————————————————————
+//
+// 这块存在的理由很实际：上面那几条口径（人数、book_id）出问题时，全靠人肉写 SQL 才发现。
+// 而人肉核对本身也容易得错结论：`book_ident`/`chapter_ident` 是后加的列，旧行是 **NULL**；
+// 再叠上「老二进制根本不写这列」的历史段，一条 `WHERE col = ''` 的缺失数会同时漏掉这两种行，
+// 一条跨升级点的窗口又会把"升级前的空"读成"这个源采不到"（我就这么误判过一次，
+// 把 99% 的源读成 50%）。所以这里只统计**有**的条数（`COALESCE(col,'') <> ''` 统一 NULL 与空串），
+// 缺失一律由 `rows - 有` 推出来——不给两种空值各留一条口径的机会。
+// 「哪个动作本就不该有书名」也随数据下发（`expect_book`）：search/explore 返回的是一批书，
+// 没有"这一本"可言，它们的 0% 是正常状态，不该标红。
+//
+// 口径是**已落库明细**：环形缓冲里那 ≤200 条不在此列（这条统计是健康度，不是实时榜）。
+
+// CoverageRow 一个「数据源 × 接口」的内容维度覆盖情况。
+type CoverageRow struct {
+	Source string `json:"source"`
+	Action string `json:"action"`
+	// 别名列取 rows_ 而不是 rows：`ROWS` 是 MySQL 8 的保留字（SQLite 容忍、只有生产会炸，
+	// 见待办清单 P1/P15 那条教训）
+	Rows            int64 `gorm:"column:rows_" json:"rows"`
+	HasBookName     int64 `json:"has_book_name"`
+	HasBookIdent    int64 `json:"has_book_ident"`
+	HasChapterTitle int64 `json:"has_chapter_title"`
+	HasKeyword      int64 `json:"has_keyword"`
+	HasMedia        int64 `json:"has_media"`
+	Failed          int64 `json:"failed"`
+	// ExpectBook 该动作是否理应记到书名/书目标识：为真才谈得上"缺失"。
+	// 面板据此决定要不要标红，而不是对着一片合法的 0% 报警。
+	ExpectBook bool `json:"expect_book"`
+}
+
+// bookExpectedActions 理应带书名与书目标识的动作。搜索与发现返回的是书目列表，
+// 单一书名无从谈起（它们的维度是 keyword），所以留空是正常状态。
+var bookExpectedActions = map[string]bool{"detail": true, "chapter": true, "content": true}
+
+// CoverageActionOrder 面板展示顺序（按调用链的先后，不按字母）
+var CoverageActionOrder = []string{"search", "explore", "detail", "chapter", "content"}
+
+// Coverage 按 源×动作 统计窗口内的内容维度填充情况（min 条数以下的不返回，避免零星请求刷出 0%）。
+// sourceFilter 非空时只看那一个源；allowSources 语义与 Query 一致（钉死可见范围）。
+func Coverage(days int, sourceFilter string, allowSources []string) ([]CoverageRow, error) {
+	from := WindowStart(days)
+	cond := "created_at >= ?"
+	args := []interface{}{from}
+	if sourceFilter != "" {
+		cond += " AND source = ?"
+		args = append(args, sourceFilter)
+	}
+	if allowSources != nil {
+		if len(allowSources) == 0 {
+			return []CoverageRow{}, nil
+		}
+		cond += " AND source IN (?" + strings.Repeat(",?", len(allowSources)-1) + ")"
+		for _, s := range allowSources {
+			args = append(args, s)
+		}
+	}
+
+	var rows []CoverageRow
+	// 一律 COALESCE：这三列都出现过 NULL（列是后加的，旧行没有默认值），
+	// 直接 <> '' 会把 NULL 行算成"没采到"，而这类误判的代价是有人去"修一个不存在的问题"
+	if err := db.DB.Model(&models.ApiCallLog{}).
+		Select("source, action, COUNT(*) AS rows_, "+
+			"SUM(CASE WHEN COALESCE(book_name,'') <> '' THEN 1 ELSE 0 END) AS has_book_name, "+
+			"SUM(CASE WHEN COALESCE(book_ident,'') <> '' THEN 1 ELSE 0 END) AS has_book_ident, "+
+			"SUM(CASE WHEN COALESCE(chapter_title,'') <> '' THEN 1 ELSE 0 END) AS has_chapter_title, "+
+			"SUM(CASE WHEN COALESCE(keyword,'') <> '' THEN 1 ELSE 0 END) AS has_keyword, "+
+			"SUM(CASE WHEN COALESCE(media,'') <> '' THEN 1 ELSE 0 END) AS has_media, "+
+			"SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS failed").
+		Where(cond, args...).
+		Group("source, action").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	out := rows[:0]
+	for _, r := range rows {
+		if r.Rows < 5 { // 零星请求的百分比只会制造噪声（0% 或 100% 都不说明问题）
+			continue
+		}
+		r.ExpectBook = bookExpectedActions[r.Action]
+		out = append(out, r)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		oi, oj := actionOrderIndex(out[i].Action), actionOrderIndex(out[j].Action)
+		if oi != oj {
+			return oi < oj
+		}
+		if out[i].Rows != out[j].Rows {
+			return out[i].Rows > out[j].Rows
+		}
+		return out[i].Source < out[j].Source
+	})
+	return out, nil
+}
+
+func actionOrderIndex(action string) int {
+	for i, a := range CoverageActionOrder {
+		if a == action {
+			return i
+		}
+	}
+	return len(CoverageActionOrder)
+}
