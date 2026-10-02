@@ -17,6 +17,16 @@ type SourceMeta struct {
 	SortOrder   int      `json:"sort_order"`            // 排序（datasources 列表顺序）
 	Status      int      `json:"status"`                // 1 启用 / 0 禁用（播种用，缺省 1）
 	Actions     []string `json:"actions"`               // 声明的动作集（路由对账 + quota costs 播种）
+	// RequiredParams 每个动作**必填的请求参数**（动作 → 参数名）。路由层在进 handler 之前
+	// 统一校验，缺失直接 400（见 middleware/source 的 reqparams）。
+	//
+	// 为什么需要声明位而不是让源自己判：源实现对「缺参数」的传统写法是返回一个
+	// ContentType=="error" 的正文（Legado 书源习惯），HTTP 仍是 200 —— 下游会把
+	// 「缺少参数」那句话**当正文渲染进阅读器**，而监控看到的是「成功 + 内容维度全空」
+	// （待办清单 P22）。形态错误本该在门口收口，且判据与 handler 读的是同一批参数，
+	// 这里挡下的请求，源里那一支必然进不去。
+	// 未声明 = 不校验，行为与旧版完全一致（多参数可选的源不要乱填：如 search 的 key 可空搜）。
+	RequiredParams map[string][]string `json:"required_params,omitempty"`
 	// FixedBaseURL 声明该源上游地址写死在源实现中（如签名接口、HTML 抓取站）：
 	// 路由不接收 baseUrl 参数，也不做用户/平台配置回落与 SSRF 校验
 	FixedBaseURL bool `json:"fixed_base_url"`
@@ -86,6 +96,19 @@ func DescribeDataFile(name string) string {
 	return ""
 }
 
+// RequiredParamsFor 取某源某动作声明的必填请求参数；未声明返回 nil（= 不校验）。
+// 由 middleware/source 的 reqparams 在装配路由链时读取（声明在各源包 init 里就完成，
+// 所以装配期一定看得见）。
+func RequiredParamsFor(source, action string) []string {
+	sourceMu.Lock()
+	defer sourceMu.Unlock()
+	m, ok := sourceMetas[source]
+	if !ok {
+		return nil
+	}
+	return m.RequiredParams[action]
+}
+
 // SearchTab 数据源搜索分类：TabType 即下游请求的 tabType 参数，BdID 为上游分类标识，
 // MediaType 声明该 tab 的媒介形态（novel/audio/comic/video）——多媒介源靠它把
 // 「这次请求读的是哪一类内容」交给骨架记录
@@ -120,6 +143,22 @@ func RegisterSource(m SourceMeta) error {
 	}
 	if m.Status == 0 {
 		m.Status = 1
+	}
+	// 必填参数只能声明在本源已有的动作上：写错动作名等于这条校验永远不会跑，
+	// 而它的症状是「缺参的请求又在返回假正文」——比直接炸难查得多
+	known := make(map[string]bool, len(m.Actions))
+	for _, a := range m.Actions {
+		known[a] = true
+	}
+	for action, names := range m.RequiredParams {
+		if !known[action] {
+			log.Fatalf("RegisterSource(%s): RequiredParams 声明了未声明的动作 %q（actions=%v）", m.Code, action, m.Actions)
+		}
+		for _, p := range names {
+			if p == "" {
+				log.Fatalf("RegisterSource(%s): RequiredParams[%s] 含空参数名", m.Code, action)
+			}
+		}
 	}
 	sourceMu.Lock()
 	defer sourceMu.Unlock()

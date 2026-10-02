@@ -35,7 +35,10 @@ const (
 //   - Monitor(200) 早于 Access(400)/Billing(500)/RateLimit(600)，否则 403/429 不计入监控明细；
 //   - IPBlock(60) 晚于 CORS(40)，否则预检请求被拉黑 IP 拦死；
 //   - APIAuth(100) 早于 Monitor(200) 与 BaseURLCheck(300)：监控明细要 username，
-//     baseUrl 的用户个人配置回落要 user_id。
+//     baseUrl 的用户个人配置回落要 user_id；
+//   - RequiredParams(350) 晚于 BaseURLCheck(300)、早于 Access(400)：`baseUrl` 是解析出来
+//     放在 context 上的，校验得在它之后；而形态错误（缺必填参数）的请求不该再被套餐访问判定
+//     与计费走一遍——它连 handler 都不该进。
 const (
 	OrderRequestID    = 10
 	OrderRecovery     = 20
@@ -47,9 +50,11 @@ const (
 	OrderAPIAuth      = 100
 	OrderMonitor      = 200
 	OrderBaseURLCheck = 300
-	OrderAccess       = 400
-	OrderBilling      = 500
-	OrderRateLimit    = 600
+	// OrderRequiredParams 按源的 RequiredParams 声明校验必填请求参数（缺失直接 400）
+	OrderRequiredParams = 350
+	OrderAccess         = 400
+	OrderBilling        = 500
+	OrderRateLimit      = 600
 )
 
 // 跨包共享的 gin 上下文键（原为 app.go 与 middleware.go 之间的裸字符串契约）

@@ -90,13 +90,16 @@ func Register() {
 		searchTabs    []base.SearchTab
 		dataFiles     []base.DataFileDesc
 		mediaType     string
+		required      map[string][]string
 	}{
-		{A, "假数据源A", []string{LegacyGroup}, nil, nil, ""},
-		{B, "假数据源B", nil, nil, []base.DataFileDesc{{Name: DictFile, Description: "假源字典"}}, base.MediaAudio},
+		// fake_a 的 content 声明必填 bookId+itemId：它是 reqparams 中间件的夹具
+		// （缺参的请求必须在进 handler 之前收口成 400，见待办清单 P22）
+		{A, "假数据源A", []string{LegacyGroup}, nil, nil, "", map[string][]string{"content": {"bookId", "itemId"}}},
+		{B, "假数据源B", nil, nil, []base.DataFileDesc{{Name: DictFile, Description: "假源字典"}}, base.MediaAudio, nil},
 		{C, "假数据源C", nil, []base.SearchTab{
 			{TabType: 1, BdID: "fa", Name: "假分类一"},
 			{TabType: 2, BdID: "fb", Name: "假分类二", MediaType: base.MediaComic},
-		}, nil, ""},
+		}, nil, "", nil},
 	}
 	for i, s := range sources {
 		var boot func() error
@@ -112,18 +115,19 @@ func Register() {
 			}
 		}
 		if err := base.RegisterSource(base.SourceMeta{
-			OnBoot:       boot,
-			Code:         s.code,
-			Display:      s.display,
-			Category:     "fake",
-			Description:  "集成测试夹具，不属于底座功能",
-			SortOrder:    i + 1,
-			Status:       1,
-			Actions:      Actions,
-			LegacyGroups: s.legacyGroups,
-			SearchTabs:   s.searchTabs,
-			DataFiles:    s.dataFiles,
-			MediaType:    s.mediaType,
+			OnBoot:         boot,
+			Code:           s.code,
+			Display:        s.display,
+			Category:       "fake",
+			Description:    "集成测试夹具，不属于底座功能",
+			SortOrder:      i + 1,
+			Status:         1,
+			Actions:        Actions,
+			LegacyGroups:   s.legacyGroups,
+			SearchTabs:     s.searchTabs,
+			DataFiles:      s.dataFiles,
+			MediaType:      s.mediaType,
+			RequiredParams: s.required,
 		}); err != nil {
 			panic("注册假数据源失败: " + err.Error())
 		}
