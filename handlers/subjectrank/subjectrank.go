@@ -71,6 +71,12 @@ type Item struct {
 	EmptyResults int64      `json:"empty_results"`
 	Sources      []string   `json:"sources"`
 	LastCalledAt *time.Time `json:"last_called_at,omitempty"`
+	// BookID 只在书名维度下填：该书名最近一次调用所带的书目标识（`book_ident`）。
+	// 存在的理由是**检索**而不是展示——面板不显示它，但拿着榜单结果去查这本书的人需要标识：
+	// 上游书名可能重名、也只支持按 id 取详情与正文。取「最近一条非空标识」是因为旧行可能
+	// 只记到名称（升级前写入）或反之，最近的那条才是当前还在服务这本书的那个标识。
+	// 公开榜 `/rank/boards` **不带**这个字段（见 handlers/rank：那里刻意只给名称与次数）。
+	BookID string `json:"book_id,omitempty"`
 }
 
 type agg struct {
@@ -254,6 +260,22 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 		var last models.ApiCallLog
 		q := db.DB.Model(&models.ApiCallLog{}).
 			Where("created_at >= ? AND "+dim.Column+" = ?", from, items[i].Name)
+		if key == "book" {
+			// 书目标识另取「最近一条带标识的」：LastCalledAt 要的是任何一条正文明细，
+			// 两者问的不是同一件事，混在一个查询里会让其中一个说谎
+			var withIdent models.ApiCallLog
+			iq := db.DB.Model(&models.ApiCallLog{}).
+				Where("created_at >= ? AND "+dim.Column+" = ? AND book_ident <> ''", from, items[i].Name)
+			if sourceFilter != "" {
+				iq = iq.Where("source = ?", sourceFilter)
+			}
+			if mediaFilter != "" {
+				iq = iq.Where("media = ?", mediaFilter)
+			}
+			if err := iq.Order("id DESC").First(&withIdent).Error; err == nil {
+				items[i].BookID = withIdent.BookIdent
+			}
+		}
 		if sourceFilter != "" {
 			q = q.Where("source = ?", sourceFilter)
 		}

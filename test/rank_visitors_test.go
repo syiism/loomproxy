@@ -6,6 +6,7 @@ package test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,5 +223,65 @@ func TestRankBoardsCarryUnit(t *testing.T) {
 	}
 	if !found {
 		t.Error("公开榜阅读榜里没有那条测试书")
+	}
+}
+
+// TestMonitorSubjectsBookCarriesBookID 书名维度要把书目标识带在响应里（面板不展示，
+// 但拿榜单去检索的人需要它：书名会重名，取详情与正文只认标识）。
+// 公开榜仍只给名称与次数——标识是稳定的内部主键，给普通用户等于多给一条可关联的线索。
+func TestMonitorSubjectsBookCarriesBookID(t *testing.T) {
+	srv := newTestServer(t)
+	base.DrainRecentCalls()
+	admin := adminToken(t, srv)
+
+	insert := func(chapter, ident string) {
+		t.Helper()
+		row := models.ApiCallLog{
+			Username: "ident_reader", IP: "10.3.3.1", Source: "fake_a", Action: "content",
+			Status: http.StatusOK, LatencyMs: 12, CreatedAt: time.Now(),
+			BookName: "带标识的书", ChapterTitle: chapter, BookIdent: ident,
+			Media: base.MediaNovel, ResultCount: 1,
+		}
+		if err := db.DB.Create(&row).Error; err != nil {
+			t.Fatalf("写入明细失败: %v", err)
+		}
+	}
+	insert("第一章", "7400000000000000001")
+	insert("第二章", "")                    // 旧行只记到名称：不能被它把标识判成空
+	insert("第三章", "7400000000000000002") // 最近一条带标识的取它
+
+	_, env := doJSON(t, srv, "GET", "/admin/monitor/subjects?dim=book&days=7", nil, authHeader(admin))
+	items, _ := env.dataMap(t)["items"].([]interface{})
+	var got map[string]interface{}
+	for _, raw := range items {
+		it := raw.(map[string]interface{})
+		if it["name"] == "带标识的书" {
+			got = it
+		}
+	}
+	if got == nil {
+		t.Fatalf("书名榜里没有那条测试书：%v", items)
+	}
+	if got["book_id"] != "7400000000000000002" {
+		t.Errorf("book_id = %v, want 最近一条非空标识 7400000000000000002", got["book_id"])
+	}
+	if got["last_called_at"] == nil {
+		t.Error("last_called_at 与 book_id 是两件事，前者不该被后者挤掉")
+	}
+
+	// 公开榜：放行 fake_a 后读榜，响应里不许出现 book_id
+	if status, env := doJSON(t, srv, "PUT", "/admin/settings/rank_public_sources",
+		map[string]string{"value": "fake_a"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
+		t.Fatalf("开放榜单源失败: %d %s", status, env.Msg)
+	}
+	_, env = doJSON(t, srv, "GET", "/rank/boards?days=7", nil, authHeader(admin))
+	if raw := string(env.Data); strings.Contains(raw, "book_id") || strings.Contains(raw, "7400000000000000002") {
+		t.Error("公开榜漏出了书目标识（那里刻意只给名称与次数）")
+	}
+
+	// 其它维度不带这个字段（keyword 维度没有书目标识可言）
+	_, env = doJSON(t, srv, "GET", "/admin/monitor/subjects?dim=keyword&days=7", nil, authHeader(admin))
+	if raw := string(env.Data); strings.Contains(raw, `"book_id"`) {
+		t.Error("搜索词维度不该带 book_id")
 	}
 }
