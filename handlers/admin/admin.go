@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"loomproxy/db"
+	"loomproxy/gate"
 	"loomproxy/handlers/auth"
 	"loomproxy/handlers/catalog"
 	"loomproxy/models"
@@ -115,12 +116,20 @@ func Stats(c *gin.Context) {
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	db.DB.Model(&models.User{}).Where("created_at >= ?", startOfDay).Count(&todayNew)
 
+	skipped, keys, windowSec := gate.DedupeStats()
 	auth.Ok(c, gin.H{
 		"total_users":  totalUsers,
 		"admin_count":  adminCount,
 		"vip_count":    vipCount,
 		"today_new":    todayNew,
 		"normal_count": totalUsers - adminCount - vipCount,
+		// 扣减冷却的自省读数（待办清单 P25）：没有这行，「冷却到底挡没挡」只能靠人肉比流水。
+		"billing_dedupe": gin.H{
+			"skipped":    skipped,
+			"tracked":    keys,
+			"window_sec": windowSec,
+			"enabled":    windowSec > 0,
+		},
 	})
 }
 

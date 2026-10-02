@@ -103,7 +103,8 @@ func getCachedCost(groupCode, action string) (models.QuotaCost, error) {
 //   - 无有效 JWT（匿名调用）→ 不计费直接放行
 //   - admin 角色 → 不检查不记录
 //   - 请求前检查当日剩余额度，不足返回 429
-//   - 上游成功后按 QuotaCost 扣减并写入 QuotaUsageLog（并发下允许少量超扣）
+//   - 上游成功后按 QuotaCost 扣减并写入 QuotaUsageLog（并发下允许少量超扣）；
+//     同接口同内容在 BILLING_DEDUPE_SEC 窗口内只扣一次（见 dedupe.go，待办清单 P25）
 func BillingMiddleware(sourceName, action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 接口消耗配置（带缓存，group_code 列存数据源码）
@@ -184,7 +185,9 @@ func BillingMiddleware(sourceName, action string) gin.HandlerFunc {
 		c.Writer = cw
 		c.Next()
 
-		if cw.succeeded() {
+		// 冷却期内同一篇内容不重复扣（待办清单 P25）：请求照常放行、明细照常记，
+		// 只是不再写第二条流水。标识取不到时 alreadyDeducted 返回 false，等于按请求扣。
+		if cw.succeeded() && !alreadyDeducted(c, user.ID, sourceName, action) {
 			db.DB.Create(&models.QuotaUsageLog{
 				UserID:    user.ID,
 				GroupCode: sourceName,

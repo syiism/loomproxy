@@ -58,6 +58,12 @@ type ConfMgr struct {
 	// <=0 关闭定时回填（只留手动入口）；回填幂等，所以间隔只决定「空名最多留多久」
 	MonitorBackfillSec int
 
+	// BillingDedupeSec 同接口同内容的扣减冷却窗口（秒）：客户端超时重试同一篇正文时，
+	// 第二次起不再重复扣额度（待办清单 P25）。0=关掉冷却，回到「每个成功请求都扣」。
+	// 默认 300：覆盖「一条慢请求触发的重试」与「几秒钟内重读同一章」，
+	// 而换一章是换一个标识、照扣不误，所以拉长它不会少收钱，缩短它会。
+	BillingDedupeSec int
+
 	AuthEnabled   bool
 	APIKeys       []string
 	AuthWhitelist []string
@@ -232,6 +238,7 @@ func Load() {
 
 		MonitorRetentionDays: envInt("MONITOR_RETENTION_DAYS", 0),
 		MonitorBackfillSec:   envInt("MONITOR_BACKFILL_SEC", 900),
+		BillingDedupeSec:     envInt("BILLING_DEDUPE_SEC", 300),
 
 		AuthEnabled:   envBool("AUTH_ENABLED", false),
 		APIKeys:       envList("API_KEYS", ""),
