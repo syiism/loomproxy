@@ -4,8 +4,8 @@
 // 与 /admin/monitor/subjects 物理错开（不同包、不同路径、不同字段集），原因：
 //   - 明细含用户阅读行为（搜索词/书名/章节名/调用时间/IP），属敏感数据，管理端那张榜带
 //     success_rate、latency、sources、last_called_at 等运维字段，等于把排障视角整包交出去；
-//   - 这里只给 name + total，且维度锁死在 keyword 与 book（章节标题颗粒度太细，
-//     配合时间能反推出"谁在读哪本书的哪一章"，不对普通用户开放）。
+//   - 这里只给 name + total（阅读榜另带 book_id，见 boardEntry），且维度锁死在 keyword 与 book
+//     （章节标题颗粒度太细，配合时间能反推出"谁在读哪本书的哪一章"，不对普通用户开放）。
 //
 // 是否对普通用户开放由管理员在系统设置里决定（rank_public_enabled，默认关闭）；
 // 关闭时非管理员一律 403，管理员自己始终能看（否则开关一关，管理页也跟着空白）。
@@ -54,6 +54,12 @@ type sourceOption struct {
 type boardEntry struct {
 	Name  string `json:"name"`
 	Total int64  `json:"total"`
+	// BookId 只有阅读榜有值（搜索榜没有书目标识可言）：让看到榜的人能**直接按 id 去检索这本书**，
+	// 不必拿书名去撞重名。这不构成新的泄露面——同一批 bookId 本来就出现在登录用户可读的
+	// 数据面响应里（搜索/详情结果的每条书目项自带 `bookId`），榜单只是把同一个标识提前给出来。
+	// 名称与标识之外一律不给（没有 last_called_at、没有 sources、没有成功率和耗时），
+	// 那几样才是能从明细反推到「谁在读」的东西。
+	BookId string `json:"book_id,omitempty"`
 }
 
 type boardPayload struct {
@@ -155,7 +161,7 @@ func GetBoards(c *gin.Context) {
 			if it.Name == "" {
 				continue
 			}
-			rows = append(rows, boardEntry{Name: it.Name, Total: it.Total})
+			rows = append(rows, boardEntry{Name: it.Name, Total: it.Total, BookId: it.BookID})
 		}
 		out = append(out, boardPayload{Dim: b.Dim, Title: b.Title, Metric: b.Metric, Unit: b.Unit, Rows: rows})
 	}

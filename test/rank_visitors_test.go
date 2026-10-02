@@ -5,6 +5,7 @@ package test
 // 这里直接打聚合引擎（口径住在引擎里，两个消费口共用），另有一条走公开榜验单位与口径下发。
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -274,9 +275,50 @@ func TestMonitorSubjectsBookCarriesBookID(t *testing.T) {
 		map[string]string{"value": "fake_a"}, authHeader(admin)); status != http.StatusOK || env.Code != 0 {
 		t.Fatalf("开放榜单源失败: %d %s", status, env.Msg)
 	}
+	// 公开榜的阅读榜给同一个 book_id：下游看到榜就想按 id 检索，拿书名去撞重名是白绕路。
+	// 收窄的仍是那几样能反推到人的东西——时间与数据源归属不出这个门。
 	_, env = doJSON(t, srv, "GET", "/rank/boards?days=7", nil, authHeader(admin))
-	if raw := string(env.Data); strings.Contains(raw, "book_id") || strings.Contains(raw, "7400000000000000002") {
-		t.Error("公开榜漏出了书目标识（那里刻意只给名称与次数）")
+	raw := string(env.Data)
+	if !strings.Contains(raw, `"book_id":"7400000000000000002"`) {
+		t.Errorf("公开榜阅读榜没带 book_id：%s", raw[:min(len(raw), 400)])
+	}
+	// 逐条目只看键集：顶层的 `sources` 是筛选候选（面板下拉要用），不是明细归属字段，
+	// 所以这条断言必须落在条目上而不是整份响应上
+	data := env.dataMap(t)
+	var boards []struct {
+		Dim  string                   `json:"dim"`
+		Rows []map[string]interface{} `json:"rows"`
+	}
+	raw2, err := json.Marshal(data["boards"])
+	if err != nil {
+		t.Fatalf("重编码 boards 失败: %v", err)
+	}
+	if err := json.Unmarshal(raw2, &boards); err != nil {
+		t.Fatalf("解析公开榜条目失败: %v", err)
+	}
+	for _, b := range boards {
+		for _, row := range b.Rows {
+			for k := range row {
+				switch k {
+				case "name", "total", "book_id":
+				default:
+					t.Errorf("%s 榜的条目多出了字段 %q（公开榜只给名称、次数与阅读榜的 book_id）", b.Dim, k)
+				}
+			}
+			switch b.Dim {
+			case "book":
+				if row["name"] == "带标识的书" && row["book_id"] != "7400000000000000002" {
+					t.Errorf("阅读榜 book_id = %v, want 与明细一致的标识", row["book_id"])
+				}
+			case "keyword":
+				if _, ok := row["book_id"]; ok {
+					t.Errorf("搜索榜不该带 book_id：%v", row)
+				}
+			}
+		}
+	}
+	if strings.Contains(raw, "ident_reader") || strings.Contains(raw, "10.3.3.1") {
+		t.Error("公开榜漏出了调用者身份")
 	}
 
 	// 其它维度不带这个字段（keyword 维度没有书目标识可言）
