@@ -55,6 +55,10 @@
         <input v-model="subjectSource" list="source-options" placeholder="数据源"
                class="input input-sm w-36 font-mono" @keydown.enter="loadSubjects" @change="loadSubjects">
       </div>
+      <div v-if="sourceUnknown" class="text-xs mb-3" style="color:#956400">
+        源码「{{ subjectSource }}」不在数据源清单里：多半已下线或停用——
+        历史是否可查取决于运维有没有清理明细（筛不到不等于当时没发生过）。
+      </div>
       <div v-if="coverage.length" class="mb-3 overflow-x-auto">
         <div class="text-xs text-text-muted mb-1.5">
           内容维度覆盖率（窗口内已落库明细，按 源×接口）——哪一格常年不满，先看同行的失败与带内失败：
@@ -196,6 +200,10 @@
         <option v-for="m in MEDIAS" :key="m.value" :value="m.value">{{ m.label }}</option>
       </select>
       <button @click="loadHistory(1)" class="btn-ghost btn-sm">筛选</button>
+    </div>
+    <div v-if="historySourceUnknown" class="text-xs mb-3" style="color:#956400">
+      源码「{{ historyFilter.source }}」不在数据源清单里：多半已下线或停用——
+      历史是否可查取决于运维有没有清理明细（筛不到不等于当时没发生过）。
     </div>
     <div class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留期由环境变量 MONITOR_RETENTION_DAYS 决定，默认永久）。搜索词与书名属用户阅读内容，仅管理员可见。</div>
     <div class="table-wrap reveal overflow-x-auto">
@@ -392,6 +400,17 @@ const loadSourceOptions = async () => {
     sourceOptions.value = (list || []).map(d => ({ code: d.id, name: d.name || d.id }))
   } catch (e) { /* 静默：筛选手输仍可用 */ }
 }
+
+// datalist 允许手输不在候选里的源码（下线源在 data_sources 里是硬删的、进不了下拉，
+// 但旧书源客户端/管理员的旧习惯仍可能把旧码手输进来——分支待办 S6）。
+// 手输了未知源码时提示一句，别让人对着空结果猜「是不是没数据」。
+// 候选未加载成功（长度为 0）时不提示，免得把加载失败误报成「源已下线」。
+const sourceUnknown = computed(() =>
+  subjectSource.value !== '' && sourceOptions.value.length > 0 &&
+  !sourceOptions.value.some(o => o.code === subjectSource.value))
+const historySourceUnknown = computed(() =>
+  historyFilter.source !== '' && sourceOptions.value.length > 0 &&
+  !sourceOptions.value.some(o => o.code === historyFilter.source))
 
 onMounted(() => { load(); loadSubjects(); loadHistory(1); loadSourceOptions(); revealObserve() })
 onUnmounted(() => { clearInterval(timer); clearTimeout(resetTimer) })
