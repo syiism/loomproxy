@@ -28,6 +28,8 @@ Thumbs.db
 __pycache__/
 *.pyc
 .pytest_cache/
+.venv/
+# test/python 是 uv 工程：pytest 环境建在目录内，别把 300MB 落进 git
 
 # GUI 测试临时截图
 /gui-test-screenshots/

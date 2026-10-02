@@ -170,13 +170,19 @@ def test_billing_deducts_on_success(server, fake_upstream):
 
 
 def test_expected_endpoints(server, admin):
-    """数据源接口全量回归：/endpoints 应包含三个假源及其声明的动作接口。"""
+    """数据源接口全量回归：三个假源及其声明的动作接口都要在 /endpoints 里，且**不多不少**。
+
+    只断言这三个假源自己的动作集合相等，不断言整个数据源集合相等——
+    `sources/all.go` 是「本部署携带哪些源」的清单（骨架为空、携带形态往里加源包），
+    拿相等去要求携带形态等于要求它不携带，那条断言在骨架自己的设计里就不成立。
+    """
     expected = {src: FAKE_ACTIONS for src in (FAKE_A, FAKE_B, FAKE_C)}
 
     status, env = server.api.get("/endpoints", token=admin, expected=200)
     got = {e["id"]: {ep["path"] for ep in e["endpoints"]} for e in env["data"]}
 
-    assert set(got) == set(expected), f"数据源集合不一致: want {sorted(expected)} got {sorted(got)}"
+    missing = sorted(set(expected) - set(got))
+    assert not missing, f"缺少假源: {missing}（实得 {sorted(got)}）"
     for source, actions in expected.items():
-        for act in actions:
-            assert f"/{source}/{act}" in got[source], f"缺少 {source}/{act}"
+        want = {f"/{source}/{act}" for act in actions}
+        assert want == got[source], f"{source} 的动作集不一致: want {sorted(want)} got {sorted(got[source])}"
