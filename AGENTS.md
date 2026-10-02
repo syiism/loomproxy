@@ -22,6 +22,7 @@
 - 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
 - 配置优先级：进程环境变量 > 工作目录 `.env` > 可执行文件目录 `.env`。
+- 手工换装（不走 `scripts/deploy.sh`）有三查：**备份先验非空**、**scp 后核远端 md5 一致才 install**、**重启后按启动契约核对日志关键行**而非只看 `is-active`（`Restart=always` 会把崩溃循环伪装成运行中）。
 - 详情：[`docs/运维/构建与部署.md`](docs/运维/构建与部署.md)
 
 ## 4. 目录结构与模块边界
@@ -98,6 +99,9 @@
   列宽按**用户输入的最坏形态**定，不是按我们自己生成的形态定。SQLite 不检查列宽，这类只在 MySQL 暴露。
 - 前端复用既有组件与 `@layer components` 基样类；`reveal` 动画依赖观察时机（先 `loading=false` 再 `nextTick(revealObserve)`）。
 - 黑盒测试一律放 `test/`，集成用例禁止 `t.Parallel()`；改动完成后 `make build` 且必须 `git commit`。
+- **断言写完做一次变异验证**：把被测改动反转跑一次，确认用例真的会红——绿灯只证明它没挡住现状，不证明它能挡住错误。
+- **机制性坑记在** [`docs/规范/踩坑判据.md`](docs/规范/踩坑判据.md)（症状 → 真因 → 一句可执行的判据 → 固化去处）；
+  该页的核心不是收集而是**退出机制**：坑被固化成用例/门禁/校验位之后删掉那一行。文档写过 ≠ 防住了。
 - 详情：[`docs/规范/开发约定.md`](docs/规范/开发约定.md)
 
 ## 11. 安全与合规
