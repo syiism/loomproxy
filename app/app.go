@@ -661,6 +661,10 @@ func Run(ctx context.Context) error {
 	// 「标识 → 名称」命名缓存挂 Redis（可用时）：重启不再清空，正文调用的名称维度不再留空
 	initSubjectStore(ctx)
 
+	// 名称回填循环（P20）：缺名的行要等映射重新回到缓存才补得动，所以这事得周期性做，
+	// 不能只留一个「管理员想起来才点一次」的入口。放在这里是因为它依赖上一步把缓存装载回来
+	startSubjectNameBackfill(ctx)
+
 	// 缓存预热：在端口监听前预填充 /datasources 的缓存（/data 不缓存——它每次直读文件，见 P16）
 	// 使用 context + cancel 控制预热生命周期，30 秒超时
 	prewarmCtx, prewarmCancel := context.WithTimeout(ctx, 30*time.Second)

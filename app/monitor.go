@@ -1,12 +1,15 @@
 package app
 
 import (
+	"context"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"loomproxy/base"
 	"loomproxy/conf"
 	"loomproxy/db"
+	"loomproxy/handlers/admin"
 	"loomproxy/lifecycle"
 	"loomproxy/models"
 )
@@ -109,5 +112,78 @@ func PurgeExpiredCallLogs() {
 
 	if err := db.DB.Where("created_at < ?", cutoff).Delete(&models.ApiCallLog{}).Error; err != nil {
 		log.Printf("ERROR: purge old api call logs failed: %v", err)
+	}
+}
+
+// backfillBusy 挡住「上一轮还没跑完又来一轮」：库慢加上间隔调短，两轮会互相踩同一批行。
+var backfillBusy atomic.Bool
+
+// backfillBlockedLogged 「捞到行却一处都补不上」只在变化发生时说一次：这类行会长期留在结果里，
+// 每轮各打一行就是纯噪声；补到东西之后重新允许说一次，才看得见「又开始缺名」这件事。
+var backfillBlockedLogged atomic.Bool
+
+// 一轮 tick 里最多连捞几批（每批 admin.BackfillScanCap 行）：够把积压捞空，又有上界，
+// 不会因为某次导入把库里灌进几万缺名行就占着连接不放。
+const backfillRoundsPerTick = 4
+
+// startSubjectNameBackfill 定时用命名缓存回填明细里缺失的书名/章节名（待办清单 P20）。
+//
+// 为什么要有循环：回填本来只有手动入口，而缺名的成因是结构性的——重启之后命名缓存是空的，
+// 那第一批只带 bookId/itemId 的正文调用就只记下标识、名称留空；等这本书再被搜索命中，
+// 映射回来了，那些行本可以补上，但没人记得要点一次（点一次还只捞 5000 行）。
+// 把它做成默认行为，面板的覆盖率表（P19）才不会一直红着一格。
+func startSubjectNameBackfill(ctx context.Context) {
+	sec := conf.Config.MonitorBackfillSec
+	if sec <= 0 {
+		log.Printf("名称回填定时任务已关闭（MONITOR_BACKFILL_SEC=%d），只剩手动入口", sec)
+		return
+	}
+	interval := time.Duration(sec) * time.Second
+	go func() {
+		// 先等一整轮再动手：源的 OnBoot 导入与第一批请求还没来得及把命名缓存 warm 起来，立刻跑只会捞空
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				RunSubjectBackfillTick()
+			}
+		}
+	}()
+	log.Printf("名称回填定时任务已启动：每 %v 一轮，窗口 %d 天、单批上限 %d 行",
+		interval, admin.BackfillDefaultDays, admin.BackfillScanCap)
+}
+
+// RunSubjectBackfillTick 跑一轮回填：按单批上限连续捞到「捞空」或「补不动」为止——
+// 反查不到映射的标识会一直留在结果里，不认这个条件就每轮重复捞同一批行。
+// 导出与 PurgeExpiredCallLogs 同例：供集成测试按配置驱动循环体的语义。
+func RunSubjectBackfillTick() {
+	if !backfillBusy.CompareAndSwap(false, true) {
+		log.Printf("名称回填跳过：上一轮还没跑完")
+		return
+	}
+	defer backfillBusy.Store(false)
+
+	for round := 1; round <= backfillRoundsPerTick; round++ {
+		summary, err := admin.RunSubjectBackfill(admin.BackfillDefaultDays)
+		if err != nil {
+			log.Printf("ERROR: 定时回填调用明细名称失败: %v", err)
+			return
+		}
+		if summary.BookFilled+summary.ChapterFilled == 0 {
+			if summary.Scanned > 0 && backfillBlockedLogged.CompareAndSwap(false, true) {
+				log.Printf("名称回填：窗口内 %d 行缺名，命名缓存里都反查不到，先不补（等这些书再被搜索/详情命中）", summary.Scanned)
+			}
+			return
+		}
+		backfillBlockedLogged.Store(false)
+		log.Printf("名称回填第 %d 批：扫描 %d 行，补书名 %d 处、补章节名 %d 处%s",
+			round, summary.Scanned, summary.BookFilled, summary.ChapterFilled,
+			map[bool]string{true: "（未捞空，接着捞）", false: ""}[summary.Truncated])
+		if !summary.Truncated {
+			return
+		}
 	}
 }

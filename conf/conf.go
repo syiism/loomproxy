@@ -54,6 +54,10 @@ type ConfMgr struct {
 	// <=0 表示永久保留且不做清理（默认），>0 时过期明细先聚合归档再删除
 	MonitorRetentionDays int
 
+	// MonitorBackfillSec 名称回填的轮询间隔（秒）：用命名缓存补明细里缺失的书名/章节名。
+	// <=0 关闭定时回填（只留手动入口）；回填幂等，所以间隔只决定「空名最多留多久」
+	MonitorBackfillSec int
+
 	AuthEnabled   bool
 	APIKeys       []string
 	AuthWhitelist []string
@@ -227,6 +231,7 @@ func Load() {
 		DataFileGlob: envStr("DATA_FILE_GLOB", "*.json"),
 
 		MonitorRetentionDays: envInt("MONITOR_RETENTION_DAYS", 0),
+		MonitorBackfillSec:   envInt("MONITOR_BACKFILL_SEC", 900),
 
 		AuthEnabled:   envBool("AUTH_ENABLED", false),
 		APIKeys:       envList("API_KEYS", ""),
