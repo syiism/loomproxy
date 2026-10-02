@@ -9,15 +9,17 @@ package pool
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
 // 号状态（models.PoolDevice.Status）
 const (
-	StatusHot   = "hot"   // 已领取、有效期内，正在服务请求
-	StatusCold  = "cold"  // 未领取或额度已耗尽但未续新，不过期，可随时转正
-	StatusSpent = "spent" // 周期内领取次数已用完，周期重置后复活
-	StatusDead  = "dead"  // 上游持续失败/被风控，超量后物理清理
+	StatusHot      = "hot"      // 已领取、有效期内，正在服务请求
+	StatusCold     = "cold"     // 未领取或额度已耗尽但未续新，不过期，可随时转正
+	StatusSpent    = "spent"    // 周期内领取次数已用完，周期重置后复活
+	StatusDead     = "dead"     // 上游持续失败/被风控，超量后物理清理
+	StatusCooldown = "cooldown" // 临时不可用，到期自动回可用；只由 KindSpread 池使用（见 Pool.Cooldown）
 )
 
 // Quota 一次额度刷新的结果：周期内可领次数、已领次数、已领资源的到期时间。
@@ -44,10 +46,19 @@ func (q Quota) Remaining() time.Duration {
 type Device struct {
 	Ident string
 	Attrs map[string]string
-	Quota Quota
+	// Payload 是嵌套凭证载荷（原样一段 JSON，由 Provider 解释）。Attrs 装不下嵌套结构，
+	// 所以「device 对象 + cookies 对象」这类设备会话放这里。框架不认识内容，
+	// 只在快照里列第一层键名（值不出接口）。
+	Payload json.RawMessage
+	Quota   Quota
 }
 
 // Provider 业务侧适配：本包不知晓任何上游协议，号的全部生命周期操作由此实现。
+//
+// 契约随池形态（Config.Kind）不同：wallclock（默认）由框架调 Refresh/Claim 做台账与续领；
+// spread 只调 Create——号不因墙钟燃烧，可用性由业务侧经 Pool.Cooldown 上报，
+// 框架既不替它领资源、也不在启动时逐行探活（探活本身就是风控成本）。
+// 实现方按 Kind 决定 Refresh/Claim 怎么写（spread 下通常留空）。
 type Provider interface {
 	// Name 池名（通常取数据源码），进程内唯一
 	Name() string

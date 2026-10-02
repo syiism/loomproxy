@@ -18,13 +18,15 @@ import (
 
 // Config 号池运行参数（零值字段取 DefaultConfig 的对应值）
 type Config struct {
-	ColdSpares  int           // 冷备号数量（未领取、不过期）
-	MaxHot      int           // 热号上限（错误驱动扩容的封顶）
-	MaxDead     int           // dead 号保留上限，超出物理清理
-	MaxDevices  int           // 本池总号数上限（0=不限）：建号会对上游产生不可逆增长时的闸门
-	Kind        string        // 池形态标签（空 = KindBurnWallClock）；框架只透传进快照供面板显示，不据此分支
-	RenewBefore time.Duration // 热号到期前多久续领
-	Interval    time.Duration // 维护协程巡检间隔
+	ColdSpares      int           // 冷备号数量（未领取、不过期）
+	MaxHot          int           // 热号上限（错误驱动扩容的封顶）
+	MaxDead         int           // dead 号保留上限，超出物理清理
+	MaxDevices      int           // 本池总号数上限（0=不限）：建号会对上游产生不可逆增长时的闸门
+	Kind            string        // 池形态：空/KindBurnWallClock = 墙钟燃烧型；KindSpread = 用量摊薄型（框架按它分叉调度）
+	TargetDevices   int           // spread 型的目标可用号数（0 → 取 MaxDevices，再 0 → 1）；wallclock 型不用
+	CooldownDefault time.Duration // spread 型里 Reauthorize 的兜底冷却时长（0 → 10 分钟）
+	RenewBefore     time.Duration // 热号到期前多久续领
+	Interval        time.Duration // 维护协程巡检间隔
 }
 
 // DefaultConfig 从 POOL_* 环境变量取参；conf 尚未加载时回退内置默认值
@@ -52,10 +54,16 @@ func DefaultConfig() Config {
 	return c
 }
 
-// KindBurnWallClock 墙钟燃烧型——本框架目前唯一的形态，也是 Kind 留空时的默认含义。
-// 声明位存在的意义是**给面板打标签**：将来若出现「用量摊薄型」（待办清单 P5，一堆 cold
-// 才是常态），管理员看到一排 cold 号不会误读成「池没工作」（P6）。框架不按 Kind 分叉行为。
+// KindBurnWallClock 墙钟燃烧型——Kind 留空时的默认含义：只保持 1 个活跃号 + N 个冷备，
+// 临期续领、用尽换号、限流扩容（面板标签见待办清单 P6）。
 const KindBurnWallClock = "burn_wall_clock"
+
+// KindSpread 用量摊薄型：号不因墙钟过期，只在被风控时临时不可用，理想是把请求摊到多台。
+// 该形态下框架只调 Provider.Create——不 Claim、不 Refresh、启动不逐行探活（探活本身就是风控成本），
+// 可用性由业务侧经 Pool.Cooldown 上报，到期自动回可用（待办清单 P5）。
+// 「只保持 1 个活跃号 + 冷备续领」那套对这种池是有害的（会把所有请求打到同一台设备上），
+// 所以按 Kind 分叉调度，而不是再加一个布尔开关。
+const KindSpread = "spread"
 
 // ErrCapacityReached 池内总号数已到 Config.MaxDevices 上限、无法再新建号。做成 sentinel
 // 是为了让源侧与调用方能 errors.Is 判定，而不是去比字符串。
@@ -63,6 +71,10 @@ var ErrCapacityReached = errors.New("号池已达总号数上限")
 
 func (c Config) withDefaults() Config {
 	d := DefaultConfig()
+	if c.Kind == KindSpread && c.CooldownDefault <= 0 {
+		// 只对 spread 回填：墙钟型没有「冷却」概念，无条件回填会让它的节奏被默认值改动
+		c.CooldownDefault = 10 * time.Minute
+	}
 	// MaxDevices 刻意不参与零值回填：0 的语义就是「不限」，填成默认值反而把不限制的池锁死
 	if c.ColdSpares == 0 {
 		c.ColdSpares = d.ColdSpares
@@ -82,26 +94,33 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// Pool 冷热分离号池：
-//   - 资源按墙钟时间燃烧（与并发量无关），一个活跃号有效期内可服务无限并发，
-//     因此平时只保持 1 个活跃号（多号并行会同步燃烧资源），N 个冷备（未领取不过期）
+// Pool 号池：调度节奏由 Config.Kind 决定，两种形态共用同一套持久化与快照。
+//
+// 墙钟燃烧型（默认）——资源按墙钟时间燃烧（与并发量无关），一个活跃号有效期内可服务
+// 无限并发，因此平时只保持 1 个活跃号（多号并行会同步燃烧资源），N 个冷备（未领取不过期）：
 //   - 活跃号临期由维护协程原地续领（领取叠加无损耗）；周期次数用完则退役为
 //     spent，冷号转正；spent 在周期重置后复活为冷备
 //   - 上游限流嫌疑（错误率超阈值）时临时增加活跃号，恢复后不主动缩容——
 //     多出的活跃号到期自然退役回冷备
+//
+// 用量摊薄型（KindSpread）——号不因墙钟过期，燃烧速度取决于请求量，故 hot 就是「全部可用号」：
+//   - Acquire 在全部可用号上轮询；转正不 Claim、启动不逐行 Refresh（打上游本身就是风控成本）
+//   - 无「周期额度」概念，失效表达是冷却：业务侧经 Pool.Cooldown 上报，到期自动回轮询
+//   - 缺号才建号，受 MaxDevices 约束；巡检只做放行冷却 + 补到目标数 + 清死号
 type Pool struct {
 	provider Provider
 	cfg      Config
 	flight   *base.Flight
 
-	mu      sync.Mutex
-	hot     []*models.PoolDevice
-	cold    []*models.PoolDevice
-	hotRR   int // 活跃号轮询游标（多活跃号时）
-	window  errWindow
-	ticker  *time.Ticker
-	stopCh  chan struct{}
-	running atomic.Bool
+	mu       sync.Mutex
+	hot      []*models.PoolDevice
+	cold     []*models.PoolDevice
+	hotRR    int                  // 活跃号轮询游标（多活跃号时）
+	cooldown []*models.PoolDevice // 冷却中的号（只 spread 型会填）
+	window   errWindow
+	ticker   *time.Ticker
+	stopCh   chan struct{}
+	running  atomic.Bool
 }
 
 // New 构造号池（不启动维护协程，不落库）
@@ -115,6 +134,20 @@ func New(provider Provider, cfg Config) *Pool {
 }
 
 func (p *Pool) Name() string { return p.provider.Name() }
+
+// spread 报告本池是否为用量摊薄型。框架内的分叉统一走它，不把 Kind 比较散落各处。
+func (p *Pool) spread() bool { return p.cfg.Kind == KindSpread }
+
+// spreadTarget 摊薄型的目标可用号数：未显式声明就退到 MaxDevices，再退到 1
+func (p *Pool) spreadTarget() int {
+	if p.cfg.TargetDevices > 0 {
+		return p.cfg.TargetDevices
+	}
+	if p.cfg.MaxDevices > 0 {
+		return p.cfg.MaxDevices
+	}
+	return 1
+}
 
 func (p *Pool) logf(format string, args ...interface{}) {
 	log.Printf("pool[%s]: "+format, append([]interface{}{p.Name()}, args...)...)
@@ -130,16 +163,26 @@ func (p *Pool) Start() {
 	if p.running.Swap(true) {
 		return // 已启动
 	}
-	p.logf("initializing pool (hot/cold model)")
+	if p.spread() {
+		p.logf("initializing pool (spread model: 全部可用号轮询，不 Claim 不探活)")
+	} else {
+		p.logf("initializing pool (hot/cold model)")
+	}
 	p.initLedger()
 
 	p.mu.Lock()
-	if _, err := p.promoteLocked(); err != nil {
-		p.logf("转正首个活跃号失败: %v", err)
+	if p.spread() {
+		// 摊薄型没有「转正首个活跃号 + 补冷备」这回事：可用号本来就是全部号，
+		// 走一次燃烧型路径等于在启动时对上游 Claim/探活（方案 §3.4 明令禁止）
+		p.acquireSpreadLocked()
+	} else {
+		if _, err := p.promoteLocked(); err != nil {
+			p.logf("转正首个活跃号失败: %v", err)
+		}
+		p.topUpColdLocked()
 	}
-	p.topUpColdLocked()
 	p.mu.Unlock()
-	p.logf("init done, hot=%d cold=%d", p.HotCount(), p.ColdCount())
+	p.logf("init done, hot=%d cold=%d cooldown=%d", p.HotCount(), p.ColdCount(), p.CooldownCount())
 
 	p.ticker = time.NewTicker(p.cfg.Interval)
 	go func() {
@@ -167,13 +210,32 @@ func (p *Pool) Stop() {
 
 func (p *Pool) Running() bool { return p.running.Load() }
 
-// initLedger 把库中全部非 dead 号逐一刷新后分类（重启即迁移：
-// 上一轮遗留的 hot/spent 按真实额度重新归类，续期成本为零）
+// initLedger 装载存量号并分类（重启即迁移：上一轮遗留的 hot/spent 重新归类）。
+// 燃烧型逐行 Refresh 取真实额度（续期成本为零），摊薄型纯本地分类（不打上游）
 func (p *Pool) initLedger() {
 	var rows []models.PoolDevice
 	if err := db.DB.Where("pool = ? AND status != ?", p.Name(), StatusDead).
 		Order("id").Find(&rows).Error; err != nil {
 		p.logf("加载存量号失败: %v", err)
+		return
+	}
+	if p.spread() {
+		// 本地分类：可用性来自业务上报而不是上游查询。逐行 Refresh 会在启动时打满 N 次签名请求，
+		// 对摊薄型是纯风险无收益（方案 §3.4）
+		now := time.Now()
+		for i := range rows {
+			row := &rows[i]
+			if row.Status == StatusCooldown && row.ExpireAt != nil && row.ExpireAt.After(now) {
+				p.cooldown = append(p.cooldown, row)
+				continue
+			}
+			// 冷却到期与上一轮的 hot/cold/spent 一律归为可用（摊薄型没有周期额度概念）
+			if row.Status != StatusHot {
+				p.setStatus(row, StatusHot)
+			}
+			p.hot = append(p.hot, row)
+		}
+		p.logf("loaded %d usable + %d cooling devices from db（未打上游）", len(p.hot), len(p.cooldown))
 		return
 	}
 	for i := range rows {
@@ -235,11 +297,19 @@ func (p *Pool) markDead(row *models.PoolDevice) {
 	p.setStatus(row, StatusDead)
 }
 
-// Acquire 取一个活跃号（有效期内的号可服务无限并发，无需多号分摊）。
-// 无活跃号时现场转正一个；冷备也没有则新建后转正。
+// Acquire 取一个号：燃烧型返回单个活跃号（有效期内可服务无限并发），
+// 无活跃号时现场转正、冷备也没有则新建后转正；摊薄型在全部可用号上轮询。
 func (p *Pool) Acquire() (*Device, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.spread() {
+		// 摊薄型：在全部可用号上轮询。返回 nil 表示「一个号都没有」，由调用方按降级处理
+		if dev := p.acquireSpreadLocked(); dev != nil {
+			return dev, nil
+		}
+		return nil, fmt.Errorf("号池 %s 无可用号（未建号或全部在冷却）", p.Name())
+	}
 
 	if len(p.hot) > 0 {
 		p.hotRR = (p.hotRR + 1) % len(p.hot)
@@ -273,6 +343,12 @@ func (p *Pool) Reauthorize(dev *Device) (*Device, error) {
 }
 
 func (p *Pool) reauthorize(ident string) (*Device, error) {
+	if p.spread() {
+		// 摊薄型没有「续领」可做：把这台临时冻结一段，另取一台。
+		// 源侧有精确冷却口径时应直接调 Pool.Cooldown，这里只是兜底路径
+		p.Cooldown(ident, time.Now().Add(p.cfg.CooldownDefault), "上游判定不可用（Reauthorize 兜底）")
+		return p.Acquire()
+	}
 	row := p.rowByIdent(ident)
 	if row == nil {
 		return nil, fmt.Errorf("号池 %s 中不存在号 %s", p.Name(), ident)
@@ -325,6 +401,20 @@ func (p *Pool) Report(err error) {
 // Maintain 巡检：活跃号续期/退役、冷备补齐、dead 清理、限流扩容评估
 func (p *Pool) Maintain() {
 	if db.DB == nil {
+		return
+	}
+	if p.spread() {
+		// 只做三件事：放行到期冷却、把可用号补到目标数、清死号。
+		// 续领与错误驱动扩容是燃烧型概念，对摊薄型无意义（所有可用号本来就都在轮询）
+		p.mu.Lock()
+		p.reapCooldownLocked()
+		for len(p.hot) < p.spreadTarget() {
+			if !p.promoteOneToHotLocked() {
+				break
+			}
+		}
+		p.mu.Unlock()
+		p.purgeDead()
 		return
 	}
 	p.mu.Lock()
@@ -569,4 +659,123 @@ func (w *errWindow) reset() (rate float64, n int) {
 	}
 	w.total, w.errs = 0, 0
 	return
+}
+
+// —— 用量摊薄型（KindSpread）专用路径：见待办清单 P5 与 docs/数据源/号池方案-fq_hg会话池融入.md
+
+// acquireSpreadLocked 在**全部可用号**上轮询取一个（调用方持锁）。
+// 先把到期的冷却号放回可用、再补到目标数量（冷号转正不 Claim，缺号才建号）；
+// 一个可用号都没有时返回 nil，由调用方决定降级方式（例：听书直链退回报错）。
+func (p *Pool) acquireSpreadLocked() *Device {
+	p.reapCooldownLocked()
+	for len(p.hot) < p.spreadTarget() {
+		if !p.promoteOneToHotLocked() {
+			break
+		}
+	}
+	if len(p.hot) == 0 {
+		return nil
+	}
+	p.hotRR = (p.hotRR + 1) % len(p.hot)
+	return deviceOf(p.hot[p.hotRR])
+}
+
+// promoteOneToHotLocked 把一个冷号放进可用集合（调用方持锁）。
+// 与燃烧型的 promoteLocked 关键差别：**不 Refresh、不 Claim**——摊薄型的号没有
+// 「领取」这一步，打上游探活本身就是风控成本。冷号不足时先建一个（受 MaxDevices 上限约束）。
+func (p *Pool) promoteOneToHotLocked() bool {
+	if len(p.cold) == 0 {
+		if _, err := p.createColdLocked(); err != nil {
+			return false
+		}
+	}
+	if len(p.cold) == 0 {
+		return false
+	}
+	row := p.cold[0]
+	p.removeLocked(&p.cold, row)
+	p.setStatus(row, StatusHot)
+	p.hot = append(p.hot, row)
+	p.logf("spread: device %s 进入可用轮询（不 Claim）", row.Ident)
+	return true
+}
+
+// reapCooldownLocked 把冷却到期的号放回可用轮询（调用方持锁）
+func (p *Pool) reapCooldownLocked() {
+	now := time.Now()
+	var keep []*models.PoolDevice
+	for _, row := range p.cooldown {
+		if row.ExpireAt != nil && row.ExpireAt.After(now) {
+			keep = append(keep, row)
+			continue
+		}
+		row.Note = ""
+		p.setStatus(row, StatusHot)
+		p.hot = append(p.hot, row)
+		p.logf("spread: device %s 冷却到期，放回可用轮询", row.Ident)
+	}
+	p.cooldown = keep
+}
+
+// Cooldown 把一个号标记为「临时不可用直到 until」，reason 进 Note 供面板排查。
+// 这是摊薄型的失效表达口：源侧判定被风控时调它，而不是把号判死——
+// 设备会话被冻一小时与账号被永久封禁不是一回事，混成 dead 会被 MaxDead 清掉。
+// 燃烧型池调用它没有意义（那类池的不可用由额度与到期表达），照做但不额外分叉。
+func (p *Pool) Cooldown(ident string, until time.Time, reason string) {
+	if db.DB == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	row := p.rowByIdent(ident)
+	if row == nil {
+		p.logf("Cooldown: 池里没有号 %s", ident)
+		return
+	}
+	p.removeLocked(&p.hot, row)
+	p.removeLocked(&p.cold, row)
+	p.removeLocked(&p.cooldown, row)
+	if until.Sub(time.Now()) <= 0 {
+		p.setStatus(row, StatusCold)
+		p.cold = append(p.cold, row)
+		return
+	}
+	t := until
+	row.ExpireAt = &t
+	row.Note = clipNote(reason)
+	p.setStatus(row, StatusCooldown)
+	p.cooldown = append(p.cooldown, row)
+	p.logf("spread: device %s 冷却至 %s（原因：%s）", ident, until.Format(time.RFC3339), row.Note)
+}
+
+// UpdatePayload 写回某个号的嵌套凭证载荷（会话 cookie 刷新后回写这类场景）。
+// 框架不解析内容，只负责落库与同步内存里的号。
+func (p *Pool) UpdatePayload(ident string, payload []byte) error {
+	if db.DB == nil {
+		return fmt.Errorf("数据库未就绪")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	row := p.rowByIdent(ident)
+	if row == nil {
+		return fmt.Errorf("号池 %s 中不存在号 %s", p.Name(), ident)
+	}
+	row.Payload = string(payload)
+	return db.DB.Select("Payload").Save(row).Error
+}
+
+// CooldownCount 当前冷却中的号数（spread 池的可观测口径：可用 = HotCount，冷却 = 这个数）
+func (p *Pool) CooldownCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.cooldown)
+}
+
+// clipNote 原因落库限长：列宽按最坏输入定（255），但界面一行放不下长串
+func clipNote(s string) string {
+	r := []rune(s)
+	if len(r) > 120 {
+		return string(r[:120]) + "…"
+	}
+	return s
 }

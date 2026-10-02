@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,8 @@ type fakeProvider struct {
 	claimExtend time.Duration         // 单次领取延长的有效期（零值=1 小时）
 	created     int
 	claims      map[string]int
-	poolName    string // 非空则覆盖池名：一条用例里建多个假池时避免 (pool, ident) 唯一索引撞车
+	refreshes   map[string]int // ident → 被探活次数（摊薄型必须恒为 0）
+	poolName    string         // 非空则覆盖池名：一条用例里建多个假池时避免 (pool, ident) 唯一索引撞车
 }
 
 func newFakeProvider() *fakeProvider {
@@ -40,6 +42,7 @@ func newFakeProvider() *fakeProvider {
 		quota:       map[string]pool.Quota{},
 		failRefresh: map[string]bool{},
 		claims:      map[string]int{},
+		refreshes:   map[string]int{},
 	}
 }
 
@@ -58,6 +61,7 @@ func (f *fakeProvider) Create(_ context.Context) (*pool.Device, error) {
 }
 
 func (f *fakeProvider) Refresh(_ context.Context, dev *pool.Device) (pool.Quota, error) {
+	f.refreshes[dev.Ident]++
 	if f.failRefresh[dev.Ident] {
 		return pool.Quota{}, errors.New("模拟上游故障")
 	}
@@ -129,13 +133,18 @@ func insertDevice(t *testing.T, ident, status string, used, total int, expireAt 
 
 func deviceStatus(t *testing.T, ident string) string {
 	t.Helper()
-	var got string
-	if err := db.DB.Model(&models.PoolDevice{}).
-		Where("pool = ? AND ident = ?", fakePoolName, ident).
-		Select("status").Scan(&got).Error; err != nil {
-		t.Fatalf("查询号 %s 状态失败: %v", ident, err)
+	return deviceRow(t, fakePoolName, ident).Status
+}
+
+// deviceRow 取库里的一行原始记录（池名可变体时用；状态快照是脱敏的，验不了落库事实）
+func deviceRow(t *testing.T, poolName, ident string) models.PoolDevice {
+	t.Helper()
+	var row models.PoolDevice
+	if err := db.DB.Where(map[string]interface{}{"pool": poolName, "ident": ident}).
+		First(&row).Error; err != nil {
+		t.Fatalf("查询号 %s/%s 失败: %v", poolName, ident, err)
 	}
-	return got
+	return row
 }
 
 // TestPoolAcquirePromotesAndClaims 空池取号：新建冷备 → 转正为活跃号并领取一次；
@@ -499,9 +508,9 @@ func TestPoolMaxDevicesGate(t *testing.T) {
 	}
 }
 
-// TestPoolStatusCarriesKind 池形态声明位（待办清单 P6）：框架不据形态分叉行为，
-// 但快照必须带出去——将来出现「用量摊薄型」池时，一排 cold 号会被管理员读成「池没工作」，
-// 标签是唯一的消歧手段。这里同时钉住 /admin/pools 的 JSON 里有 kind。
+// TestPoolStatusCarriesKind 池形态声明位（待办清单 P6）：快照必须把形态带出去——
+// 「用量摊薄型」池（P5）里一排 cold/hot 号会被管理员读成「池没工作」，标签是唯一的消歧手段。
+// 这里同时钉住 /admin/pools 的 JSON 里有 kind。
 func TestPoolStatusCarriesKind(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -544,5 +553,270 @@ func TestPoolStatusCarriesKind(t *testing.T) {
 	if found["gate_kind_burn"] != pool.KindBurnWallClock {
 		t.Errorf("/admin/pools 里 gate_kind_burn 的 kind = %q，want %q（全部：%+v）",
 			found["gate_kind_burn"], pool.KindBurnWallClock, found)
+	}
+}
+
+// —— 用量摊薄型（KindSpread，待办清单 P5）——
+// 这类池的号不因墙钟过期、燃烧速度取决于请求量：框架只建号，不领取、不探活，
+// 请求摊到全部可用号上，被风控的号临时冷却而非判死。
+
+func spreadConfig() pool.Config {
+	c := fakePoolConfig()
+	c.Kind = pool.KindSpread
+	c.TargetDevices = 3
+	c.MaxDevices = 3
+	return c
+}
+
+func countAll(m map[string]int) (n int) {
+	for _, v := range m {
+		n += v
+	}
+	return n
+}
+
+// TestPoolSpreadAcquireRoundRobin 取号在全部可用号上轮询，且全程不碰 Claim/Refresh
+// （打上游探活本身就是风控成本，这是两种形态最关键的分叉点）
+func TestPoolSpreadAcquireRoundRobin(t *testing.T) {
+	newTestServer(t)
+	fp := newFakeProvider()
+	fp.poolName = "spread_rr"
+	p := newFakePool(t, pool.New(fp, spreadConfig()))
+
+	seen := map[string]int{}
+	for i := 0; i < 9; i++ {
+		dev, err := p.Acquire()
+		if err != nil {
+			t.Fatalf("第 %d 次 Acquire 失败: %v", i, err)
+		}
+		seen[dev.Ident]++
+	}
+	if len(seen) != 3 {
+		t.Fatalf("9 次取号只命中 %d 个号，want 3（请求没摊开，仍在打同一台）", len(seen))
+	}
+	for ident, n := range seen {
+		if n != 3 {
+			t.Errorf("号 %s 命中 %d 次，want 3（轮询不均）", ident, n)
+		}
+	}
+	if p.HotCount() != 3 || p.ColdCount() != 0 {
+		t.Errorf("hot=%d cold=%d, want 3/0（摊薄型可用号即全部号，不该留冷备）", p.HotCount(), p.ColdCount())
+	}
+	if got := countAll(fp.claims); got != 0 {
+		t.Errorf("摊薄型仍领取了 %d 次（Claim 只属于燃烧型契约）", got)
+	}
+	if got := countAll(fp.refreshes); got != 0 {
+		t.Errorf("摊薄型仍探活了 %d 次（Refresh 只属于燃烧型契约）", got)
+	}
+}
+
+// TestPoolSpreadCooldownExcludesThenReaps 冷却的号立即退出轮询、原因落库、到期后自动放回
+func TestPoolSpreadCooldownExcludesThenReaps(t *testing.T) {
+	newTestServer(t)
+	fp := newFakeProvider()
+	fp.poolName = "spread_cool"
+	cfg := spreadConfig()
+	cfg.TargetDevices, cfg.MaxDevices = 2, 2
+	p := newFakePool(t, pool.New(fp, cfg))
+
+	first, err := p.Acquire()
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	second, err := p.Acquire()
+	if err != nil || second.Ident == first.Ident {
+		t.Fatalf("第二次 Acquire = %+v err=%v, want 另一台", second, err)
+	}
+
+	p.Cooldown(first.Ident, time.Now().Add(30*time.Millisecond), "上游 429，冷却一轮")
+	if p.CooldownCount() != 1 {
+		t.Fatalf("冷却数 = %d, want 1", p.CooldownCount())
+	}
+	row := deviceRow(t, fp.Name(), first.Ident)
+	if row.Status != pool.StatusCooldown {
+		t.Errorf("冷却号落库状态 = %q, want cooldown", row.Status)
+	}
+	if row.Note != "上游 429，冷却一轮" {
+		t.Errorf("冷却原因未落库: %q", row.Note)
+	}
+
+	for i := 0; i < 6; i++ {
+		dev, err := p.Acquire()
+		if err != nil {
+			t.Fatalf("冷却期间 Acquire 失败: %v", err)
+		}
+		if dev.Ident == first.Ident {
+			t.Fatalf("冷却中的号仍被取出（第 %d 次）", i)
+		}
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	p.Maintain()
+	if p.CooldownCount() != 0 {
+		t.Fatalf("冷却到期后仍占着冷却集合：%d", p.CooldownCount())
+	}
+	if got := deviceRow(t, fp.Name(), first.Ident).Status; got != pool.StatusHot {
+		t.Errorf("复归号状态 = %q, want hot", got)
+	}
+	if p.HotCount() != 2 {
+		t.Errorf("hot=%d, want 2（复归的号没回到轮询集合）", p.HotCount())
+	}
+}
+
+// TestPoolSpreadReauthorizeCoolsInsteadOfSwitching 兜底自愈路径：摊薄型没有「补领」可做，
+// 把这台冻结一段（默认 10 分钟）另取一台——绝不能退化成燃烧型的 spent/换号，那会把号池掏空
+func TestPoolSpreadReauthorizeCoolsInsteadOfSwitching(t *testing.T) {
+	newTestServer(t)
+	fp := newFakeProvider()
+	fp.poolName = "spread_reauth"
+	cfg := spreadConfig()
+	cfg.TargetDevices, cfg.MaxDevices = 2, 2
+	p := newFakePool(t, pool.New(fp, cfg))
+	if got := p.Status().Config.CooldownDefSec; got != 600 {
+		t.Fatalf("spread 池未显式声明冷却时长时应回填 600s，实得 %d", got)
+	}
+
+	dev, err := p.Acquire()
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	got, err := p.Reauthorize(dev)
+	if err != nil {
+		t.Fatalf("Reauthorize 失败: %v", err)
+	}
+	if got == nil || got.Ident == dev.Ident {
+		t.Fatalf("Reauthorize 返回 = %+v, want 另一台", got)
+	}
+	if status := deviceRow(t, fp.Name(), dev.Ident).Status; status != pool.StatusCooldown {
+		t.Errorf("被判不可用的号状态 = %q, want cooldown（被当成 spent 了？）", status)
+	}
+	if countAll(fp.claims) != 0 {
+		t.Errorf("兜底路径仍发生了领取：%+v", fp.claims)
+	}
+}
+
+// TestPoolSpreadStartWithoutUpstreamProbe 启动装载存量号：一次上游请求都不发；
+// 冷却未到期继续冷却，冷却已到期归回可用
+func TestPoolSpreadStartWithoutUpstreamProbe(t *testing.T) {
+	newTestServer(t)
+	fp := newFakeProvider()
+	fp.poolName = "spread_start"
+	cooling := "aaaaaaaa-0000-0000-0000-0000000000c1"
+	reaped := "aaaaaaaa-0000-0000-0000-0000000000c2"
+	future, past := time.Now().Add(time.Hour), time.Now().Add(-time.Hour)
+	for _, one := range []models.PoolDevice{
+		{Pool: fp.Name(), Ident: "aaaaaaaa-0000-0000-0000-0000000000c0", Status: pool.StatusCold},
+		{Pool: fp.Name(), Ident: cooling, Status: pool.StatusCooldown, ExpireAt: &future, Note: "还没到点"},
+		{Pool: fp.Name(), Ident: reaped, Status: pool.StatusCooldown, ExpireAt: &past},
+	} {
+		if err := db.DB.Create(&one).Error; err != nil {
+			t.Fatalf("预置号 %s 失败: %v", one.Ident, err)
+		}
+	}
+
+	p := newFakePool(t, pool.New(fp, spreadConfig()))
+	p.Start()
+
+	if got := countAll(fp.refreshes); got != 0 {
+		t.Errorf("启动时探活 %d 次，want 0", got)
+	}
+	if got := countAll(fp.claims); got != 0 {
+		t.Errorf("启动时领取 %d 次，want 0", got)
+	}
+	if got := fp.created; got != 0 {
+		t.Errorf("存量号已够用时仍建号 %d 个", got)
+	}
+	if p.CooldownCount() != 1 {
+		t.Errorf("冷却数 = %d, want 1（未到期那条该继续冷却）", p.CooldownCount())
+	}
+	if p.HotCount() != 2 {
+		t.Errorf("可用数 = %d, want 2（cold + 冷却到期的那条）", p.HotCount())
+	}
+	if got := deviceRow(t, fp.Name(), reaped).Status; got != pool.StatusHot {
+		t.Errorf("冷却到期号状态 = %q, want hot（内存归位了但库里没改，重启会反复）", got)
+	}
+}
+
+// TestPoolSpreadFillRespectsMaxDevices 补号到目标数受总号数上限约束：TargetDevices 越不过 MaxDevices
+func TestPoolSpreadFillRespectsMaxDevices(t *testing.T) {
+	newTestServer(t)
+	fp := newFakeProvider()
+	fp.poolName = "spread_cap"
+	cfg := spreadConfig()
+	cfg.TargetDevices, cfg.MaxDevices = 5, 2
+	p := newFakePool(t, pool.New(fp, cfg))
+
+	for i := 0; i < 10; i++ {
+		if _, err := p.Acquire(); err != nil {
+			t.Fatalf("第 %d 次 Acquire 失败: %v", i, err)
+		}
+	}
+	p.Maintain()
+	if p.HotCount() != 2 {
+		t.Errorf("可用数 = %d, want 2（越过了 MaxDevices=2）", p.HotCount())
+	}
+	if fp.created != 2 {
+		t.Errorf("上游建号 %d 次, want 2", fp.created)
+	}
+}
+
+// TestPoolSpreadPayloadAndSnapshot 嵌套凭证走 Payload（Attrs 是扁平表，塞嵌套会被静默丢弃），
+// 快照只出第一层键名与冷却原因，值一律不出接口
+func TestPoolSpreadPayloadAndSnapshot(t *testing.T) {
+	srv := newTestServer(t)
+	fp := newFakeProvider()
+	fp.poolName = "spread_payload"
+	cfg := spreadConfig()
+	cfg.TargetDevices, cfg.MaxDevices = 2, 2
+	p := newFakePool(t, pool.New(fp, cfg))
+
+	dev, err := p.Acquire()
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	// 嵌套凭证进 Payload：Attrs 是扁平 string 表，塞结构体进去会被 decodeAttrs 静默丢弃
+	const secret = "supersensitive-cookie-value"
+	nested, err := json.Marshal(map[string]map[string]string{
+		"user": {"token": secret, "device_id": "d-1"},
+	})
+	if err != nil {
+		t.Fatalf("构造嵌套凭证失败: %v", err)
+	}
+	if err := p.UpdatePayload(dev.Ident, nested); err != nil {
+		t.Fatalf("UpdatePayload 失败: %v", err)
+	}
+	p.Cooldown(dev.Ident, time.Now().Add(time.Hour), "设备被冻一小时")
+
+	st := p.Status()
+	if st.Config.Kind != pool.KindSpread || st.Config.TargetDevices != 2 {
+		t.Errorf("spread 配置未带出快照：%+v", st.Config)
+	}
+	if st.Counts[pool.StatusCooldown] != 1 {
+		t.Errorf("counts[cooldown] = %d, want 1", st.Counts[pool.StatusCooldown])
+	}
+	var found *pool.DeviceInfo
+	for i := range st.Devices {
+		if st.Devices[i].Status == pool.StatusCooldown {
+			found = &st.Devices[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("快照里没有冷却中的号：%+v", st.Devices)
+	}
+	if len(found.PayloadKeys) != 1 || found.PayloadKeys[0] != "user" {
+		t.Errorf("payload_keys = %v, want [user]", found.PayloadKeys)
+	}
+	if found.Note != "设备被冻一小时" {
+		t.Errorf("note = %q, want 冷却原因", found.Note)
+	}
+	if found.Ident == dev.Ident {
+		t.Errorf("冷却号标识未脱敏: %q", found.Ident)
+	}
+
+	_, env := doJSON(t, srv, "GET", "/admin/pools", nil, authHeader(adminToken(t, srv)))
+	if raw := string(env.Data); strings.Contains(raw, secret) {
+		t.Errorf("/admin/pools 泄出了载荷值")
+	} else if !strings.Contains(raw, `"payload_keys"`) {
+		t.Errorf("/admin/pools 未带出 payload_keys：%s", raw)
 	}
 }

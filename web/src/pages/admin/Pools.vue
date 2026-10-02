@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="号池" subtitle="数据源凭证池运行状态（冷热分离）。号池由需要凭证池的数据源注册，底座项目未接入数据源时列表为空。" />
+    <PageHeader title="号池" subtitle="数据源凭证池运行状态。墙钟燃烧型按冷热续领维持活跃号，用量摊薄型把请求轮询到全部可用号上、被风控的号临时冷却而非判死。底座项目未接入数据源时列表为空。" />
 
     <div class="reveal flex items-center gap-4 mb-6">
       <button @click="load" class="btn-ghost btn-sm">刷新</button>
@@ -19,11 +19,12 @@
         <UiTag :tone="p.running ? 'green' : 'gray'" :label="p.running ? '运行中' : '未启动'" />
         <UiTag tone="blue" :label="kindLabel(p.config && p.config.kind)" />
         <div class="text-xs text-text-muted font-mono ml-auto">
-          冷备 {{ p.config.cold_spares }} · 活跃上限 {{ p.config.max_hot }} · 总号上限 {{ p.config.max_devices > 0 ? p.config.max_devices : '不限' }} · 临期续领 {{ p.config.renew_before_sec }}s · 巡检 {{ p.config.maintain_sec }}s
+          <template v-if="isSpread(p)">{{ spreadSummary(p) }}</template>
+          <template v-else>{{ burnSummary(p) }}</template>
         </div>
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 px-5 py-4">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3 px-5 py-4">
         <div v-for="k in statusKeys" :key="k">
           <div class="text-xs text-text-muted mb-1">{{ statusLabels[k] }}</div>
           <div class="font-mono text-xl font-medium">{{ p.counts[k] || 0 }}</div>
@@ -33,18 +34,19 @@
       <div class="table-wrap border-t border-border !rounded-none !border-0">
         <table class="table-base">
           <thead>
-            <tr><th>标识</th><th>凭证字段</th><th>状态</th><th>周期额度</th><th>有效期至</th></tr>
+            <tr><th>标识</th><th>凭证字段</th><th>状态</th><th>周期额度</th><th>有效期至</th><th>备注</th></tr>
           </thead>
           <tbody>
             <tr v-for="d in p.devices" :key="d.ident">
               <td class="font-mono text-xs">{{ d.ident }}</td>
-              <td class="font-mono text-xs text-text-muted">{{ (d.creds || []).join(' · ') || '—' }}</td>
+              <td class="font-mono text-xs text-text-muted">{{ credFields(d).join(' · ') || '—' }}</td>
               <td><UiTag :tone="statusTones[d.status] || 'gray'" :label="statusLabels[d.status] || d.status" /></td>
               <td class="font-mono text-xs">{{ d.used_quota }} / {{ d.total_quota }}</td>
-              <td class="font-mono text-xs text-text-muted whitespace-nowrap">{{ d.expire_at ? fmtDate(d.expire_at) : '—' }}</td>
+              <td class="font-mono text-xs text-text-muted whitespace-nowrap">{{ expiryText(d) }}</td>
+              <td class="text-xs text-text-muted">{{ d.note || '—' }}</td>
             </tr>
             <tr v-if="!p.devices || p.devices.length === 0">
-              <td colspan="5" class="text-sm text-text-muted">暂无号记录</td>
+              <td colspan="6" class="text-sm text-text-muted">暂无号记录</td>
             </tr>
           </tbody>
         </table>
@@ -62,16 +64,34 @@ import UiEmpty from '../../components/UiEmpty.vue'
 import { adminApi } from '../../api/index.js'
 import { fmtDate, revealObserve } from '../../utils.js'
 
-const statusKeys = ['hot', 'cold', 'spent', 'dead']
-const statusLabels = { hot: '活跃', cold: '冷备', spent: '周期用尽', dead: '失效' }
-const statusTones = { hot: 'green', cold: 'blue', spent: 'yellow', dead: 'red' }
+const statusKeys = ['hot', 'cold', 'cooldown', 'spent', 'dead']
+const statusLabels = { hot: '可用/活跃', cold: '冷备', cooldown: '冷却中', spent: '周期用尽', dead: '失效' }
+const statusTones = { hot: 'green', cold: 'blue', cooldown: 'yellow', spent: 'gray', dead: 'red' }
 
-// 池形态：Kind 是声明位，框架不据它分叉行为。空值就是墙钟燃烧型（目前唯一的形态）；
-// 遇到没见过的值原样显示，别替管理员猜——这一列存在的意义正是「一排 cold 号未必是池没工作」
-const KIND_LABELS = { burn_wall_clock: '墙钟燃烧型' }
+// 池形态：Kind 是声明位，框架按它分叉调度节奏（P5）。两种形态的配置项语义不同，
+// 一套摘要通用不了——墙钟型关心「保持几个活跃、临期多久续领」，摊薄型关心「摊到几台、冷却多久」。
+const KIND_LABELS = { burn_wall_clock: '墙钟燃烧型', spread: '用量摊薄型' }
 const kindLabel = (kind) => {
   const k = kind || 'burn_wall_clock'
   return KIND_LABELS[k] || k
+}
+const isSpread = (p) => p.config && p.config.kind === 'spread'
+const burnSummary = (p) => {
+  const c = p.config || {}
+  return `冷备 ${c.cold_spares} · 活跃上限 ${c.max_hot} · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 临期续领 ${c.renew_before_sec}s · 巡检 ${c.maintain_sec}s`
+}
+const spreadSummary = (p) => {
+  const c = p.config || {}
+  const target = c.target_devices > 0 ? c.target_devices : (c.max_devices > 0 ? c.max_devices : 1)
+  return `轮询目标 ${target} 台 · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 兜底冷却 ${c.cooldown_default_sec}s · 巡检 ${c.maintain_sec}s`
+}
+
+// 凭证只列键名：摊薄型的嵌套凭证走 Payload，其第一层键名同样只出键名
+const credFields = (d) => [...(d.creds || []), ...(d.payload_keys || [])]
+const expiryText = (d) => {
+  if (!d.expire_at) return '—'
+  // 冷却中的号，expire_at 承载的是「冷却到什么时候」，不是资源到期时间
+  return (d.status === 'cooldown' ? '冷却至 ' : '') + fmtDate(d.expire_at)
 }
 
 const loading = ref(true)

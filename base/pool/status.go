@@ -12,20 +12,24 @@ type ConfigInfo struct {
 	ColdSpares     int    `json:"cold_spares"`
 	MaxHot         int    `json:"max_hot"`
 	MaxDead        int    `json:"max_dead"`
-	MaxDevices     int    `json:"max_devices"` // 0=不限
-	Kind           string `json:"kind"`        // 池形态；空即 pool.KindBurnWallClock
+	MaxDevices     int    `json:"max_devices"`                    // 0=不限
+	Kind           string `json:"kind"`                           // 池形态；空=燃烧型，spread=用量摊薄型
+	TargetDevices  int    `json:"target_devices,omitempty"`       // spread：目标可用号数（燃烧型不带）
+	CooldownDefSec int    `json:"cooldown_default_sec,omitempty"` // spread：Reauthorize 兜底冷却秒数
 	RenewBeforeSec int    `json:"renew_before_sec"`
 	MaintainSec    int    `json:"maintain_sec"`
 }
 
 // DeviceInfo 号状态快照（标识与凭证已脱敏——它们是上游签名凭证，不得完整外发）
 type DeviceInfo struct {
-	Ident      string     `json:"ident"`
-	Creds      []string   `json:"creds,omitempty"` // 凭证字段名（只列键名，不列值）
-	Status     string     `json:"status"`
-	TotalQuota int        `json:"total_quota"`
-	UsedQuota  int        `json:"used_quota"`
-	ExpireAt   *time.Time `json:"expire_at"`
+	Ident       string     `json:"ident"`
+	Creds       []string   `json:"creds,omitempty"`        // 凭证字段名（只列键名，不列值）
+	PayloadKeys []string   `json:"payload_keys,omitempty"` // 嵌套载荷的第一层键名（值不出接口）
+	Status      string     `json:"status"`
+	Note        string     `json:"note,omitempty"` // 当前状态的原因（spread 池的冷却原因）
+	TotalQuota  int        `json:"total_quota"`
+	UsedQuota   int        `json:"used_quota"`
+	ExpireAt    *time.Time `json:"expire_at"`
 }
 
 // Status 号池状态快照
@@ -47,7 +51,7 @@ func (p *Pool) Status() *Status {
 		Name:    p.Name(),
 		Running: p.Running(),
 		Config:  p.configInfo(),
-		Counts:  map[string]int64{StatusHot: 0, StatusCold: 0, StatusSpent: 0, StatusDead: 0},
+		Counts:  map[string]int64{StatusHot: 0, StatusCold: 0, StatusSpent: 0, StatusDead: 0, StatusCooldown: 0},
 		Devices: make([]DeviceInfo, 0),
 	}
 	if db.DB == nil {
@@ -69,9 +73,13 @@ func (p *Pool) Status() *Status {
 	for _, d := range p.cold {
 		st.Devices = append(st.Devices, snapshot(d))
 	}
+	for _, d := range p.cooldown {
+		st.Devices = append(st.Devices, snapshot(d))
+	}
 	p.mu.Unlock()
 
 	// spent/dead 不驻留内存，从库中补充
+	st.Counts[StatusCooldown] = int64(len(p.cooldown)) // 运行中的冷却集合以内存为准
 	st.Counts[StatusSpent] = countByStatus(p.Name(), StatusSpent)
 	st.Counts[StatusDead] = countByStatus(p.Name(), StatusDead)
 	st.Devices = append(st.Devices, listDevices(p.Name(), deviceStatusLimit, StatusSpent, StatusDead)...)
@@ -86,6 +94,8 @@ func (p *Pool) configInfo() ConfigInfo {
 		MaxHot:         p.cfg.MaxHot,
 		MaxDead:        p.cfg.MaxDead,
 		MaxDevices:     p.cfg.MaxDevices,
+		TargetDevices:  p.cfg.TargetDevices,
+		CooldownDefSec: int(p.cfg.CooldownDefault.Seconds()),
 		Kind:           p.cfg.Kind,
 		RenewBeforeSec: int(p.cfg.RenewBefore.Seconds()),
 		MaintainSec:    int(p.cfg.Interval.Seconds()),
@@ -133,12 +143,14 @@ func snapshot(d *models.PoolDevice) DeviceInfo {
 		creds = append(creds, k)
 	}
 	return DeviceInfo{
-		Ident:      maskIdent(d.Ident),
-		Creds:      creds,
-		Status:     d.Status,
-		TotalQuota: d.TotalQuota,
-		UsedQuota:  d.UsedQuota,
-		ExpireAt:   d.ExpireAt,
+		Ident:       maskIdent(d.Ident),
+		Creds:       creds,
+		PayloadKeys: payloadKeys(d.Payload),
+		Status:      d.Status,
+		Note:        d.Note,
+		TotalQuota:  d.TotalQuota,
+		UsedQuota:   d.UsedQuota,
+		ExpireAt:    d.ExpireAt,
 	}
 }
 
