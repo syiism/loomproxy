@@ -785,6 +785,11 @@ func TestPoolSpreadPayloadAndSnapshot(t *testing.T) {
 	if err := p.UpdatePayload(dev.Ident, nested); err != nil {
 		t.Fatalf("UpdatePayload 失败: %v", err)
 	}
+	// 必须回库里读一遍：运行中的池快照取的是内存里那同一批行指针，
+	// 只看快照会让一次失败的 UPDATE 蒙混过关（症状是重启后凭证全丢）
+	if got := deviceRow(t, fp.Name(), dev.Ident).Payload; got != string(nested) {
+		t.Fatalf("UpdatePayload 未落库：库里的 payload = %q", got)
+	}
 	p.Cooldown(dev.Ident, time.Now().Add(time.Hour), "设备被冻一小时")
 
 	st := p.Status()
