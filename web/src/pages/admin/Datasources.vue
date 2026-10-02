@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="数据源管理" subtitle="管理数据源的启用/禁用与基础信息；可通过每个数据源的「套餐权限」快捷调整各套餐的访问权限（完整管理见额度套餐页）。" />
+    <PageHeader title="数据源管理" subtitle="管理数据源的启用/禁用与基础信息、榜单可见与平台默认地址；每个源显示它被几个套餐纳入（只读），套餐访问权限在「额度 · 套餐」页管理。" />
 
     <!-- 数据源列表 -->
     <section class="mb-12 md:mb-16 reveal">
@@ -27,7 +27,8 @@
               <UiTag :tone="ds.status === 1 ? 'green' : 'gray'" :label="ds.status === 1 ? '启用' : '禁用'" />
               <button @click="toggleRankPublic(ds)" :disabled="rankBusy === ds.id" class="text-xs transition-colors"
                 :class="ds.rank_public ? 'text-pale-green-fg' : 'text-text-muted hover:text-text'">{{ ds.rank_public ? '榜单可见' : '榜单隐藏' }}</button>
-              <button @click="openPlanPerms(ds)" class="text-xs text-text-muted hover:text-text transition-colors">套餐权限</button>
+              <router-link to="/admin/quotas" class="text-xs font-mono text-text-muted hover:text-text transition-colors"
+                :title="'只读：本源的套餐访问权限在「额度 · 套餐」页编辑。两处都能改会互相覆盖（待办清单 P28）'">套餐 {{ plansFor(ds).length }}</router-link>
               <button @click="editDataSource(ds)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
               <button @click="deleteDataSource(ds)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
             </div>
@@ -78,7 +79,7 @@
       </div>
       <UiSpinner v-if="sourceConfigs === null" />
       <div v-else class="space-y-3">
-        <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="flex items-center gap-3">
+        <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
           <div class="font-mono text-sm min-w-[130px]">{{ cfg.source_display }}</div>
           <div class="font-mono text-xs text-text-muted min-w-[90px]">{{ cfg.source_name }}</div>
           <input v-model="cfg.base_url" class="input flex-1 font-mono text-sm" placeholder="留空则需用户传参" @input="sourceConfigDirty = true">
@@ -151,22 +152,6 @@
         <div class="flex items-center gap-2">
           <input type="checkbox" id="editDsStatus" v-model="editDsForm.status" class="checkbox">
           <label for="editDsStatus" class="text-sm">启用</label>
-        </div>
-      </div>
-    </UiModal>
-
-    <!-- 套餐权限快捷操作弹窗 -->
-    <UiModal :open="permOpen" :title="'套餐权限 — ' + (permDs && permDs.display_name)" @close="permOpen = false" @confirm="savePlanPerms" :confirm-loading="permSaving" confirm-text="保存">
-      <UiSpinner v-if="permLoading" />
-      <div v-else class="space-y-2">
-        <p class="text-text-muted text-sm">勾选允许访问「{{ permDs && permDs.display_name }}」的套餐：</p>
-        <div class="max-h-64 overflow-y-auto border border-border rounded-lg p-3 space-y-1.5">
-          <label v-for="p in plans" :key="p.id" class="flex items-center gap-2 text-sm cursor-pointer rounded px-1 py-0.5 hover:bg-surface-alt transition-colors">
-            <input type="checkbox" v-model="permChecked[p.id]" class="checkbox">
-            <span>{{ p.name }}</span>
-            <span class="font-mono text-xs text-text-muted">{{ p.code }}</span>
-          </label>
-          <div v-if="plans.length === 0" class="text-text-muted text-sm text-center py-4">暂无套餐</div>
         </div>
       </div>
     </UiModal>
@@ -255,14 +240,13 @@ import { toast, revealObserve } from '../../utils.js'
 const dsLoading = ref(true)
 const dsError = ref('')
 const dataSources = ref([])
-// 套餐权限快捷操作
+// 套餐→数据源的关联只在「额度 · 套餐」页编辑（待办清单 P28）：这里保留 plans 的读取，
+// 用来显示「本源被几个套餐纳入」的只读摘要。两个入口各自持快照写同一张 quota_plan_data_sources，
+// 先后保存会按旧快照把对方的增删回滚掉——这正是 P17 收掉设置页那个入口的同一个理由。
 const plans = ref([])
 const plansLoaded = ref(false)
-const permOpen = ref(false)
-const permDs = ref(null)
-const permChecked = ref({})
-const permLoading = ref(false)
-const permSaving = ref(false)
+const plansFor = (ds) => plans.value.filter(p => (p.data_source_ids || []).includes(ds.id))
+
 const sourceConfigs = ref(null)
 const sourceConfigDirty = ref(false)
 const savingConfig = ref(false)
@@ -512,41 +496,6 @@ const loadPlansDataSources = async () => {
   }
   plans.value = plansData
   plansLoaded.value = true
-}
-
-const openPlanPerms = async (ds) => {
-  permDs.value = ds
-  permOpen.value = true
-  permLoading.value = true
-  try {
-    if (!plansLoaded.value) await loadPlansDataSources()
-    const map = {}
-    for (const p of plans.value) map[p.id] = (p.data_source_ids || []).includes(ds.id)
-    permChecked.value = map
-  } catch (e) { toast(e.message, 'error') }
-  permLoading.value = false
-}
-
-const savePlanPerms = async () => {
-  if (permSaving.value || !permDs.value) return
-  permSaving.value = true
-  try {
-    const dsId = permDs.value.id
-    const ops = []
-    for (const p of plans.value) {
-      const was = (p.data_source_ids || []).includes(dsId)
-      const now = !!permChecked.value[p.id]
-      if (was === now) continue
-      ops.push(now
-        ? adminApi.addPlanDataSource(p.id, dsId)
-        : adminApi.removePlanDataSource(p.id, dsId))
-    }
-    await Promise.all(ops)
-    await loadPlansDataSources()
-    toast('套餐权限已保存', 'success')
-    permOpen.value = false
-    permDs.value = null
-  } catch (e) { toast(e.message, 'error') } finally { permSaving.value = false }
 }
 
 const loadSourceConfigs = async () => {

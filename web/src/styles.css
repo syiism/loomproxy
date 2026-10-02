@@ -11,6 +11,9 @@
   .btn-ghost { @apply btn border border-border bg-surface hover:bg-surface-alt; }
   .btn-danger { @apply btn border border-pale-red-bg text-pale-red-fg hover:bg-pale-red-bg; }
   .btn-sm { @apply px-3 py-1.5 text-xs rounded-md; }
+  /* 次级按钮 = 描边（本文件顶部的按钮体系就这么定的）。历史上 7 处写成 `btn-secondary`，
+     Tailwind 对不存在的类**静默跳过**，那些按钮一直只有 `.btn` 的底色、与卡片糊在一起。
+     待办清单 P31：扫描已挂进 make vet，类名写错从此构建即失败。 */
 
   /* 表单控件 */
   .input {
@@ -30,12 +33,32 @@
   }
 
   /* 表格 */
-  .table-wrap { @apply bg-surface border border-border rounded-xl overflow-hidden; }
+  /* overflow-x-auto 而不是 overflow-hidden：窄屏要能**滚**，不能把列裁掉。
+     以前只套它的表（号池、限额）在手机上长设备标识是直接看不见的——而页面各自补 overflow-x-auto
+     这种做法注定漏，所以把语义补全在基样类里（待办清单 P30）。 */
+  .table-wrap { @apply bg-surface border border-border rounded-xl overflow-x-auto; }
   .table-base { @apply w-full text-sm; }
   .table-base thead { @apply bg-surface-alt; }
   .table-base th { @apply font-mono text-xs uppercase tracking-wider text-text-muted px-3 md:px-5 py-3 md:py-4 text-left font-medium; }
   .table-base td { @apply px-3 md:px-5 py-3 md:py-4; }
   .table-base tbody tr { @apply border-b border-border last:border-b-0 hover:bg-surface-alt/50 transition-colors; }
+
+  /* 表单小标题：与 UiField 里的写法同一套外观。历史上 17 处写 `class="label"` 而它没定义，
+     那些标签就是裸文本（P31 巡检顺出来的第二例）。 */
+  .label { @apply block text-xs uppercase tracking-wider text-text-muted mb-2; }
+  /* 复选框：Tailwind 的 forms 插件没装，`checkbox` 此前同样是个空类（5 处）。
+     尺寸同时兜住移动端的命中区——见文件末尾那条媒体查询。 */
+  .checkbox {
+    @apply appearance-none shrink-0 rounded border border-border bg-surface;
+    width: 16px;
+    height: 16px;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+    background-size: 100% 100%;
+    background-position: center;
+    background-repeat: no-repeat;
+    accent-color: #111111;
+  }
+  .checkbox:checked { @apply bg-accent border-accent; }
 
   /* 物理按键样式 */
   .kbd {
@@ -83,4 +106,16 @@ html { overflow-y: scroll; } /* 始终预留滚动条位置，避免长短页面
 input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
   -webkit-box-shadow: 0 0 0 30px #FFFFFF inset !important;
   -webkit-text-fill-color: #111111 !important;
+}
+
+/* 移动端（<768px）共享件调整。判据是拇指下限 ≈44px：
+   `.btn-sm` 原本 ≈30px、表格里的文字钮 ≈16px、单元格左右内边距在 6~13 列的表上会把内容挤成一团。
+   放在这里而不是逐页加类，是因为这类问题每页都会重新长出来——一处生效才好维护（P30）。 */
+@media (max-width: 767px) {
+  .btn-sm { @apply px-3.5 py-2.5; }
+  .table-base th, .table-base td { @apply px-2.5 py-3; }
+  .table-base input[type="checkbox"], .table-base input[type="radio"], .checkbox {
+    width: 20px;
+    height: 20px;
+  }
 }

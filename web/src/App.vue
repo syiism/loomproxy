@@ -22,7 +22,7 @@
             <UiTag v-if="primaryRole" :tone="roleTone(primaryRole)" :label="primaryRole" />
           </div>
           <button @click="onLogout" class="hidden md:block text-xs md:text-sm text-text-muted hover:text-text transition-colors">退出</button>
-          <button class="md:hidden p-2 -mr-2 text-text-muted hover:text-text transition-colors" @click="mobileOpen = !mobileOpen" aria-label="菜单">
+          <button class="md:hidden p-2.5 -mr-2.5 text-text-muted hover:text-text transition-colors" @click="mobileOpen = !mobileOpen" aria-label="菜单">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16"></path></svg>
           </button>
         </div>
@@ -42,7 +42,9 @@
 
     <!-- 移动端抽屉 -->
     <div v-if="mobileOpen" class="fixed inset-0 z-50 bg-black/35 md:hidden" @click="mobileOpen = false">
-      <div class="absolute right-0 top-0 h-full w-64 bg-surface animate-slide-in" @click.stop>
+      <!-- overflow-y-auto 是这条链上唯一的短板：12 个管理页签 + 用户页签 + 退出总高 700px+，
+           不内滚的话小屏手机上尾部条目（设置、号池…）滚不到，等于移动端管理员进不去那些页。 -->
+      <div class="absolute right-0 top-0 h-full w-64 overflow-y-auto bg-surface animate-slide-in" @click.stop>
         <div class="p-4 border-b border-border flex items-center justify-between">
           <span class="font-serif text-lg font-medium">菜单</span>
           <button @click="mobileOpen = false" class="text-text-muted hover:text-text" aria-label="关闭">
@@ -155,6 +157,11 @@ const router = useRouter()
 const route = useRoute()
 
 const mobileOpen = ref(false)
+
+// 抽屉打开时锁 body 滚动：不锁的话手指在面板里滑动会带着背景走，滚回原位很难
+watch(mobileOpen, (on) => {
+  document.body.style.overflow = on ? 'hidden' : ''
+})
 const sidebarCollapsed = ref(false)
 const userTabs = [
   { to: '/dashboard', label: '概览' },

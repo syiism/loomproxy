@@ -4,7 +4,7 @@
       <div class="bg-surface border-t sm:border border-border rounded-t-xl sm:rounded-xl w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 md:p-8 animate-rise" :class="wide ? 'sm:max-w-3xl' : 'sm:max-w-md'">
         <div class="flex items-start justify-between mb-5">
           <div class="font-serif text-xl font-medium tracking-tight">{{ title }}</div>
-          <button type="button" class="text-text-muted hover:text-text transition-colors p-1 -m-1" @click="close" aria-label="关闭">
+          <button type="button" class="text-text-muted hover:text-text transition-colors p-2.5 -m-2.5" @click="close" aria-label="关闭">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"></path></svg>
           </button>
         </div>

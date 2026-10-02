@@ -109,7 +109,7 @@
 
               <div v-if="isAdmin" class="mt-4 pt-4 border-t border-border space-y-3">
                 <div>
-                  <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-2">接口消耗</div>
+                  <router-link to="/admin/interfaces" class="font-mono text-xs uppercase tracking-wider text-text-muted mb-2 hover:text-text transition-colors" title="只读；消耗与限流的编辑都在「接口限流」页">接口消耗 ↗</router-link>
                   <div class="flex flex-wrap gap-1.5">
                     <span v-for="i in s.interfaces" :key="i.name" class="px-2 py-0.5 rounded text-xs font-mono" :class="i.enabled ? 'bg-pale-green-bg text-pale-green-fg' : 'bg-pale-gray-bg text-text-muted'">{{ i.name }} ×{{ i.enabled ? i.cost : 0 }}</span>
                   </div>
@@ -129,7 +129,7 @@
       <template v-else>
         <!-- 移动端 -->
         <div class="sm:hidden space-y-2">
-          <div v-for="l in logs" :key="l.id" class="card !p-4 flex items-center justify-between">
+          <div v-for="l in visibleLogs" :key="l.id" class="card !p-4 flex items-center justify-between">
             <div>
               <div class="flex items-center gap-2 mb-1">
                 <UiTag tone="blue" :label="l.group_name || l.group_code" />
@@ -148,7 +148,7 @@
               <tr><th>时间</th><th v-if="isAdmin">用户</th><th>数据源</th><th>接口</th><th class="text-right">消耗</th></tr>
             </thead>
             <tbody>
-              <tr v-for="l in logs" :key="l.id">
+              <tr v-for="l in visibleLogs" :key="l.id">
                 <td class="font-mono text-xs text-text-muted">{{ fmtDate(l.created_at) }}</td>
                 <td v-if="isAdmin" class="text-sm">{{ l.username || ('#' + l.user_id) }}</td>
                 <td><UiTag tone="blue" :label="l.group_name || l.group_code" /></td>
@@ -158,7 +158,10 @@
             </tbody>
           </table>
         </div>
-        <UiPagination :page="logsPage" :total="logsTotal" :page-size="logsPageSize" @change="goLogsPage" />
+        <!-- 管理员视角收成「最近 5 条 + 跳转」：整表本来就是 /admin/usage-logs 的无筛选子集，
+           在两页各显示一遍只会漂移（待办清单 P28·B1，收法照 P17）。普通用户仍看自己的全量分页。 -->
+        <router-link v-if="isAdmin" to="/admin/usage-logs" class="inline-block mt-3 text-xs text-text-muted hover:text-text transition-colors">共 {{ logsTotal }} 条 · 全部流水与筛选在「调用流水」页 ↗</router-link>
+        <UiPagination v-else :page="logsPage" :total="logsTotal" :page-size="logsPageSize" @change="goLogsPage" />
       </template>
     </section>
   </div>
@@ -187,6 +190,9 @@ const planExpireAt = ref(null)
 const activeUsers = ref(0)
 const callCount = ref(0)
 const logs = ref([])
+// 管理员只看最近 5 条——整表在「调用流水」页有带筛选的全量版，这里显示 20 条同内容就是第二份事实（P28·B1）。
+// 普通用户看自己的流水，分页照旧，不受这条影响。
+const visibleLogs = computed(() => (isAdmin.value ? logs.value.slice(0, 5) : logs.value))
 const logsTotal = ref(0)
 const logsPage = ref(1)
 const logsPageSize = ref(10)

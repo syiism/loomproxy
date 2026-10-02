@@ -14,14 +14,14 @@
             :key="v.key"
             @click="viewMode = v.key"
             :class="viewMode === v.key ? 'bg-surface-alt border border-border shadow-sm' : 'text-text-muted hover:text-text'"
-            class="btn-secondary btn-sm px-3 rounded"
+            class="btn-ghost btn-sm px-3 rounded"
           >{{ v.label }}</button>
         </div>
         <select v-if="viewMode === 'plan'" v-model.number="selectedPlan" class="input">
           <option :value="0">默认（全局）</option>
           <option v-for="p in plans" :key="p.id" :value="p.id">{{ p.name }}</option>
         </select>
-        <button v-if="viewMode === 'plan' && selectedPlan > 0" class="btn-secondary btn-sm" @click="resetPlanCosts">重置本套餐</button>
+        <button v-if="viewMode === 'plan' && selectedPlan > 0" class="btn-ghost btn-sm" @click="resetPlanCosts">重置本套餐</button>
       </div>
 
       <div v-for="ds in filteredDataSources" :key="ds.id" class="card reveal !p-0 overflow-hidden">
@@ -34,19 +34,19 @@
             </div>
           </div>
           <div v-if="ds.interfaces.length > 0" class="flex items-center gap-3">
-            <button class="btn-secondary btn-sm" @click="selectAll(ds, true)">全选</button>
-            <button class="btn-secondary btn-sm" @click="selectAll(ds, false)">取消全选</button>
+            <button class="btn-ghost btn-sm" @click="selectAll(ds, true)">全选</button>
+            <button class="btn-ghost btn-sm" @click="selectAll(ds, false)">取消全选</button>
             <div v-if="selectedCount(ds) > 0" class="flex items-center gap-2 text-sm text-text-muted">
               <span>已选 {{ selectedCount(ds) }} 项</span>
-              <button class="btn-secondary btn-sm" @click="batchEditCost(ds)">批量设置消耗</button>
-              <button class="btn-secondary btn-sm" @click="batchToggleStatus(ds, 1)">批量启用</button>
-              <button class="btn-secondary btn-sm" @click="batchToggleStatus(ds, 0)">批量禁用</button>
+              <button class="btn-ghost btn-sm" @click="batchEditCost(ds)">批量设置消耗</button>
+              <button class="btn-ghost btn-sm" @click="batchToggleStatus(ds, 1)">批量启用</button>
+              <button class="btn-ghost btn-sm" @click="batchToggleStatus(ds, 0)">批量禁用</button>
             </div>
           </div>
         </div>
 
         <div class="overflow-x-auto">
-          <table class="table-base table-fixed">
+          <table class="table-base min-w-[760px]">
             <colgroup>
               <col class="w-10">
               <col>
@@ -482,7 +482,9 @@ const resetPlanCosts = async () => {
     const planCosts = await adminApi.listPlanQuotaCosts()
     for (const pc of planCosts) {
       if (pc.plan_id === selectedPlan.value) {
-        await adminApi.updatePlanQuotaCost(pc.id, { interval: 0, limit_count: 0 })
+        // 统一走 upsert：`PUT /quota-costs/plans/:id` 只能改已有行，重置时若某接口恰好没有套餐级行就会漏掉。
+        // 面板只用一条端点（待办清单 P28·E1），PUT 仍留给脚本与部署用
+        await adminApi.upsertPlanQuotaCost({ plan_id: pc.plan_id, group_code: pc.group_code, interface: pc.interface, interval: 0, limit_count: 0 })
         pc.interval = 0
         pc.limit_count = 0
       }

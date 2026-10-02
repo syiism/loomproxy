@@ -102,6 +102,8 @@
 
     <!-- 限制项管理 -->
     <UiModal :open="!!limitsPlan" :title="'限制项 — ' + (limitsPlan && limitsPlan.name)" wide @close="limitsPlan = null" @confirm="limitsPlan = null">
+      <p class="text-xs text-text-muted mb-3">这里改的是<b>套餐轴</b>的限额；单个用户在其之上的增减（追加语义，优先级最高）在
+        <router-link to="/admin/users" class="text-text hover:underline">用户页的「额度」</router-link> 里改。两张表、一个生效链，别在两处找同一格。</p>
       <div v-if="limitsPlan">
         <div v-if="limits.length === 0" class="text-center py-6 text-text-muted text-sm border border-dashed border-border rounded-lg mb-5">暂无限制项</div>
         <div v-else class="border border-border rounded-lg overflow-hidden mb-5">

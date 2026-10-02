@@ -92,7 +92,7 @@
           <div class="text-xs text-text-muted mt-1">未被上方功能卡片管理的设置项（含后续版本新增、未识别的 key）。</div>
         </div>
         <div class="divide-y divide-border">
-          <div v-for="s in customEntries" :key="s.key" class="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
+          <div v-for="s in customEntries" :key="s.key" class="flex flex-wrap items-center gap-3 md:gap-4 py-3 first:pt-0 last:pb-0">
             <div class="min-w-0 flex-1">
               <div class="font-mono text-xs break-all">{{ s.key }}</div>
               <div class="mt-1 max-w-[480px] truncate text-xs text-text-muted" :title="s.description">{{ s.description || '—' }}</div>

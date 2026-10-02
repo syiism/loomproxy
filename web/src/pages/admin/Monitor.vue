@@ -28,7 +28,7 @@
       <UiTrendChart :days="trend.days" :sources="trend.sources" :rows="trend.rows" />
     </div>
 
-    <div class="reveal flex items-center gap-4 mb-4">
+    <div class="reveal flex flex-wrap items-center gap-4 mb-4">
       <button @click="load()" class="btn-ghost btn-sm">刷新</button>
       <label class="text-sm text-text-muted flex items-center gap-1.5 cursor-pointer">
         <input type="checkbox" v-model="autoRefresh"> 每 10 秒自动刷新
@@ -59,71 +59,76 @@
         源码「{{ subjectSource }}」不在数据源清单里：多半已下线或停用——
         历史是否可查取决于运维有没有清理明细（筛不到不等于当时没发生过）。
       </div>
-      <div v-if="coverage.length" class="mb-3 overflow-x-auto">
-        <div class="text-xs text-text-muted mb-1.5">
-          内容维度覆盖率（窗口内已落库明细，按 源×接口）——哪一格常年不满，先看同行的失败与带内失败：
-          失败请求（含带内失败）天然五维全空，是「缺格子的合理成因」，剩下的缺口才是采集在漏
+      <!-- 内容维度整段默认收起（待办清单 P29）：这一页从上到下是覆盖率表 + 口径说明 + 维度榜 + 表下说明，
+           管理员日常只看成功率与两三本热书，却要为一眼看不完的东西滚半屏。
+           收起态的 summary 是**读数**（最低覆盖率在哪一组、带内失败几条、榜多少条），不是「暂无异常」那种形容词。 -->
+      <UiCollapse title="内容维度" :summary="subjectSummary" storage-key="monitor-subject">
+        <div v-if="coverage.length" class="mb-3 overflow-x-auto">
+          <div class="text-xs text-text-muted mb-1.5">
+            内容维度覆盖率（窗口内已落库明细，按 源×接口）——哪一格常年不满，先看同行的失败与带内失败：
+            失败请求（含带内失败）天然五维全空，是「缺格子的合理成因」，剩下的缺口才是采集在漏
+          </div>
+          <table class="table-base">
+            <thead>
+              <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th><th>带内失败</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(r, i) in coverage" :key="i">
+                <td class="font-mono text-xs">{{ r.source }} <span class="text-text-muted">/ {{ r.action }}</span></td>
+                <td class="font-mono text-xs">{{ r.rows }}</td>
+                <td v-for="m in pctCells(r)" :key="m.k" class="font-mono text-xs" :style="m.bad ? 'color:#b1263a' : ''">{{ m.text }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="text-xs text-text-muted mt-1.5">
+            只统计 5 条以上的组合；search/explore 返回的是一批书，书名一栏留空是正常状态（所以不标红）。
+            失败 = HTTP 层失败 + 带内失败；带内失败指 HTTP 200 但正文是错误载荷（Legado 书源对参数缺失/上游失败的传统写法）。
+          </div>
         </div>
-        <table class="table-base">
-          <thead>
-            <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th><th>带内失败</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="(r, i) in coverage" :key="i">
-              <td class="font-mono text-xs">{{ r.source }} <span class="text-text-muted">/ {{ r.action }}</span></td>
-              <td class="font-mono text-xs">{{ r.rows }}</td>
-              <td v-for="m in pctCells(r)" :key="m.k" class="font-mono text-xs" :style="m.bad ? 'color:#b1263a' : ''">{{ m.text }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="text-xs text-text-muted mt-1.5">
-          只统计 5 条以上的组合；search/explore 返回的是一批书，书名一栏留空是正常状态（所以不标红）。
-          失败 = HTTP 层失败 + 带内失败；带内失败指 HTTP 200 但正文是错误载荷（Legado 书源对参数缺失/上游失败的传统写法）。
+        <div v-else-if="coverageError" class="mb-3 text-xs text-pale-red-fg">
+          内容维度覆盖率统计失败（不影响下面的榜单，刷新或缩短窗口再试）。
         </div>
-      </div>
-      <div v-else-if="coverageError" class="mb-3 text-xs text-pale-red-fg">
-        内容维度覆盖率统计失败（不影响下面的榜单，刷新或缩短窗口再试）。
-      </div>
-      <div v-if="subjectItems.length" class="mb-2 text-xs text-text-muted">
-        两列口径不同：<b>访问人数</b>是同数据源内按用户去重（匿名退到 IP，跨源相加不重复去重），
-        <b>请求数</b>是接口调用条数。书名榜按<b>访问人数</b>排序（一条正文明细就是一章，按次数排等于把「谁在读」排成「被翻了多少章」），
-        其余维度仍按请求数排序；成功率与平均耗时一律按请求数算。
-      </div>
-      <UiEmpty v-if="subjectItems.length === 0" title="该窗口内没有可统计的内容维度"
-               text="只有真正拿到响应、且源声明了媒介的调用才会入榜。" />
-      <div v-else class="table-wrap overflow-x-auto">
-        <table class="table-base">
-          <thead>
-            <tr><th>{{ subjectColumn }}</th><th>访问人数</th><th>请求数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th><th>最大耗时</th><th>0 结果</th><th>数据源</th><th>最近</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="(s, i) in subjectItems" :key="i">
-              <td>
-                <UiTag v-if="subjectDim === 'media'" :tone="mediaTone(s.name)" :label="s.label || mediaLabel(s.name)" />
-                <div v-else class="max-w-56 truncate text-sm" :title="s.name">{{ s.name }}</div>
-              </td>
-              <td class="font-mono text-xs">{{ s.visitors }}</td>
-              <td class="font-mono text-xs">{{ s.requests }}</td>
-              <td class="font-mono text-xs">{{ s.success }}</td>
-              <td class="font-mono text-xs">{{ s.failed }}</td>
-              <td class="font-mono text-xs" :style="{ color: rateColor(s.success_rate) }">{{ s.success_rate.toFixed(1) }}%</td>
-              <td class="font-mono text-xs">{{ s.avg_latency_ms }}ms</td>
-              <td class="font-mono text-xs">{{ s.max_latency_ms }}ms</td>
-              <td class="font-mono text-xs" :style="s.empty_results > 0 ? 'color:#956400' : ''">{{ s.empty_results }}</td>
-              <td class="font-mono text-xs text-text-muted">{{ (s.sources || []).join(' ') }}</td>
-              <td class="font-mono text-xs text-text-muted whitespace-nowrap">{{ s.last_called_at ? fmtDate(s.last_called_at) : '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="text-xs text-text-muted mt-3 reveal">
-        媒介为「未判定」表示源既没声明、响应也没给类型——补 SourceMeta 的 media_type 或 tab 声明即可归位。
-        命名缓存当前 {{ subjectCache.books }} 本书名 / {{ subjectCache.chapters }} 条章节名。
-        <span v-if="subjectCache.persist"
-              :class="(subjectCache.persist.dropped > 0 || subjectCache.persist.failed > 0) ? 'text-pale-red-fg' : ''">
-          写 Redis：排队 {{ subjectCache.persist.queued }} 条、队列满丢 {{ subjectCache.persist.dropped }} 条、写失败 {{ subjectCache.persist.failed }} 条<template v-if="subjectCache.persist.dropped > 0 || subjectCache.persist.failed > 0">（丢的是跨重启的名称，内存里这轮仍在）</template>。
-        </span>
-      </div>
+        <div v-if="subjectItems.length" class="mb-2 text-xs text-text-muted">
+          两列口径不同：<b>访问人数</b>是同数据源内按用户去重（匿名退到 IP，跨源相加不重复去重），
+          <b>请求数</b>是接口调用条数。书名榜按<b>访问人数</b>排序（一条正文明细就是一章，按次数排等于把「谁在读」排成「被翻了多少章」），
+          其余维度仍按请求数排序；成功率与平均耗时一律按请求数算。
+        </div>
+        <UiEmpty v-if="subjectItems.length === 0" title="该窗口内没有可统计的内容维度"
+                 text="只有真正拿到响应、且源声明了媒介的调用才会入榜。" />
+        <div v-else class="table-wrap overflow-x-auto">
+          <table class="table-base">
+            <thead>
+              <tr><th>{{ subjectColumn }}</th><th>访问人数</th><th>请求数</th><th class="hidden md:table-cell">成功</th><th class="hidden md:table-cell">失败</th><th>成功率</th><th>平均耗时</th><th class="hidden md:table-cell">最大耗时</th><th class="hidden md:table-cell">0 结果</th><th class="hidden md:table-cell">数据源</th><th class="hidden md:table-cell">最近</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(s, i) in subjectItems" :key="i">
+                <td>
+                  <UiTag v-if="subjectDim === 'media'" :tone="mediaTone(s.name)" :label="s.label || mediaLabel(s.name)" />
+                  <div v-else class="max-w-56 truncate text-sm" :title="s.name">{{ s.name }}</div>
+                </td>
+                <td class="font-mono text-xs">{{ s.visitors }}</td>
+                <td class="font-mono text-xs">{{ s.requests }}</td>
+                <td class="hidden md:table-cell font-mono text-xs">{{ s.success }}</td>
+                <td class="hidden md:table-cell font-mono text-xs">{{ s.failed }}</td>
+                <td class="font-mono text-xs" :style="{ color: rateColor(s.success_rate) }">{{ s.success_rate.toFixed(1) }}%</td>
+                <td class="font-mono text-xs">{{ s.avg_latency_ms }}ms</td>
+                <td class="hidden md:table-cell font-mono text-xs">{{ s.max_latency_ms }}ms</td>
+                <td class="hidden md:table-cell font-mono text-xs" :style="s.empty_results > 0 ? 'color:#956400' : ''">{{ s.empty_results }}</td>
+                <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ (s.sources || []).join(' ') }}</td>
+                <td class="hidden md:table-cell font-mono text-xs text-text-muted whitespace-nowrap">{{ s.last_called_at ? fmtDate(s.last_called_at) : '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="text-xs text-text-muted mt-3 reveal">
+          媒介为「未判定」表示源既没声明、响应也没给类型——补 SourceMeta 的 media_type 或 tab 声明即可归位。
+          命名缓存当前 {{ subjectCache.books }} 本书名 / {{ subjectCache.chapters }} 条章节名。
+          <span v-if="subjectCache.persist"
+                :class="(subjectCache.persist.dropped > 0 || subjectCache.persist.failed > 0) ? 'text-pale-red-fg' : ''">
+            写 Redis：排队 {{ subjectCache.persist.queued }} 条、队列满丢 {{ subjectCache.persist.dropped }} 条、写失败 {{ subjectCache.persist.failed }} 条<template v-if="subjectCache.persist.dropped > 0 || subjectCache.persist.failed > 0">（丢的是跨重启的名称，内存里这轮仍在）</template>。
+          </span>
+        </div>
+      </UiCollapse>
     </div>
 
     <!-- 数据源候选：启用中的源 + 本会话监控里出现过的源（下线源在 data_sources 里是硬删的、
@@ -137,6 +142,10 @@
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
     <UiEmpty v-else-if="items.length === 0" title="暂无调用数据" text="有数据源接口被调用后，这里会显示统计。" />
     <template v-else>
+      <!-- 移动端列优先级（待办清单 P30）：12/13 列的表在手机上光靠横滚等于不可读。
+           按「管理员在手机上是来做分诊的」定保留列——时间 / 调用者 / 数据源 / 接口 / 状态 / 内容词；
+           IP、耗时、章节、媒介、结果、ID 这些次要列只在 ≥768px 显示，桌面端一个不少。
+           先例是 admin/Users.vue:63 的 hidden md:table-cell。 -->
       <div class="table-wrap reveal overflow-x-auto mb-8">
         <table class="table-base">
           <thead>
@@ -163,7 +172,7 @@
       <div class="table-wrap reveal overflow-x-auto mb-8">
         <table class="table-base">
           <thead>
-            <tr><th>时间</th><th>调用者</th><th>IP</th><th>数据源</th><th>接口</th><th>状态</th><th>耗时</th><th>搜索词</th><th>书名</th><th>章节</th><th>媒介</th><th>结果</th></tr>
+            <tr><th>时间</th><th>调用者</th><th class="hidden md:table-cell">IP</th><th>数据源</th><th>接口</th><th>状态</th><th class="hidden md:table-cell">耗时</th><th>搜索词</th><th>书名</th><th class="hidden md:table-cell">章节</th><th class="hidden md:table-cell">媒介</th><th class="hidden md:table-cell">结果</th></tr>
           </thead>
           <tbody>
             <tr v-for="(r, i) in recent" :key="i">
@@ -172,16 +181,16 @@
                 <span v-if="r.username" class="font-medium">{{ r.username }}</span>
                 <span v-else class="text-text-muted">匿名</span>
               </td>
-              <td class="font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
+              <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
               <td><UiTag tone="blue" :label="r.source" /></td>
               <td class="font-mono text-xs">{{ r.action }}</td>
               <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></td>
-              <td class="font-mono text-xs">{{ r.latency_ms }}ms</td>
+              <td class="hidden md:table-cell font-mono text-xs">{{ r.latency_ms }}ms</td>
               <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
               <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
-              <td><div class="max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
-              <td><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></td>
-              <td class="font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
+              <td><div class="hidden md:table-cell max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
+              <td class="hidden md:table-cell"><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></td>
+              <td class="hidden md:table-cell font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
             </tr>
           </tbody>
         </table>
@@ -209,26 +218,26 @@
     <div class="table-wrap reveal overflow-x-auto">
       <table class="table-base">
         <thead>
-          <tr><th>ID</th><th>时间</th><th>调用者</th><th>IP</th><th>数据源</th><th>接口</th><th>状态</th><th>耗时</th><th>搜索词</th><th>书名</th><th>章节</th><th>媒介</th><th>结果</th></tr>
+          <tr><th class="hidden md:table-cell">ID</th><th>时间</th><th>调用者</th><th class="hidden md:table-cell">IP</th><th>数据源</th><th>接口</th><th>状态</th><th class="hidden md:table-cell">耗时</th><th>搜索词</th><th>书名</th><th class="hidden md:table-cell">章节</th><th class="hidden md:table-cell">媒介</th><th class="hidden md:table-cell">结果</th></tr>
         </thead>
         <tbody>
           <tr v-for="r in history" :key="r.id">
-            <td class="font-mono text-xs text-text-muted">{{ r.id }}</td>
+            <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.id }}</td>
             <td class="font-mono text-xs text-text-muted whitespace-nowrap">{{ fmtDate(r.created_at) }}</td>
             <td class="text-sm">
               <span v-if="r.username" class="font-medium">{{ r.username }}</span>
               <span v-else class="text-text-muted">匿名</span>
             </td>
-            <td class="font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
+            <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
             <td><UiTag tone="blue" :label="r.source" /></td>
             <td class="font-mono text-xs">{{ r.action }}</td>
             <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></td>
-            <td class="font-mono text-xs">{{ r.latency_ms }}ms</td>
+            <td class="hidden md:table-cell font-mono text-xs">{{ r.latency_ms }}ms</td>
             <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
             <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
-            <td><div class="max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
-            <td><UiTag :tone="mediaTone(r.media_type)" :label="mediaLabel(r.media_type)" /></td>
-            <td class="font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
+            <td><div class="hidden md:table-cell max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
+            <td class="hidden md:table-cell"><UiTag :tone="mediaTone(r.media_type)" :label="mediaLabel(r.media_type)" /></td>
+            <td class="hidden md:table-cell font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
           </tr>
           <tr v-if="history.length === 0">
             <td colspan="13" class="text-center text-sm text-text-muted py-6">暂无历史记录（调用超过 200 条后旧记录才会落库）</td>
@@ -248,6 +257,7 @@ import UiTag from '../../components/UiTag.vue'
 import UiSpinner from '../../components/UiSpinner.vue'
 import UiEmpty from '../../components/UiEmpty.vue'
 import UiPagination from '../../components/UiPagination.vue'
+import UiCollapse from '../../components/UiCollapse.vue'
 import { adminApi, miscApi } from '../../api/index.js'
 import { fmtDate, toast, revealObserve } from '../../utils.js'
 
@@ -304,6 +314,29 @@ const pctCells = (r) => ([
   { k: 'failed', text: String(r.failed), bad: false },
   { k: 'inband', text: String(r.in_band_failed || 0), bad: (r.in_band_failed || 0) > 0 },
 ])
+
+// subjectSummary：折叠块收起态的那一行读数。**只报数，不报形容词**——
+// 摘要说「最低 47%（xmly/content 书名）」，管理员才知道要不要展开；说「有数据」等于没摘要。
+const subjectSummary = computed(() => {
+  const parts = []
+  const rows = coverage.value || []
+  if (rows.length) {
+    let low = null
+    for (const r of rows) {
+      if (!r.expect_book) continue // search/explore 本就没有「这一本」，空不是缺陷
+      const p = pct(r.has_book_name, r.rows)
+      if (low === null || p < low.p) low = { p, key: r.source + '/' + r.action }
+    }
+    parts.push(`覆盖率 ${rows.length} 组`)
+    if (low && low.p < 100) parts.push(`书名最低 ${low.p}%（${low.key}）`)
+    const ib = rows.reduce((n, r) => n + (r.in_band_failed || 0), 0)
+    if (ib > 0) parts.push(`带内失败 ${ib}`)
+  } else if (coverageError.value) {
+    parts.push('覆盖率统计失败')
+  }
+  if (subjectItems.value.length) parts.push(`榜 ${subjectItems.value.length} 条`)
+  return parts.join(' · ')
+})
 
 const rateColor = (r) => r >= 95 ? '#346538' : r >= 80 ? '#956400' : '#9F2F2D'
 const statusColor = (s) => s >= 500 ? '#9F2F2D' : s >= 400 ? '#956400' : '#346538'

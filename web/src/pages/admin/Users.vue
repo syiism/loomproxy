@@ -119,7 +119,7 @@
         <UiField label="初始密码" hint="8–16 位，包含字母和数字">
           <input v-model="createForm.password" type="password" class="input" minlength="8" maxlength="16" required>
         </UiField>
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UiField label="昵称（可选）">
             <input v-model="createForm.nickname" class="input" maxlength="64">
           </UiField>
@@ -149,7 +149,7 @@
         <UiField label="用户名">
           <input :value="editUser.username" disabled class="input">
         </UiField>
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UiField label="昵称">
             <input v-model="editForm.nickname" class="input">
           </UiField>
@@ -157,7 +157,7 @@
             <input v-model="editForm.email" class="input">
           </UiField>
         </div>
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UiField label="状态">
             <select v-model="editForm.status" class="input">
               <option :value="1">启用</option>
@@ -207,6 +207,7 @@
         <div class="text-sm text-text-muted mb-4">
           套餐：{{ quotaUser.plan_name || '免费版' }}（{{ quotaUser.plan_code || '—' }}）
           <span class="ml-2 text-xs">覆盖值在计划额度上增减（可为负），留空或 0 表示不调整</span>
+          <router-link to="/admin/quotas" class="ml-2 text-xs text-text-muted hover:text-text transition-colors">计划额度本身在「额度 · 套餐」页改 ↗</router-link>
         </div>
         <table class="table-base w-full">
           <thead>
