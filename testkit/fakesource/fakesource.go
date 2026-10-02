@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 
 	"loomproxy/base"
+	"loomproxy/base/legado"
 )
 
 const (
@@ -48,6 +49,12 @@ var (
 	BootCount atomic.Int64
 	BootHook  func() error
 )
+
+// InBandDTO 让 content 动作返回**规范 DTO 形状**的带内错误
+// （`legado.ContentResponse{ContentType:"error"}`，即真实源的写法；假源默认把上游 JSON
+// 原样透传成松散 map）。带内文案脱敏要钉住两种形状（待办清单 P23），
+// 而 HTTP 层是唯一黑盒入口——注入点与 BootHook 同一做法，用例设、用例清。
+var InBandDTO bool
 
 // handler 最小可用的数据源处理器：走 base 弹性栈取上游，不做任何归一化
 type handler struct {
@@ -75,6 +82,12 @@ func (h *handler) Handle(ctx context.Context, params map[string]interface{}) (in
 	data, err := h.FetchJSON(ctx, strings.TrimRight(baseURL, "/")+"/api", nil)
 	if err != nil {
 		return nil, err
+	}
+	if InBandDTO && strings.HasSuffix(h.Name, "_content") {
+		// 文案里放一个含签名参数的 URL：它必须在下发前被脱敏收口掉（P23）
+		return legado.ContentResponse{ContentType: "error", Data: map[string]interface{}{
+			"message": `Get "https://upstream.invalid/api?app_key=TOPSECRET&sig=deadbeef": dial tcp 203.0.113.9:443: i/o timeout`,
+		}}, nil
 	}
 	return data, nil
 }

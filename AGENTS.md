@@ -94,7 +94,9 @@
 
 ## 10. 开发约定
 
-- 响应统一 `{code,msg,data}`；对下游错误文案必须脱敏（收口在 `handleError` + `sanitizeUpstreamMsg`）。
+- 响应统一 `{code,msg,data}`；对下游错误文案必须脱敏。**出口有两条，都要过 `sanitizeUpstreamMsg`**：
+  `handleError`（handler 报错）与 `scrubInBandMsg`（带内错误正文，`ContentType=="error"` 的 `message`，P23①）。
+  只收口错误文案，正文不扫。
 - 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露；**已由 `make vet` 扫**，见 `scripts/check-sql-reserved.sh`），条件里的列名一律用 GORM map 形式让它按方言加引号——**不要在 SQL 里写死反引号**（反引号是 MySQL/SQLite 方言，PostgreSQL 只认双引号，而读设置失败被吞成空串，症状是「设置全没生效」）。
 - 设置项的 `type` 是行为声明不是展示标签（`string`/`bool`/`number`/`json`），`json` 型前后端双侧校验。
 - **下发位置是部署事实，不做设置项**：书源 JSON 走静态托管 `GET /data/shuyuan/bookSource.json`（免鉴权、原样直出），

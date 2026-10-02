@@ -206,6 +206,10 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 			if source != "" {
 				legado.ObserveCall(source, params, result, subject)
 			}
+			// 带内错误正文的文案收口（待办清单 P23）：这条出口不经过 handleError，
+			// §10 的脱敏约定被整个绕过——传输层失败时 message 常是 *url.Error，内嵌完整请求 URL
+			// （签名参数与上游域名）。只改错误文案，不碰正文、不碰状态码、不碰计费。
+			result = scrubInBandMsg(result)
 			c.JSON(http.StatusOK, result)
 		}
 
@@ -339,6 +343,39 @@ func sanitizeUpstreamMsg(msg string) string {
 	return msg
 }
 
+// scrubInBandMsg 把「带内错误正文」里的 message 过一遍脱敏，认两种形状：
+// 规范 DTO（legado.ContentResponse）与源自己拼的松散 map（{"contentType":"error","data":{...}}）。
+// **必须与 ObserveCall 认的同一组形状**——否则出现「监控标成带内失败、文案却照原样下发」的分叉。
+// 正文（contentType 非 error）一律不动：里面本来就可能合法含 URL。
+func scrubInBandMsg(result interface{}) interface{} {
+	switch v := result.(type) {
+	case legado.ContentResponse:
+		scrubMessage(v.ContentType, v.Data)
+		return v
+	case *legado.ContentResponse:
+		if v != nil {
+			scrubMessage(v.ContentType, v.Data)
+		}
+		return v
+	case map[string]interface{}:
+		if ct, _ := v["contentType"].(string); ct == "error" {
+			if data, ok := v["data"].(map[string]interface{}); ok {
+				scrubMessage(ct, data)
+			}
+		}
+	}
+	return result
+}
+
+func scrubMessage(contentType string, data map[string]interface{}) {
+	if contentType != "error" || data == nil {
+		return
+	}
+	if msg, ok := data["message"].(string); ok && msg != "" {
+		data["message"] = sanitizeUpstreamMsg(msg)
+	}
+}
+
 // isTransportError 判定是否为上游传输层失败。*url.Error 是 http.Client 所有请求失败的
 // 包装形态，net.Error 兜住未经 client 的场景（如自持连接）。DNS 类已在上一步给出
 // 更具体的友好文案，故此处不再区分。
@@ -368,8 +405,12 @@ func CreateApp() *gin.Engine {
 		gin.SetMode(gin.DebugMode)
 	}
 
+	// 连不上库就拒绝起来，别半启动（待办清单 P27）：以前这里只打一条 WARNING 就继续装配，
+	// 而装配层一半路径查了 nil db.DB、一半没查——缓存预热协程直接空指针 panic，
+	// 于是「配置写错」现场看到的是一串栈而不是一句人话；再叠上 systemd 的 Restart=always，
+	// 崩溃循环会被 is-active 读成「运行中」。
 	if err := db.Init(); err != nil {
-		log.Printf("WARNING: Database init failed: %v", err)
+		log.Fatalf("数据库初始化失败，服务拒绝启动: %v", err)
 	}
 
 	r := gin.New()
