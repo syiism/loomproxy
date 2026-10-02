@@ -122,7 +122,7 @@ func GetImportConfig(c *gin.Context) {
 }
 
 func RegisterRoutes(r *gin.Engine) {
-	g := r.Group("/user", auth.AuthRequired())
+	g := r.Group("/user", auth.AuthOrKeyRequired())
 	{
 		g.GET("/source-configs", ListSourceConfigs)
 		g.PUT("/source-configs", UpdateSourceConfigs)

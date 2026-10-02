@@ -872,6 +872,29 @@ func AdminRequired() gin.HandlerFunc {
 	}
 }
 
+// AuthOrKeyRequired 三形态都能用的控制面守卫：JWT（`Authorization: Bearer` / `?token=` /
+// HttpOnly Cookie）或**本账号的** API Key（`X-API-Key` / `?api_key=`）。
+//
+// 与 AuthRequired 的分工是安全取向而不是省事：凭证引导类端点（改密码、会话列表、退出登录、
+// 签发与撤销密钥）以及整个管理面**只认会话**——一把长期密钥若能铸造或撤销别的密钥、能改密码，
+// 等于提权且无法靠「退出全部设备」止血；管理面必须一次登出就立刻关得掉（待办清单 P26）。
+// 静态 env 键在这里也算「没有身份」：它按设计匿名，而控制面每个端点都要落到某个账号上。
+func AuthOrKeyRequired() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := utils.AuthenticateAny(c); err != nil {
+			code := http.StatusUnauthorized
+			if ex, ok := err.(*utils.AuthException); ok && ex.StatusCode != 0 {
+				code = ex.StatusCode
+			}
+			Fail(c, code, err.Error())
+			c.Abort()
+			return
+		}
+		// user_id / username 由 utils 的解析注入，两条路径同一套键——handler 不需要知道来源是会话还是密钥
+		c.Next()
+	}
+}
+
 // parseTokenFromContext 从请求中解析 JWT 并处理错误响应
 func parseTokenFromContext(c *gin.Context) (*utils.JWTClaims, string, error) {
 	tokenStr := utils.TokenFromRequest(c)

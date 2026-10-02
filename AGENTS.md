@@ -62,6 +62,9 @@
 ## 7. 鉴权模型
 
 - 两层：API 网关层（`middleware/apiauth` → `utils.VerifyAuth`，JWT 或 API Key）与用户层（`AuthRequired()`/`AdminRequired()` 查库）。
+- **三形态（token / cookie / apiKey）在用户面端点统一可用**，但**凭证引导类（`/apikey`、`/auth/me·password·sessions·logout`）
+  与管理面（`/admin/*`）只认会话**：长期密钥不该能铸造别的密钥、改密码或绕过「一次登出全部失效」。
+  两层共用同一个凭证解析器，别在第二处再写一遍解析顺序（P26）。
 - 用户自助密钥（`lp_` 前缀）匹配时**注入归属身份**，计费/配额/监控/套餐门控随该用户生效；静态 env 键保持匿名语义。
 - 会话由 JWT 的 `jti` 对应 `auth_sessions`，无 `jti` 的旧 token 一律 401；禁用/删除用户与改密都吊销会话。
 - 详情：[`docs/架构/鉴权模型与会话.md`](docs/架构/鉴权模型与会话.md)

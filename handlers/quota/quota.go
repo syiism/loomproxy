@@ -72,7 +72,7 @@ func nextResetTime() string {
 }
 
 func RegisterRoutes(r *gin.Engine) {
-	g := r.Group("/quota", auth.AuthRequired())
+	g := r.Group("/quota", auth.AuthOrKeyRequired())
 	{
 		g.GET("/dashboard", Dashboard)
 		g.GET("/usage-logs", MyUsageLogs)

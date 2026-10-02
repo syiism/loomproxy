@@ -233,6 +233,6 @@ func queryInt(c *gin.Context, key string, def int) int {
 // RegisterRoutes 挂载 /rank 路由（JWT 会话保护；放行范围由 rank_public_sources 按源决定）
 func RegisterRoutes(r *gin.Engine) {
 	g := r.Group("/rank")
-	g.Use(auth.AuthRequired())
+	g.Use(auth.AuthOrKeyRequired())
 	g.GET("/boards", GetBoards)
 }
