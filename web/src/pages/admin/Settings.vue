@@ -35,13 +35,14 @@
                 :rows="f.rows || 3"
                 :disabled="fieldDisabled(f)"
               ></textarea>
-              <div v-else-if="f.widget === 'sources'" class="flex flex-wrap gap-x-4 gap-y-2">
-                <label v-if="sourceChoices.length === 0" class="text-xs text-text-muted">暂无启用中的数据源</label>
-                <label v-for="o in sourceChoices" :key="o.code" class="flex items-center gap-1.5 text-sm cursor-pointer">
-                  <input type="checkbox" class="accent-accent" :value="o.code" :checked="sourceList(f.key).includes(o.code)" @change="toggleSource(f.key, o.code, $event.target.checked)">
-                  <span>{{ o.name }}</span>
-                  <span class="font-mono text-xs text-text-muted">{{ o.code }}</span>
-                </label>
+              <!-- 榜单可见性**只留一个编辑口**：数据源管理页的逐源开关。这里给只读摘要 + 跳转——
+                   同页再放一份「整份名单一次提交」的复选组就会与逐源增量互相覆盖（拿旧快照点保存
+                   会静默冲掉别处刚改的源），且候选只在打开那一刻取一次，新源不刷新就不出现（P17） -->
+              <div v-else-if="f.widget === 'sources_ro'" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span class="text-sm">
+                  已放行 <span class="font-mono">{{ sourceList(f.key).length }}</span> 个源<span v-if="sourceList(f.key).length" class="text-text-muted">：{{ sourceNames(sourceList(f.key)) }}</span>
+                </span>
+                <button type="button" class="btn-ghost btn-sm" @click="$router.push('/admin/datasources')">到「数据源管理」逐源开关</button>
               </div>
               <template v-else-if="f.widget === 'json'">
                 <textarea
@@ -184,7 +185,7 @@ const GROUPS = [
       { key: 'site_name', label: '站点名称', widget: 'text' },
       { key: 'maintenance_mode', label: '维护模式', widget: 'switch' },
       { key: 'announcement', label: '站内公告', widget: 'textarea', rows: 4 },
-      { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources' },
+      { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources_ro' },
     ],
   },
   {
@@ -258,13 +259,16 @@ const customEntries = computed(() => list.value.filter(s => !MANAGED_KEYS.has(s.
 // gate: 'providerHttp' 表示仅 http 通道可编辑（mock 下置灰）
 const fieldDisabled = (f) => f.gate === 'providerHttp' && form.value.verify_provider === 'mock'
 
-// sources widget：复选框组 <-> 逗号分隔字符串（库里存的就是 proxy_enabled_sources 那种形态）
+// sources_ro widget：库里存的是逗号分隔名单，这里只读展示（编辑在数据源管理页，见 P17）
 const sourceChoices = ref([])
 const sourceList = (key) => String(form.value[key] ?? '').split(',').map(x => x.trim()).filter(Boolean)
-const toggleSource = (key, code, on) => {
-  const cur = sourceList(key)
-  const next = on ? [...new Set([...cur, code])] : cur.filter(c => c !== code)
-  form.value[key] = next.join(',')
+// 源码翻展示名；认不出的（停用/已删的源）原样带出源码而不是藏掉
+const sourceNames = (codes, max = 8) => {
+  const names = codes.map(c => {
+    const hit = sourceChoices.value.find(o => o.code === c)
+    return hit && hit.name && hit.name !== c ? hit.name : c
+  })
+  return names.length > max ? names.slice(0, max).join('、') + ` 等 ${names.length} 个` : names.join('、')
 }
 
 const loadSourceChoices = async () => {
