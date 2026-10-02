@@ -174,7 +174,9 @@ func (p *Pool) Start() {
 	if p.spread() {
 		// 摊薄型没有「转正首个活跃号 + 补冷备」这回事：可用号本来就是全部号，
 		// 走一次燃烧型路径等于在启动时对上游 Claim/探活（方案 §3.4 明令禁止）
-		p.acquireSpreadLocked()
+		if _, err := p.acquireSpreadLocked(); err != nil {
+			p.logf("启动后可用号为空: %v", err)
+		}
 	} else {
 		if _, err := p.promoteLocked(); err != nil {
 			p.logf("转正首个活跃号失败: %v", err)
@@ -304,11 +306,8 @@ func (p *Pool) Acquire() (*Device, error) {
 	defer p.mu.Unlock()
 
 	if p.spread() {
-		// 摊薄型：在全部可用号上轮询。返回 nil 表示「一个号都没有」，由调用方按降级处理
-		if dev := p.acquireSpreadLocked(); dev != nil {
-			return dev, nil
-		}
-		return nil, fmt.Errorf("号池 %s 无可用号（未建号或全部在冷却）", p.Name())
+		// 摊薄型：在全部可用号上轮询。一个号都没有时由 acquireSpreadLocked 给出带原因的错误
+		return p.acquireSpreadLocked()
 	}
 
 	if len(p.hot) > 0 {
@@ -407,11 +406,8 @@ func (p *Pool) Maintain() {
 		// 只做三件事：放行到期冷却、把可用号补到目标数、清死号。
 		// 续领与错误驱动扩容是燃烧型概念，对摊薄型无意义（所有可用号本来就都在轮询）
 		p.mu.Lock()
-		p.reapCooldownLocked()
-		for len(p.hot) < p.spreadTarget() {
-			if !p.promoteOneToHotLocked() {
-				break
-			}
+		if _, err := p.acquireSpreadLocked(); err != nil {
+			p.logf("maintain: %v", err) // 全冷却不是异常状态，但必须看得见（别静默降级）
 		}
 		p.mu.Unlock()
 		p.purgeDead()
@@ -663,41 +659,53 @@ func (w *errWindow) reset() (rate float64, n int) {
 
 // —— 用量摊薄型（KindSpread）专用路径：见待办清单 P5 与 docs/数据源/号池方案-fq_hg会话池融入.md
 
-// acquireSpreadLocked 在**全部可用号**上轮询取一个（调用方持锁）。
-// 先把到期的冷却号放回可用、再补到目标数量（冷号转正不 Claim，缺号才建号）；
-// 一个可用号都没有时返回 nil，由调用方决定降级方式（例：听书直链退回报错）。
-func (p *Pool) acquireSpreadLocked() *Device {
+// acquireSpreadLocked 在**全部可用号**上轮询取一个（调用方持锁）：
+// 先把到期的冷却号放回可用、再补到目标数量（冷号转正不 Claim，缺号才建号）。
+// 一个可用号都没有时报错，并把「为什么没有」一起带出——补号被总号数上限拦住，
+// 与「这个池根本没建过号 / 全在冷却」是几种排查方向，混成一句话就等于没报。
+func (p *Pool) acquireSpreadLocked() (*Device, error) {
 	p.reapCooldownLocked()
-	for len(p.hot) < p.spreadTarget() {
-		if !p.promoteOneToHotLocked() {
-			break
-		}
-	}
+	cerr := p.fillSpreadLocked()
 	if len(p.hot) == 0 {
-		return nil
+		// 三种「没有可用号」要分得开：没建过号、全在冷却、想补号却被上限拦住。
+		// 后两种常同时发生（冷却到只剩零台又补不动），那就两条都报——只报上限会把人带偏。
+		switch {
+		case cerr != nil && len(p.cooldown) > 0:
+			return nil, fmt.Errorf("号池 %s 无可用号：%d 个号全部在冷却，补号又被总号数上限拦住: %w",
+				p.Name(), len(p.cooldown), cerr)
+		case cerr != nil:
+			return nil, fmt.Errorf("号池 %s 无可用号: %w", p.Name(), cerr)
+		case len(p.cooldown) > 0:
+			return nil, fmt.Errorf("号池 %s 无可用号：%d 个号全部在冷却", p.Name(), len(p.cooldown))
+		default:
+			return nil, fmt.Errorf("号池 %s 无可用号（还没建过号）", p.Name())
+		}
 	}
 	p.hotRR = (p.hotRR + 1) % len(p.hot)
-	return deviceOf(p.hot[p.hotRR])
+	return deviceOf(p.hot[p.hotRR]), nil
 }
 
-// promoteOneToHotLocked 把一个冷号放进可用集合（调用方持锁）。
-// 与燃烧型的 promoteLocked 关键差别：**不 Refresh、不 Claim**——摊薄型的号没有
-// 「领取」这一步，打上游探活本身就是风控成本。冷号不足时先建一个（受 MaxDevices 上限约束）。
-func (p *Pool) promoteOneToHotLocked() bool {
-	if len(p.cold) == 0 {
-		if _, err := p.createColdLocked(); err != nil {
-			return false
+// fillSpreadLocked 把可用号补到 spreadTarget（调用方持锁），返回建号失败的原因（可为 nil）。
+// 与燃烧型的 promoteLocked 关键差别：**不 Refresh、不 Claim**——摊薄型的号没有「领取」这一步，
+// 打上游探活本身就是风控成本。
+func (p *Pool) fillSpreadLocked() error {
+	for len(p.hot) < p.spreadTarget() {
+		if len(p.cold) == 0 {
+			if _, err := p.createColdLocked(); err != nil {
+				p.logf("spread: 补号失败: %v", err)
+				return err
+			}
 		}
+		if len(p.cold) == 0 {
+			return nil
+		}
+		row := p.cold[0]
+		p.removeLocked(&p.cold, row)
+		p.setStatus(row, StatusHot)
+		p.hot = append(p.hot, row)
+		p.logf("spread: device %s 进入可用轮询（不 Claim）", row.Ident)
 	}
-	if len(p.cold) == 0 {
-		return false
-	}
-	row := p.cold[0]
-	p.removeLocked(&p.cold, row)
-	p.setStatus(row, StatusHot)
-	p.hot = append(p.hot, row)
-	p.logf("spread: device %s 进入可用轮询（不 Claim）", row.Ident)
-	return true
+	return nil
 }
 
 // reapCooldownLocked 把冷却到期的号放回可用轮询（调用方持锁）

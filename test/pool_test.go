@@ -760,6 +760,63 @@ func TestPoolSpreadFillRespectsMaxDevices(t *testing.T) {
 	}
 }
 
+// TestPoolSpreadNoDeviceErrorCarriesCause 「一个可用号都没有」必须报得清原因：
+// 没建过号 / 全在冷却 / 想补号却被总号数上限拦住，是三份不同的排查方向
+func TestPoolSpreadNoDeviceErrorCarriesCause(t *testing.T) {
+	newTestServer(t)
+
+	// 1) 池里只有一个 dead 号：补号被上限拦住，错误必须能 errors.Is 判定
+	fp := newFakeProvider()
+	fp.poolName = "spread_err_cap"
+	cfg := spreadConfig()
+	cfg.TargetDevices, cfg.MaxDevices = 1, 1
+	p := newFakePool(t, pool.New(fp, cfg))
+	if err := db.DB.Create(&models.PoolDevice{Pool: fp.Name(), Ident: "唯一那个死号", Status: pool.StatusDead}).Error; err != nil {
+		t.Fatalf("预置 dead 号失败: %v", err)
+	}
+	if _, err := p.Acquire(); !errors.Is(err, pool.ErrCapacityReached) {
+		t.Fatalf("补号被上限拦住时应带出 ErrCapacityReached，实得 %v", err)
+	}
+
+	// 2) 唯一的号在冷却、又补不动：两件事都得报（只报上限会让人以为池里还有号可用）
+	fp2 := newFakeProvider()
+	fp2.poolName = "spread_err_cool"
+	cfg2 := spreadConfig()
+	cfg2.TargetDevices, cfg2.MaxDevices = 1, 1
+	p2 := newFakePool(t, pool.New(fp2, cfg2))
+	dev, err := p2.Acquire()
+	if err != nil {
+		t.Fatalf("首次 Acquire 失败: %v", err)
+	}
+	p2.Cooldown(dev.Ident, time.Now().Add(time.Hour), "上游判定风控")
+	_, err = p2.Acquire()
+	if err == nil {
+		t.Fatal("全部在冷却且补不动号时不该返回号")
+	}
+	if !strings.Contains(err.Error(), "冷却") {
+		t.Errorf("错误里没说明「全部在冷却」这一半原因: %v", err)
+	}
+	if !errors.Is(err, pool.ErrCapacityReached) {
+		t.Errorf("同时被上限拦住时该可 errors.Is 判定: %v", err)
+	}
+
+	// 3) 不设上限时，冷却到零台不该报错——池自己补一台进轮询（这是设计选择，钉住它）
+	fp3 := newFakeProvider()
+	fp3.poolName = "spread_err_uncapped"
+	cfg3 := spreadConfig()
+	cfg3.TargetDevices, cfg3.MaxDevices = 1, 0
+	p3 := newFakePool(t, pool.New(fp3, cfg3))
+	dev3, err := p3.Acquire()
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	p3.Cooldown(dev3.Ident, time.Now().Add(time.Hour), "上游判定风控")
+	got, err := p3.Acquire()
+	if err != nil || got == nil || got.Ident == dev3.Ident {
+		t.Fatalf("未设上限时全冷却应自行补号，实得 %+v err=%v", got, err)
+	}
+}
+
 // TestPoolSpreadPayloadAndSnapshot 嵌套凭证走 Payload（Attrs 是扁平表，塞嵌套会被静默丢弃），
 // 快照只出第一层键名与冷却原因，值一律不出接口
 func TestPoolSpreadPayloadAndSnapshot(t *testing.T) {
