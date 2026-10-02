@@ -61,7 +61,7 @@
         <!-- API 密钥 -->
         <section class="reveal">
           <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">API 密钥</h2>
-          <div class="text-sm text-text-muted mb-4">用于书源或脚本以程序化方式调用数据源接口：请求头带 <code class="font-mono">X-API-Key</code> 或参数 <code class="font-mono">?api_key=</code>。调用按你的账号计费与限流。密钥可随时在列表中查看，泄露请立即撤销。</div>
+          <div v-if="keys.length" class="text-sm text-text-muted mb-4">用于书源或脚本以程序化方式调用数据源接口：请求头带 <code class="font-mono">X-API-Key</code> 或参数 <code class="font-mono">?api_key=</code>。调用按你的账号计费与限流。密钥可随时在列表中查看，泄露请立即撤销。</div>
           <div class="flex justify-end mb-4">
             <button class="btn-primary btn-sm" :disabled="keys.length >= 10" @click="createKeyOpen = true">{{ keys.length >= 10 ? '已达上限（10）' : '创建密钥' }}</button>
           </div>

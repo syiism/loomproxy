@@ -45,7 +45,7 @@
       </section>
     </div>
 
-    <p v-if="!loading && !error && !denied && boards.length" class="mt-5 text-xs leading-relaxed text-text-muted">
+    <p v-if="!loading && !error && !denied && hasRows" class="mt-5 text-xs leading-relaxed text-text-muted">
       口径：两张榜的数字**不同义**——阅读榜是「访问人数」（同数据源内按用户去重，匿名按 IP，
       跨源相加不再去重），搜索热词榜是「搜索次数」。阅读榜只统计正文（content）接口，
       一次「打开书目」会连着产生详情与多页目录，全计入等于把同一本书凭空乘上几倍；
@@ -63,7 +63,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import UiSpinner from '../components/UiSpinner.vue'
 import UiEmpty from '../components/UiEmpty.vue'
@@ -83,6 +83,9 @@ const sources = ref([])
 const media = ref('')
 const medias = ref([])
 const boards = ref([])
+// 底部那段口径说明只在该说的时候说：各榜全空（新窗口、刚重启、筛到没数据的源）时页面只剩空态组件，
+// 三百字的使用手册挂在一片空白下面就是噪声。判据必须是「有没有数据行」，不是「后端有没有回榜单定义」。
+const hasRows = computed(() => boards.value.some(b => (b.rows || []).length))
 
 const load = async () => {
   loading.value = true

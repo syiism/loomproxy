@@ -8,7 +8,7 @@
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">数据源列表</h2>
         <button class="btn-primary btn-sm" @click="showCreateDsModal = true">新增数据源</button>
       </div>
-      <p class="text-xs text-text-muted mb-5">「榜单可见」控制该源是否出现在普通用户的公开排行榜，存的仍是设置项 <span class="font-mono">rank_public_sources</span> 的名单——**这一页是唯一的编辑口**，系统设置页只显示这份名单的摘要。</p>
+      <p v-if="dataSources.length" class="text-xs text-text-muted mb-5">「榜单可见」控制该源是否出现在普通用户的公开排行榜，存的仍是设置项 <span class="font-mono">rank_public_sources</span> 的名单——**这一页是唯一的编辑口**，系统设置页只显示这份名单的摘要。</p>
       <UiSpinner v-if="dsLoading" />
       <UiEmpty v-else-if="dsError" title="加载失败" :text="dsError" />
       <div v-else class="space-y-3">

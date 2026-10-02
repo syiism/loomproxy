@@ -84,7 +84,7 @@
       <div v-else-if="coverageError" class="mb-3 text-xs text-pale-red-fg">
         内容维度覆盖率统计失败（不影响下面的榜单，刷新或缩短窗口再试）。
       </div>
-      <div class="mb-2 text-xs text-text-muted">
+      <div v-if="subjectItems.length" class="mb-2 text-xs text-text-muted">
         两列口径不同：<b>访问人数</b>是同数据源内按用户去重（匿名退到 IP，跨源相加不重复去重），
         <b>请求数</b>是接口调用条数。书名榜按<b>访问人数</b>排序（一条正文明细就是一章，按次数排等于把「谁在读」排成「被翻了多少章」），
         其余维度仍按请求数排序；成功率与平均耗时一律按请求数算。
@@ -205,7 +205,7 @@
       源码「{{ historyFilter.source }}」不在数据源清单里：多半已下线或停用——
       历史是否可查取决于运维有没有清理明细（筛不到不等于当时没发生过）。
     </div>
-    <div class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留期由环境变量 MONITOR_RETENTION_DAYS 决定，默认永久）。搜索词与书名属用户阅读内容，仅管理员可见。</div>
+    <div v-if="history.length" class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留期由环境变量 MONITOR_RETENTION_DAYS 决定，默认永久）。搜索词与书名属用户阅读内容，仅管理员可见。</div>
     <div class="table-wrap reveal overflow-x-auto">
       <table class="table-base">
         <thead>
