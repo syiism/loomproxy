@@ -19,7 +19,7 @@
 
 ## 3. 构建、运行与部署
 
-- 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
+- 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` + 手写 SQL 的保留字/反引号扫描 → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
 - 配置优先级：进程环境变量 > 工作目录 `.env` > 可执行文件目录 `.env`。
 - 手工换装（不走 `scripts/deploy.sh`）有三查：**备份先验非空**、**scp 后核远端 md5 一致才 install**、**重启后按启动契约核对日志关键行**而非只看 `is-active`（`Restart=always` 会把崩溃循环伪装成运行中）。
@@ -90,7 +90,7 @@
 ## 10. 开发约定
 
 - 响应统一 `{code,msg,data}`；对下游错误文案必须脱敏（收口在 `handleError` + `sanitizeUpstreamMsg`）。
-- 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露），条件里的列名一律用 GORM map 形式让它按方言加引号——**不要在 SQL 里写死反引号**（反引号是 MySQL/SQLite 方言，PostgreSQL 只认双引号，而读设置失败被吞成空串，症状是「设置全没生效」）。
+- 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露；**已由 `make vet` 扫**，见 `scripts/check-sql-reserved.sh`），条件里的列名一律用 GORM map 形式让它按方言加引号——**不要在 SQL 里写死反引号**（反引号是 MySQL/SQLite 方言，PostgreSQL 只认双引号，而读设置失败被吞成空串，症状是「设置全没生效」）。
 - 设置项的 `type` 是行为声明不是展示标签（`string`/`bool`/`number`/`json`），`json` 型前后端双侧校验。
 - **下发位置是部署事实，不做设置项**：书源 JSON 走静态托管 `GET /data/shuyuan/bookSource.json`（免鉴权、原样直出），
   `GET /user/import-config` 只回路径与 `ready`（判据是 `json.Valid`）；绝对地址由前端 `window.location.origin` 拼，
