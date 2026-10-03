@@ -22,7 +22,8 @@
 - 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` + 手写 SQL 的保留字/反引号扫描 + 前端未定义类扫描 → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
 - 配置优先级：进程环境变量 > 工作目录 `.env` > 可执行文件目录 `.env`。
-- 手工换装（不走 `scripts/deploy.sh`）有三查：**备份先验非空**、**scp 后核远端 md5 一致才 install**、**重启后按启动契约核对日志关键行**而非只看 `is-active`（`Restart=always` 会把崩溃循环伪装成运行中）。
+- 手工换装（不走 `scripts/deploy.sh`）有三查：**备份先验非空**、**核 md5 与 install 在同一条远端命令里、装完复算目标文件**（后台传输没收到完成通知就不算传完——只核一次源文件挡不住装上截断的半截文件）、**重启后按启动契约核对日志关键行**而非只看 `is-active`（`Restart=always` 会把崩溃循环伪装成运行中）。
+  下发类产物（书源 JSON、静态托管文件）从磁盘读、不随二进制走，要单独一步装到生产目录并复算；**先装产物、后改 `.env`**。
 - 详情：[`docs/运维/构建与部署.md`](docs/运维/构建与部署.md)
 
 ## 4. 目录结构与模块边界
@@ -52,6 +53,11 @@
   判在框架的建号入口，报 `ErrCapacityReached`）——建号会对上游产生不可逆增长的源用它，别在源内自己数行。
   **死号保留上限是算出来的**：`min(MaxDead, MaxDevices - 可用目标)`——`MaxDevices < MaxDead` 时旧代码里死号
   既清不掉又占满名额（生产 uxx 是 5<10），现在先留得下可用号再谈留档，建号被判住前还会先清一次腾名额（待办清单 P35）。
+  **水位也被名额压**（同一条规则的另一半）：`MaxDevices>0` 时 `ColdSpares`（spread 是 `TargetDevices`）在
+  `withDefaults` 里夹到名额之内、**下限 1**（建号只走补齐这条路，夹到 0 池就一个号都建不出来），
+  而 `MaxDevices` 本身不动——它是闸门，按水位收紧会把错误驱动扩容的余量一起削掉。
+  单设备池（`MaxDevices=1`）因此长期补不齐冷备，这是预期：`ErrCapacityReached` **只在状态变化时出声**，
+  不再每轮巡检刷一条（生产 qm_device 曾每 60 秒一条，把「这个池有问题」的读数泡坏）。
 - **`Config.Kind` 是调度分叉位，不只是标签**：`burn_wall_clock`（默认）= 墙钟燃烧型，只保持 1 个活跃号
   + N 个冷备，临期续领、用尽换号、错误驱动扩容；`spread` = 用量摊薄型，框架**只调 `Create`**（不 Claim
   不探活），把请求轮询到全部可用号上，失效走 `Pool.Cooldown` 的临时冷却而不是判死（P5）。
