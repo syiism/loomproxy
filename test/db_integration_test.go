@@ -206,3 +206,36 @@ func TestSeedGrantsNewSourceButNotRevivedOne(t *testing.T) {
 		t.Errorf("二次 Seed 后新增源授权 = %d, want 仍为 3", got)
 	}
 }
+
+// TestDBInitClosesPreviousHandle 重复初始化必须关掉上一个句柄（问题来自 fork 侧的 Windows 报告）。
+//
+// 这条断言在 Linux 上也有效：**不去跨平台测「文件能不能删」，而是直接问「旧句柄还活着吗」**——
+// 关闭后的 *sql.DB 一切操作都返回 "sql: database is closed"。
+// 这样同一个用例在两个平台上验的是同一件事，不会在 Linux 上假绿（Linux 删得掉打开中的文件）。
+func TestDBInitClosesPreviousHandle(t *testing.T) {
+	newTestServer(t) // 第一次 Init（每个用例都会装配一遍）
+
+	first := db.DB
+	if first == nil {
+		t.Fatal("前置条件不成立：第一次 Init 后 db.DB 为空")
+	}
+	old, err := first.DB()
+	if err != nil {
+		t.Fatalf("取底层 sql.DB 失败: %v", err)
+	}
+
+	if err := db.Init(); err != nil { // 第二次 Init：同 `CreateApp` 被重复调用的路径
+		t.Fatalf("二次 Init 失败: %v", err)
+	}
+	if pingErr := old.Ping(); pingErr == nil {
+		t.Fatal("上一个数据库句柄没被关闭——Windows 上这会让 t.TempDir() 清理失败（文件仍被占用）")
+	}
+	if db.DB == nil {
+		t.Fatal("二次 Init 后 db.DB 为空")
+	}
+	var n int64
+	if err := db.DB.Table("quota_plans").Count(&n).Error; err != nil {
+		t.Fatalf("新句柄不可用: %v", err)
+	}
+	// 清理路径不变：newTestServer 的 t.Cleanup 关的是当前这个句柄，这里不重复关
+}

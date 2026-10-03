@@ -20,6 +20,13 @@ import (
 var DB *gorm.DB
 
 func Init() error {
+	if DB != nil {
+		if sqlDB, err := DB.DB(); err == nil && sqlDB != nil {
+			_ = sqlDB.Close()
+		}
+		DB = nil
+	}
+
 	var dialector gorm.Dialector
 
 	dbType := conf.Config.DBType
