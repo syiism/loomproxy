@@ -38,7 +38,7 @@
 - **必填参数用 `RequiredParams` 声明，不要在源里自己判**：`map[动作][]参数名`，由 `middleware/source` 的 `reqparams`（链上 350，晚于 monitor/baseurl、早于 access/billing）在进 handler 之前统一校验，缺任何一个直接 400。源里自己判的旧写法是返回 `ContentType=="error"` 的正文——HTTP 仍是 200，下游会把「缺少参数」那句话**当正文渲染进阅读器**，监控看到的是「成功 + 内容维度全空」（待办清单 P22、分支侧 S15）。`baseUrl` 由 baseurl 中间件解析后放 context，所以这条校验必须排在它之后；未声明的动作一律直通（`search` 的空搜是合法形态，别乱填）。
 - 需要新行为优先**补声明位**而不是改骨架；声明值非法在 `RegisterSource` 期 `log.Fatalf`（`RequiredParams` 声明了未声明的动作就是炸，不是静默不校验）。
 - 路由全是根级 `/{source}/{action}`；链由中间件包的 `Def{Scope,Order,Applies,Build}` 装配，禁止在 `app.go` 手工拼链。
-- **数据源分组**（`source_groups` + `data_sources.group_id`）只是归类与筛选视图：限额/计费/限速/套餐关联的键
+- **数据源分组**（`source_groups` + `data_sources.group_id`）只是归类与筛选视图：限额/计费/限速/授权的键
   **一律仍是数据源码**，`POST /admin/source-groups/:id/apply-limits` 也只是批量写入口（落库每源一行）。
   一源至多一组，删组只把成员回落 NULL 不删源，组改动一律失效 `/datasources` 缓存。
 - 集成测试只用 `testkit/fakesource` 的三个假源，不引入真实上游。
@@ -81,6 +81,9 @@
 - 计费/访问控制/限流三轴在 `gate/`，顺序 access(400) → billing(500) → ratelimit(600)，`monitor(200)` 置于其前以覆盖 403/429。
 - **扣减按内容去重**：同接口同内容在 `BILLING_DEDUPE_SEC`（默认 300 秒，0=关）窗口内只扣一次——
   「按请求计费」遇到客户端超时重试就是重复扣费（P25）。标识取不到时照扣，不去重。
+- **授权与限额是同一行**（待办清单 P34）：`quota_limits(scope=source, target=数据源码)` 存在即该套餐可用该源，
+  `-1` = 不限额，**删行 = 回收**；判定口只有 `gate/grant.go`，旧关联表 `quota_plan_data_sources` 已停读停写（等一次带备份的 DDL 发布去 DROP）。
+  播种只在套餐新建那一次铺默认档，新源由 `attachSourceToBuiltinPlans` 补授权——按行无限回填会复活管理员删掉的授权。
 - 限额优先级：用户数据源级覆盖（**追加语义**）> 套餐限额 > 不限；限流为套餐级 > 全局，窗口计数与固定间隔双口径并存。
 - 监控明细 `api_call_logs` 带内容维度（搜索词/书名/章节/媒介/结果数）与标识列，名称靠命名缓存反查、可事后幂等回填（**默认由 `MONITOR_BACKFILL_SEC`=900 秒的循环自己补**，手动入口留着；单批 5000 行、按 id **倒序**捞——补不到的必须是没人再看的旧行，别让陈旧行霸占整个扫描窗口）；维度榜的书名条目额外带 `book_id`（最近一条非空书目标识，**面板不展示**，给拿榜单去检索的人——书名会重名而详情只认标识；公开榜的阅读榜也给同一个值）；书名榜与章节榜只统计 `action='content'`。**两张榜的数字不同义**：书名榜是「同数据源内的访问人数」（匿名退 IP，跨源相加不再去重），章节榜与搜索榜仍是次数；成功率与平均耗时一律按请求数算（P18）。同一接口还下发 `coverage`（按 源×接口 的内容维度覆盖率）：判据一律 `COALESCE(col,'') <> ''` 只数**有**的行、缺失由总数相减（后加的列旧行是 NULL，两套判据必然漏算），`expect_book` 标明该动作是否理应带书名（search/explore 留空合法、面板不标红），少于 5 行的组合不出——「采集在漏」该由系统自己说，不是靠人肉写 SQL 猜。**失败读数含「带内失败」**
 （P22①：源在参数缺失/上游失败时返回 `ContentType=="error"` 的正文、HTTP 仍 200，`ObserveCall` 识别后在
