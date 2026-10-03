@@ -6,13 +6,10 @@
       </template>
     </PageHeader>
 
-    <!-- 站点级账号读数就放在账号管理这一页（以前它在「管理后台」那页显示一遍，
-         而这里又有一份筛选总数——两份会漂移，所以按 P28·D1 收成一处）。
-         只读端点失败不影响本页主体，静默留空即可。 -->
-    <div v-if="stats.total_users" class="reveal font-mono text-xs text-text-muted mb-4">
-      站点共 {{ stats.total_users }} 个账号 · 管理员 {{ stats.admin_count }} · VIP {{ stats.vip_count }}
-      · 普通 {{ stats.normal_count }} · 今日新增 {{ stats.today_new }}
-      <span class="text-text-muted/70">（当前列表命中 {{ total }} 条，含筛选与「显示已删除」）</span>
+    <!-- 站点级计数在「管理后台」那四张看板；这一页只报筛选结果有多宽。
+         同一份数字在两页各写一遍就会各自漂移（P28·D1 的分工：总览=站点级、列表=筛选级）。 -->
+    <div class="reveal font-mono text-xs text-text-muted mb-4">
+      当前列表命中 {{ total }} 条（含筛选与「显示已删除」）
     </div>
 
     <div class="reveal flex flex-col sm:flex-row gap-3 mb-6">
@@ -215,7 +212,8 @@
       <div v-if="quotaUser" class="overflow-x-auto">
         <div class="text-sm text-text-muted mb-4">
           套餐：{{ quotaUser.plan_name || '免费版' }}（{{ quotaUser.plan_code || '—' }}）
-          <span class="ml-2 text-xs">覆盖值在计划额度上增减（可为负），留空或 0 表示不调整</span>
+          <span class="ml-2 text-xs">覆盖值在计划额度上增减（可为负），留空或 0 表示不调整；
+            标「无权限」的行是该套餐没授权的源（授权=限额行，P34），改它不会让用户能用上这个源</span>
           <router-link to="/admin/quotas" class="ml-2 text-xs text-text-muted hover:text-text transition-colors">计划额度本身在「额度 · 套餐」页改 ↗</router-link>
         </div>
         <table class="table-base w-full">
@@ -223,10 +221,14 @@
             <tr><th>数据源</th><th>计划额度（剩余）</th><th>用户覆盖</th><th>生效额度</th><th>操作</th></tr>
           </thead>
           <tbody>
-            <tr v-for="(item, i) in quotaItems" :key="item.source_code">
-              <td class="text-xs whitespace-nowrap">{{ item.source_name }}</td>
+            <tr v-for="(item, i) in quotaItems" :key="item.source_code" :class="item.granted ? '' : 'opacity-60'">
+              <td class="text-xs whitespace-nowrap">
+                {{ item.source_name }}
+                <UiTag v-if="!item.granted" tone="gray" label="无权限" />
+              </td>
               <td class="font-mono text-xs">
-                <template v-if="item.plan_limit != null && item.plan_limit >= 0">
+                <span v-if="!item.granted" class="text-text-muted">—</span>
+                <template v-else-if="item.plan_limit != null && item.plan_limit >= 0">
                   <span class="font-medium">{{ fmtQuota(Math.max(item.plan_limit - (item.used || 0), 0)) }}</span>
                   <span class="text-text-muted"> / {{ fmtQuota(item.plan_limit) }}</span>
                 </template>
@@ -240,9 +242,13 @@
                   <span v-else class="font-mono text-xs">{{ item.user_limit != null ? fmtQuota(item.user_limit) : '0' }}</span>
                 </div>
               </td>
-              <td class="font-mono text-xs font-medium">{{ fmtQuota(item.effective) }}</td>
+              <td class="font-mono text-xs font-medium">{{ item.granted ? fmtQuota(item.effective) : '—' }}</td>
               <td>
-                <template v-if="editingQuota === item.source_code">
+                <template v-if="!item.granted">
+                  <button v-if="item.user_limit != null" class="text-xs text-pale-red-fg hover:opacity-70" @click="clearQuota(item)">清除覆盖</button>
+                  <span v-else class="text-text-muted text-xs">套餐未授权该源，覆盖不参与生效</span>
+                </template>
+                <template v-else-if="editingQuota === item.source_code">
                   <button class="text-xs text-pale-green-fg hover:opacity-70 mr-2" @click="saveQuota(item)">保存</button>
                   <button class="text-xs text-text-muted hover:text-text" @click="editingQuota = null">取消</button>
                 </template>
@@ -284,7 +290,6 @@ const page = ref(1)
 const pageSize = ref(20)
 const keyword = ref('')
 const withDeleted = ref(false)
-const stats = ref({})
 const submitting = ref(false)
 const allRoles = ref([])
 const allPlans = ref([])
@@ -521,6 +526,4 @@ const clearQuota = async (item) => {
 
 onMounted(() => { revealObserve() })
 load()
-// 账号读数与列表分开取：它是全站口径，不该跟着筛选条件变
-adminApi.stats().then((d) => { stats.value = d || {} }).catch(() => {})
 </script>

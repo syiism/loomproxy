@@ -114,11 +114,8 @@ export const adminApi = {
   deleteSourceGroup: (id) => request('/admin/source-groups/' + id, { method: 'DELETE' }),
   updateSourceGroupMembers: (id, sourceNames) => request('/admin/source-groups/' + id + '/members', { method: 'PUT', body: { source_names: sourceNames } }),
   applySourceGroupLimits: (id, payload) => request('/admin/source-groups/' + id + '/apply-limits', { method: 'POST', body: payload }),
-  // 套餐-数据源关联
+  // 套餐的授权数据源（= quota_limits 里 scope=source 的行；增删走「限制项」的 limits 接口）
   listPlanDataSources: (planId) => request('/admin/quotas/plans/' + planId + '/data-sources'),
-  addPlanDataSource: (planId, dataSourceId) => request('/admin/quotas/plans/' + planId + '/data-sources', { method: 'POST', body: { data_source_id: dataSourceId } }),
-  batchAddPlanDataSources: (planId, dataSourceIds) => request('/admin/quotas/plans/' + planId + '/data-sources/batch', { method: 'POST', body: { data_source_ids: dataSourceIds } }),
-  removePlanDataSource: (planId, dataSourceId) => request('/admin/quotas/plans/' + planId + '/data-sources/' + dataSourceId, { method: 'DELETE' }),
 }
 
 export const quotaApi = {

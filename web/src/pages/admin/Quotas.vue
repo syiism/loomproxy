@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="额度套餐" subtitle="套餐、各维度调用限制与可访问数据源。限额 -1 表示不限。">
+    <PageHeader title="额度套餐" subtitle="套餐与各维度调用限制。数据源的授权就是其中一行限制：加一行即授权，删一行即回收。">
       <template #actions>
         <button class="btn-primary" @click="openCreatePlan">新建套餐</button>
       </template>
@@ -31,13 +31,12 @@
           </div>
           <div v-else class="text-center py-3 text-text-muted text-sm">无限制项</div>
           <div class="flex items-center justify-between text-sm text-text-muted mt-4 pt-3 border-t border-border">
-            <span>可用数据源</span>
-            <span class="font-mono text-xs">{{ p.ds_count ?? '—' }} 个</span>
+            <span>授权数据源</span>
+            <span class="font-mono text-xs">{{ sourceLimitCount(p) }} 个</span>
           </div>
         </div>
 
         <div class="flex gap-2 mt-5 pt-4 border-t border-border">
-          <button class="btn-ghost btn-sm flex-1" @click="openDsPerms(p)">数据源</button>
           <button class="btn-ghost btn-sm flex-1" @click="openLimits(p)">限制项</button>
           <button class="btn-ghost btn-sm flex-1" @click="openEditPlan(p)">编辑</button>
           <button class="btn-danger btn-sm flex-1" @click="deletePlanTarget = p">删除</button>
@@ -79,33 +78,19 @@
 
     <!-- 删除套餐确认 -->
     <UiModal :open="!!deletePlanTarget" :title="'删除套餐 #' + (deletePlanTarget && deletePlanTarget.id)" @close="deletePlanTarget = null" @confirm="confirmDeletePlan">
-      <p class="text-text-muted text-sm">删除套餐 <span class="font-medium text-text">{{ deletePlanTarget && deletePlanTarget.name }}</span> 将同时删除其全部限制项；仍被用户引用的套餐无法删除。确定继续？</p>
-    </UiModal>
-
-    <!-- 数据源权限管理 -->
-    <UiModal :open="dsOpen" :title="'数据源权限 — ' + (dsPlan && dsPlan.name)" wide @close="dsOpen = false" @confirm="saveDsPerms" :confirm-loading="dsSaving" confirm-text="保存">
-      <UiSpinner v-if="dsLoading" />
-      <div v-else class="space-y-3">
-        <p class="text-text-muted text-sm">勾选套餐 <span class="text-text">{{ dsPlan && dsPlan.name }}</span> 可访问的数据源：</p>
-        <div class="max-h-72 overflow-y-auto border border-border rounded-lg p-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-          <label v-for="ds in allDataSources" :key="ds.id" class="flex items-center gap-2 text-sm cursor-pointer rounded px-1 py-0.5 hover:bg-surface-alt transition-colors">
-            <input type="checkbox" :value="ds.id" v-model="dsSelected" class="checkbox">
-            <span class="font-mono">{{ ds.display_name }}</span>
-            <span class="text-text-muted text-xs font-mono">({{ ds.name }})</span>
-            <UiTag v-if="ds.status !== 1" tone="gray" label="已禁用" />
-          </label>
-          <div v-if="allDataSources.length === 0" class="text-text-muted text-sm text-center py-4 col-span-full">暂无数据源</div>
-        </div>
-        <div class="text-sm text-text-muted">已选 {{ dsSelected.length }} / {{ allDataSources.length }} 项</div>
-      </div>
+      <p class="text-text-muted text-sm">删除套餐 <span class="font-medium text-text">{{ deletePlanTarget && deletePlanTarget.name }}</span> 将同时删除其全部限制项（也就回收它授权过的全部数据源）；仍被用户引用的套餐无法删除。确定继续？</p>
     </UiModal>
 
     <!-- 限制项管理 -->
     <UiModal :open="!!limitsPlan" :title="'限制项 — ' + (limitsPlan && limitsPlan.name)" wide @close="limitsPlan = null" @confirm="limitsPlan = null">
-      <p class="text-xs text-text-muted mb-3">这里改的是<b>套餐轴</b>的限额；单个用户在其之上的增减（追加语义，优先级最高）在
-        <router-link to="/admin/users" class="text-text hover:underline">用户页的「额度」</router-link> 里改。两张表、一个生效链，别在两处找同一格。</p>
+      <p class="text-xs text-text-muted mb-3">这里改的是<b>套餐轴</b>：维度为 <span class="font-mono">source</span> 的一行同时是这个源的<b>授权</b>和<b>限额</b>——
+        加一行 = 该套餐可以用这个源，删一行 = 回收它（限额填 -1 就是「能用但不限」）。
+        单个用户在其之上的增减（追加语义，优先级最高）在
+        <router-link to="/admin/users" class="text-text hover:underline">用户页的「额度」</router-link> 里改。</p>
       <div v-if="limitsPlan">
-        <div v-if="limits.length === 0" class="text-center py-6 text-text-muted text-sm border border-dashed border-border rounded-lg mb-5">暂无限制项</div>
+        <div v-if="limits.length === 0" class="text-center py-6 text-text-muted text-sm border border-dashed border-border rounded-lg mb-5">
+          暂无限制项——该套餐当前没有授权任何数据源，其用户对任何源都是 403。
+        </div>
         <div v-else class="border border-border rounded-lg overflow-hidden mb-5">
           <table class="table-base">
             <thead>
@@ -135,7 +120,7 @@
                     </template>
                     <template v-else>
                       <button class="text-xs text-text-muted hover:text-text" @click="startEditLimit(l)">编辑</button>
-                      <button class="text-xs text-pale-red-fg hover:opacity-70" @click="removeLimit(l)">删除</button>
+                      <button class="text-xs text-pale-red-fg hover:opacity-70" @click="deleteLimitTarget = l">删除</button>
                     </template>
                   </div>
                 </td>
@@ -148,13 +133,21 @@
         <form @submit.prevent="addLimit" class="space-y-4">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <UiField label="维度" hint="global 全局 / source 数据源">
-              <select v-model="limitForm.scope" class="input">
+              <select v-model="limitForm.scope" class="input" @change="limitForm.target = ''">
                 <option value="global">global</option>
                 <option value="source">source</option>
               </select>
             </UiField>
-            <UiField label="目标" hint="如 api 或数据源码（如 novel_a）">
-              <input v-model="limitForm.target" class="input font-mono" placeholder="api / novel_a" required>
+            <UiField v-if="limitForm.scope === 'source'" label="目标" :hint="targetHint">
+              <select v-model="limitForm.target" class="input font-mono" required>
+                <option value="" disabled>选择数据源</option>
+                <option v-for="ds in grantableSources" :key="ds.id" :value="ds.name">
+                  {{ ds.name }}（{{ ds.display_name }}）
+                </option>
+              </select>
+            </UiField>
+            <UiField v-else label="目标" hint="全局限额的目标名，如 api">
+              <input v-model="limitForm.target" class="input font-mono" placeholder="api" maxlength="64" required>
             </UiField>
           </div>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 items-end">
@@ -173,11 +166,25 @@
         </form>
       </div>
     </UiModal>
+
+    <!-- 删除限制项确认 -->
+    <UiModal :open="!!deleteLimitTarget" :title="'删除限制项 #' + (deleteLimitTarget && deleteLimitTarget.id)" @close="deleteLimitTarget = null" @confirm="confirmDeleteLimit">
+      <p class="text-text-muted text-sm">
+        <template v-if="deleteLimitTarget && deleteLimitTarget.scope === 'source'">
+          这一行就是套餐 <span class="font-medium text-text">{{ limitsPlan && limitsPlan.name }}</span> 对
+          <span class="font-mono text-text">{{ deleteLimitTarget && deleteLimitTarget.target }}</span> 的<b>授权</b>——
+          删除等于<b>回收该数据源</b>，其用户会立刻拿到 403。只想改成不限额请把限额填 <span class="font-mono text-text">-1</span>，别删行。确定继续？
+        </template>
+        <template v-else>
+          删除 <span class="font-mono text-text">{{ deleteLimitTarget && deleteLimitTarget.scope }} / {{ deleteLimitTarget && deleteLimitTarget.target }}</span> 这条限额？确定继续？
+        </template>
+      </p>
+    </UiModal>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import PageHeader from '../../components/PageHeader.vue'
 import UiModal from '../../components/UiModal.vue'
 import UiTag from '../../components/UiTag.vue'
@@ -201,14 +208,20 @@ const limits = ref([])
 const limitForm = ref({ scope: 'source', target: '', limit: 100, period: 'day' })
 const editingLimit = ref(null)
 const limitEditForm = ref({ limit: 0, period: 'day' })
-// 数据源权限
+const deleteLimitTarget = ref(null)
 const allDataSources = ref([])
-const dsOpen = ref(false)
-const dsPlan = ref(null)
-const dsSelected = ref([])
-const dsCurrentIds = ref([])
-const dsLoading = ref(false)
-const dsSaving = ref(false)
+
+// 授权=限额行，所以「还能授权谁」= 全部源减去本套餐已有 source 行的那些名字
+const grantableSources = computed(() => {
+  const taken = new Set(limits.value.filter(l => l.scope === 'source').map(l => l.target))
+  return allDataSources.value.filter(ds => !taken.has(ds.name))
+})
+const targetHint = computed(() =>
+  grantableSources.value.length
+    ? `未授权的 ${grantableSources.value.length} 个源；已授权的请在上表「编辑」改限额`
+    : '全部数据源都已授权，去上表改限额即可')
+
+const sourceLimitCount = (p) => (p.limits || []).filter(l => l.scope === 'source').length
 
 const load = async () => {
   loading.value = true
@@ -218,7 +231,6 @@ const load = async () => {
     plans.value = await Promise.all(plansData.map(async p => ({
       ...p,
       limits: await adminApi.listLimits(p.id).catch(() => []),
-      ds_count: await adminApi.listPlanDataSources(p.id).then(r => (r.data_sources || []).length).catch(() => null),
     })))
   } catch (e) {
     error.value = e.message
@@ -285,42 +297,15 @@ const confirmDeletePlan = async () => {
   } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
 }
 
-const openDsPerms = async (p) => {
-  dsPlan.value = p
-  dsOpen.value = true
-  dsLoading.value = true
-  try {
-    if (!allDataSources.value.length) allDataSources.value = (await adminApi.listDataSources()) || []
-    const res = await adminApi.listPlanDataSources(p.id)
-    dsCurrentIds.value = (res.data_sources || []).map(d => d.id)
-    dsSelected.value = [...dsCurrentIds.value]
-  } catch (e) { toast(e.message, 'error') }
-  dsLoading.value = false
-}
-
-const saveDsPerms = async () => {
-  if (dsSaving.value || !dsPlan.value) return
-  dsSaving.value = true
-  try {
-    const planId = dsPlan.value.id
-    const toAdd = dsSelected.value.filter(id => !dsCurrentIds.value.includes(id))
-    const toRemove = dsCurrentIds.value.filter(id => !dsSelected.value.includes(id))
-    await Promise.all([
-      toAdd.length ? adminApi.batchAddPlanDataSources(planId, toAdd) : null,
-      ...toRemove.map(id => adminApi.removePlanDataSource(planId, id)),
-    ].filter(Boolean))
-    toast('数据源权限已保存', 'success')
-    dsOpen.value = false
-    dsPlan.value = null
-    load()
-  } catch (e) { toast(e.message, 'error') } finally { dsSaving.value = false }
-}
-
 const openLimits = async (p) => {
   limitsPlan.value = p
-  limitForm.value = { scope: 'source', target: '', limit: 100, period: 'day' }
+  limitForm.value = { scope: 'source', target: '', limit: -1, period: 'day' }
   editingLimit.value = null
+  deleteLimitTarget.value = null
   await loadLimits()
+  if (!allDataSources.value.length) {
+    try { allDataSources.value = (await adminApi.listDataSources()) || [] } catch (e) { toast(e.message, 'error') }
+  }
 }
 
 const loadLimits = async () => {
@@ -331,16 +316,21 @@ const loadLimits = async () => {
 
 const addLimit = async () => {
   if (submitting.value) return
+  const target = limitForm.value.target.trim()
+  if (!target) {
+    toast(limitForm.value.scope === 'source' ? '请选择数据源' : '请填写目标', 'error')
+    return
+  }
   submitting.value = true
   try {
     await adminApi.createLimit({
       plan_id: limitsPlan.value.id,
       scope: limitForm.value.scope,
-      target: limitForm.value.target.trim(),
+      target,
       limit: limitForm.value.limit,
       period: limitForm.value.period,
     })
-    toast('限制项已添加', 'success')
+    toast(limitForm.value.scope === 'source' ? `已授权并限额 ${target}` : '限制项已添加', 'success')
     limitForm.value.target = ''
     await loadLimits()
     load()
@@ -362,15 +352,19 @@ const saveLimit = async (l) => {
   } catch (e) { toast(e.message, 'error') }
 }
 
-const removeLimit = async (l) => {
+const confirmDeleteLimit = async () => {
+  const l = deleteLimitTarget.value
+  if (!l) return
   try {
     await adminApi.deleteLimit(l.id)
-    toast('已删除', 'success')
+    toast(l.scope === 'source' ? `已回收 ${l.target}` : '已删除', 'success')
+    deleteLimitTarget.value = null
     await loadLimits()
     load()
   } catch (e) { toast(e.message, 'error') }
 }
 
 onMounted(() => { revealObserve() })
+
 load()
 </script>

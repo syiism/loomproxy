@@ -240,9 +240,10 @@ import { toast, revealObserve } from '../../utils.js'
 const dsLoading = ref(true)
 const dsError = ref('')
 const dataSources = ref([])
-// 套餐→数据源的关联只在「额度 · 套餐」页编辑（待办清单 P28）：这里保留 plans 的读取，
-// 用来显示「本源被几个套餐纳入」的只读摘要。两个入口各自持快照写同一张 quota_plan_data_sources，
-// 先后保存会按旧快照把对方的增删回滚掉——这正是 P17 收掉设置页那个入口的同一个理由。
+// 套餐→数据源的授权只在「额度 · 套餐」页编辑（待办清单 P28 / P34）：这里保留 plans 的读取，
+// 用来显示「本源被几个套餐纳入」的只读摘要。两个入口各自持快照写同一份事实，先后保存会按旧快照
+// 把对方的增删回滚掉——这正是 P17 收掉设置页那个入口的同一个理由。
+// 事实本体现在是一行 scope=source 的限额（gate/grant.go），限额即授权。
 const plans = ref([])
 const plansLoaded = ref(false)
 const plansFor = (ds) => plans.value.filter(p => (p.data_source_ids || []).includes(ds.id))
@@ -426,7 +427,9 @@ const submitApplyLimits = async () => {
       plan_code: planCode, limit, period: limitsForm.value.period,
     })
     applyResult.value = res
-    toast('已套用 ' + res.applied + ' 个数据源', 'success')
+    const skipped = (res.skipped_ungranted || []).length
+    toast('已套用 ' + res.applied + ' 个数据源'
+      + (skipped ? '，' + skipped + ' 个未授权已跳过（要先到「额度 · 套餐」授权）' : ''), 'success')
   } catch (e) { toast(e.message, 'error') } finally { savingLimits.value = false }
 }
 
