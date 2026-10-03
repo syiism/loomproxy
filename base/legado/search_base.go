@@ -1,5 +1,12 @@
 package legado
 
+// 搜索的**响应契约**与聚合的形状都在这里：`BookItem.Source`、`kind` 首项为源码、
+// `sources` 参数的解析（AggregateTargets）与结果的合并/打标（StampSearchSource / MergeSearchResults）。
+//
+// 一条搜索请求的聚合**编排**在 `app/aggregate_search.go`：扇出到别的源要逐源过访问判定与额度、
+// 要各自解析 baseUrl，这些是链与装配层的东西——放在这里会让 DTO 层反过来指挥治理层，
+// 找实现时请按「形状在本文件、编排在 app 包」两条线索走，别只在本文件里找。
+
 import (
 	"bytes"
 	"encoding/json"
