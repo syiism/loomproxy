@@ -28,8 +28,11 @@ go-build:
 	CGO_ENABLED=1 go build -o $(BINARY) .
 	CGO_ENABLED=1 go build -ldflags="-s -w" -o $(RELEASE_BINARY) .
 
+# -timeout 必须显式给：Go 的默认值是 10m，而 race 套件在不同机器上耗时差好几倍
+# （本仓开发机约 4 分钟，另有构建机实测约 11 分钟），超时会把一次正常的门禁报成失败——
+# 症状是全绿的用例跑到一半突然 panic: test timed out，看起来像用例挂了而不是时间不够。
 test:
-	go test ./test/ -race -count=1
+	go test ./test/ -race -count=1 -timeout 20m
 
 vet:
 	go vet ./...
