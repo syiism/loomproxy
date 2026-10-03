@@ -188,7 +188,16 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 			}
 
 			ctx := c.Request.Context()
-			result, err := h.Handle(ctx, params)
+			// 聚合搜索：search 带 sources 参数时变成多源扇出。走另一条路而不是让源自己处理，
+			// 是因为「跨源」需要的是访问控制、额度与 baseUrl 回落——都在平台这一侧
+			aggregated := action == "search" && source != "" && c.Query(legado.AggregateSourcesParam) != ""
+			var result interface{}
+			var err error
+			if aggregated {
+				result, err = runAggregateSearch(c, source, action, params)
+			} else {
+				result, err = h.Handle(ctx, params)
+			}
 			if err != nil {
 				handleError(c, err)
 				return
@@ -205,6 +214,13 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 			// 控制面端点（source 为空）没有内容维度可抽
 			if source != "" {
 				legado.ObserveCall(source, params, result, subject)
+			}
+			// 搜索响应在出口统一打标：每条结果硬性写上它来自哪个源，并把源码放进 kind 的第一项
+			// （下游有些版本只认标准字段，自定义顶层键读不到）。聚合那条**不能**再打一次——
+			// 扇出时已按各自源标过，拿路由源覆盖会把「这条来自 sq_novel」改成「来自 fq_novel」，
+			// 下游就照着错的源去取详情与正文。
+			if !aggregated && action == "search" && source != "" {
+				result = legado.StampSearchSource(result, source)
 			}
 			// 带内错误正文的文案收口（待办清单 P23）：这条出口不经过 handleError，
 			// §10 的脱敏约定被整个绕过——传输层失败时 message 常是 *url.Error，内嵌完整请求 URL

@@ -39,26 +39,13 @@ func baseURLCheckMiddleware(sourceName string) gin.HandlerFunc {
 		skipBaseURLCheck := meta.FixedBaseURL
 
 		if !skipBaseURLCheck && baseURL == "" && sourceName != "" {
-			// 1) 用户个人配置
-			if uid, exists := c.Get("user_id"); exists {
-				if userID, ok := uid.(uint); ok && userID > 0 {
-					var cfg models.UserSourceConfig
-					err := db.DB.Where("user_id = ? AND source_name = ?", userID, sourceName).First(&cfg).Error
-					if err == nil && cfg.BaseURL != "" {
-						baseURL = cfg.BaseURL
-					}
-					//err == gorm.ErrRecordNotFound // 是正常情况，不记录日志
+			var uid uint
+			if raw, exists := c.Get("user_id"); exists {
+				if id, ok := raw.(uint); ok {
+					uid = id
 				}
 			}
-			// 2) 平台默认配置
-			if baseURL == "" {
-				var pcfg models.PlatformSourceConfig
-				err := db.DB.Where("source_name = ?", sourceName).First(&pcfg).Error
-				if err == nil && pcfg.BaseURL != "" {
-					baseURL = pcfg.BaseURL
-					fromPlatform = true
-				}
-			}
+			baseURL, fromPlatform = ResolveBaseURL(sourceName, uid)
 			if baseURL != "" {
 				c.Set(middleware.CtxResolvedBaseURL, baseURL)
 			}
@@ -81,4 +68,31 @@ func baseURLCheckMiddleware(sourceName string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// ResolveBaseURL 按「用户个人配置 > 平台默认配置」解析某个源要打的 baseUrl，
+// 返回 fromPlatform 表示这个值是不是平台给的（平台配置由管理员设，视为可信来源，
+// 不做严格 SSRF；用户配置与请求参数要）。请求显式带的 baseUrl 优先级最高，
+// 由调用方自己传进来（本函数只在它为空时被调用）。
+//
+// 抽成导出函数的原因：聚合搜索的扇出要给**每个目标源**各自解析一遍 baseUrl，
+// 而回落顺序写两遍的话，早晚有一处不认用户配置——用户会看到「直接调这个源能读、
+// 从聚合里点进去就读不到」。
+func ResolveBaseURL(sourceName string, userID uint) (baseURL string, fromPlatform bool) {
+	if sourceName == "" {
+		return "", false
+	}
+	if userID > 0 {
+		var cfg models.UserSourceConfig
+		// gorm.ErrRecordNotFound 是正常情况（多数人没有个人配置），不记日志
+		if err := db.DB.Where(map[string]interface{}{"user_id": userID, "source_name": sourceName}).
+			First(&cfg).Error; err == nil && cfg.BaseURL != "" {
+			return cfg.BaseURL, false
+		}
+	}
+	var pcfg models.PlatformSourceConfig
+	if err := db.DB.Where(map[string]interface{}{"source_name": sourceName}).First(&pcfg).Error; err == nil && pcfg.BaseURL != "" {
+		return pcfg.BaseURL, true
+	}
+	return "", false
 }

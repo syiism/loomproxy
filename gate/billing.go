@@ -197,3 +197,57 @@ func BillingMiddleware(sourceName, action string) gin.HandlerFunc {
 		}
 	}
 }
+
+// AggregateTargetVerdict 扇出到某个**非路由源**之前的一次额度判定，用的是与
+// BillingMiddleware 完全同一套原语（getCachedCost / ResolvePlan / EffectiveSourceLimit / UsedToday），
+// 判定顺序也照抄——为的是「聚合调某个源」与「直接调某个源」得出同一个答案。
+//
+// 为什么必须在这里判一遍：聚合搜索在 handler 内部调其他源，那条路不经过中间件链，
+// access/billing/ratelimit 三道闸门对它是盲的。不补这一刀，「一次请求换 N 个上游」
+// 就是额度上的空头支票——免费档 200 次/日能打出 200×N 次上游调用。
+//
+// reason 是给 sources_status 用的枚举，**不带上游的错误文案**（对外文案必须过脱敏，
+// 而这里连累一个失败目标就不该把它的 URL 吐出去）。
+func AggregateTargetVerdict(user *models.User, sourceName, action string) (allowed bool, cost int64, reason string) {
+	stored, err := getCachedCost(sourceName, action)
+	if err != nil {
+		return true, 0, "" // 未配置成本：与中间件一致，放行且不计费
+	}
+	if stored.Status != 1 {
+		return false, 0, "disabled" // 接口被管理员停用，对所有调用方生效
+	}
+	if stored.Cost <= 0 || !billingEnabled() {
+		return true, 0, "" // 免费接口或计费总开关关闭
+	}
+	if user == nil || user.HasRole("admin") {
+		return true, stored.Cost, "" // 匿名与 admin：中间件里也是不记账
+	}
+	plan := ResolvePlan(user)
+	limit := EffectiveSourceLimit(user, sourceName, PlanSourceLimits(plan.ID))
+	if limit >= 0 && UsedToday(user.ID, sourceName)+stored.Cost > limit {
+		return false, stored.Cost, "limit_exceeded"
+	}
+	return true, stored.Cost, ""
+}
+
+// DeductAggregateTarget 为一个扇出目标扣一次用量，写入与中间件同形状的一行流水。
+//
+// 已知偏差（写清楚，别让它长成「没人知道的第二套口径」）：内容维度是 handler 返回之后
+// 才由 ObserveCall 回填的，所以聚合请求在扣减这一刻 subject 还是空的，
+// P25 的「同一篇内容冷却期内不重复扣」对扇出目标**不生效**——
+// 结果是偏多扣而不是偏少扣，与「聚合不得比直连更便宜」一致。
+// 要抹平这条得把 subject 的生命周期提前，动到计费主路径，风险大于收益。
+func DeductAggregateTarget(c *gin.Context, user *models.User, sourceName, action string, cost int64) {
+	if user == nil || cost <= 0 || user.HasRole("admin") {
+		return
+	}
+	if alreadyDeducted(c, user.ID, sourceName, action) {
+		return
+	}
+	db.DB.Create(&models.QuotaUsageLog{
+		UserID:    user.ID,
+		GroupCode: sourceName,
+		Interface: strings.ToLower(action),
+		Cost:      cost,
+	})
+}
