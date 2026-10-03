@@ -117,6 +117,12 @@ func TestLegacyLinkTableGrantsNothing(t *testing.T) {
 	token := registerUser(t, srv, "grant_u2", "grant_u2@example.com", "pass1234")
 	freePlan := planIDByCode(t, "free")
 
+	// 这张表已经不在 AutoMigrate 清单里了（生产已 DROP，全新库不建它）。
+	// 这条用例要验的是「**老库里它还在**」那个形状，所以自己把表建出来——
+	// 建不出来就等于用例静默跳过，那才是这条守卫最怕的失效方式。
+	if err := db.DB.Migrator().CreateTable(&models.QuotaPlanDataSource{}); err != nil {
+		t.Fatalf("建旧关联表失败: %v", err)
+	}
 	if err := gate.UngrantPlanSource(freePlan, "fake_b"); err != nil {
 		t.Fatalf("回收 fake_b 授权失败: %v", err)
 	}
@@ -131,6 +137,26 @@ func TestLegacyLinkTableGrantsNothing(t *testing.T) {
 	}
 }
 
+// TestSeedSurvivesDroppedLegacyTable 表被 DROP 之后 Seed 必须照常跑完。
+// alignPlanGrants 过去无条件 `Find` 这张表，表没了就是「Seed 报错 → db.Init 之后起不来」，
+// 症状长得像升级失败而不是迁移没做——所以这条守卫钉的是**起得来**，不是「搬了几行」。
+func TestSeedSurvivesDroppedLegacyTable(t *testing.T) {
+	newTestServer(t)
+	if err := db.DB.Migrator().DropTable(&models.QuotaPlanDataSource{}); err != nil {
+		t.Fatalf("DROP 旧关联表失败: %v", err)
+	}
+	if db.DB.Migrator().HasTable("quota_plan_data_sources") {
+		t.Fatal("前置条件不成立：旧关联表还在")
+	}
+	before := countGrantRows(t, planIDByCode(t, "free"))
+	if err := db.Seed(db.DB); err != nil {
+		t.Fatalf("表已 DROP 时 Seed 失败: %v（升级路径会表现为服务起不来）", err)
+	}
+	if after := countGrantRows(t, planIDByCode(t, "free")); after != before {
+		t.Errorf("Seed 改动了授权行数：%d → %d, want 不变", before, after)
+	}
+}
+
 // TestSeedAlignsLegacyLinksToLimits 生产升级路径：旧关联行有、限额行没有 → Seed 补齐（幂等）
 func TestSeedAlignsLegacyLinksToLimits(t *testing.T) {
 	newTestServer(t)
@@ -139,6 +165,9 @@ func TestSeedAlignsLegacyLinksToLimits(t *testing.T) {
 	// 造出升级前的形状：授权只记在旧关联表里，限额表里没有对应行。
 	// 同时保留 free 在其它源上的限额行，免得 seedPlanSourceGrants 走「整套餐为空、铺全量」
 	// 那条路径，把这条对齐步骤测成了假绿灯。
+	if err := db.DB.Migrator().CreateTable(&models.QuotaPlanDataSource{}); err != nil {
+		t.Fatalf("建旧关联表失败: %v", err)
+	}
 	link := models.QuotaPlanDataSource{PlanID: freePlan, DataSourceID: dataSourceIDByName(t, "fake_b")}
 	if err := db.DB.Create(&link).Error; err != nil {
 		t.Fatalf("写入旧关联行失败: %v", err)

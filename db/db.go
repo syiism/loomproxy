@@ -127,7 +127,9 @@ func Init() error {
 		&models.PlatformSourceConfig{},
 		&models.DataSource{},
 		&models.SourceGroup{},
-		&models.QuotaPlanDataSource{},
+		// 旧「套餐-数据源关联」表不再建：授权与限额是同一行（待办清单 P34），
+		// 全新库压根不该有它。存量库（P34 之前升上来的）里它还在，由 seed 的 alignPlanGrants
+		// 一次性搬进限额表后由运维带备份 DROP——搬完之前不能停读，否则整套授权会凭空消失（P34 的新语义：没有那行 = 没权限）。
 		&models.QuotaCostPlan{},
 		&models.ApiCallLog{},
 		&models.ApiCallStat{},

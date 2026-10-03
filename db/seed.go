@@ -560,8 +560,16 @@ func ensurePlanSourceGrant(db *gorm.DB, planID uint, sourceName string, limit in
 }
 
 // alignPlanGrants 把旧「套餐-数据源关联」表里还活着的事实搬进限额表（幂等、只补行不删行）。
-// 关联表从此不再被读写，留在库里等一次单独的 DDL 发布去 DROP（那是运维动作，要带备份）。
+//
+// 生产已经 DROP 掉这张表（待办清单 P34②），而它**不在 AutoMigrate 清单里了**——全新库根本不建它。
+// 但骨架是公开的：从 P34 之前的库一路升上来的人，「有没有这一行」在他那里仍然决定能不能用某个源
+// （P34 之后没有行 = 没权限），所以这条搬迁必须留着，直到不再有比 P34 更旧的存量库。
+// 于是它由「表在不在」自己判定：**表不在就一行不读**（否则 `Find` 会因缺表失败、Seed 直接失败、
+// 服务拒绝启动——症状是升级完起不来，而不是「迁移没做」）。
 func alignPlanGrants(db *gorm.DB) error {
+	if !db.Migrator().HasTable("quota_plan_data_sources") {
+		return nil // 已 DROP 或全新库：无存量可搬
+	}
 	var links []models.QuotaPlanDataSource
 	if err := db.Find(&links).Error; err != nil {
 		return err
