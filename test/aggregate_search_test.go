@@ -371,3 +371,59 @@ func TestPrependSourceToKindKeepsShape(t *testing.T) {
 		t.Errorf("空 kind 应补成只含源码: %#v", got)
 	}
 }
+
+// TestAggregateSearchAnonymousOnlyFreePlan 静态 env 密钥的调用方是**匿名**身份（不注入归属用户），
+// 所以扇出必须按免费套餐那一档逐源判：不属于免费档的源要跳过，
+// 不能因为「链上入口源放行了」就把别的源的内容一起带出去。
+func TestAggregateSearchAnonymousOnlyFreePlan(t *testing.T) {
+	srv := newTestServer(t)
+	prev := conf.Config.APIKeys
+	conf.Config.APIKeys = []string{"sk_agg_static"}
+	t.Cleanup(func() { conf.Config.APIKeys = prev })
+
+	setPlatformUpstream(t, "fake_a", staticUpstream(t, `{"bookList":[{"bookId":"a1","name":"甲书"}]}`).URL)
+	setPlatformUpstream(t, "fake_b", staticUpstream(t, `{"bookList":[{"bookId":"b1","name":"免费档不含的书"}]}`).URL)
+	if err := gate.UngrantPlanSource(planIDByCode(t, "free"), "fake_b"); err != nil {
+		t.Fatalf("把 fake_b 移出免费套餐失败: %v", err)
+	}
+
+	// 静态 env 键：鉴权通过但**不注入归属身份**（匿名语义），正是这一条要的形状
+	st, rawn := doRaw(t, srv, http.MethodGet, "/fake_a/search?query=x&sources=fake_a,fake_b", nil,
+		map[string]string{"X-API-Key": "sk_agg_static"})
+	raw := string(rawn)
+	var body aggBody
+	if err := json.Unmarshal(rawn, &body); err != nil {
+		t.Fatalf("解析响应失败: %v（body=%s）", err, truncate(raw, 200))
+	}
+	status := st
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", status, truncate(raw, 200))
+	}
+	if got := body.SourcesStatus["fake_b"]; got != "need_login" {
+		t.Errorf("匿名请求把不属于免费档的源也打了: status=%v, want need_login", got)
+	}
+	for _, it := range body.BookList {
+		if it.Source == "fake_b" {
+			t.Fatalf("匿名聚合漏出了 %q", it.Name)
+		}
+	}
+}
+
+// TestAggregateSearchUnknownSourceName sources 里写一个不存在的源：跳过并记成因，
+// 不影响其余源，也不要把「拼错了」透成一句上游文案
+func TestAggregateSearchUnknownSourceName(t *testing.T) {
+	srv := newTestServer(t)
+	admin := adminToken(t, srv)
+	setPlatformUpstream(t, "fake_a", staticUpstream(t, `{"bookList":[{"bookId":"a1","name":"甲书"}]}`).URL)
+
+	status, body, raw := doGetAgg(t, srv, admin, "/fake_a/search?query=x&sources=fake_a,no_such_src")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200（body=%s）", status, truncate(raw, 200))
+	}
+	if body.SourcesStatus["no_such_src"] != "not_found" {
+		t.Errorf("未知源没被判成 not_found: %v", body.SourcesStatus)
+	}
+	if len(body.BookList) != 1 || body.BookList[0].Source != "fake_a" {
+		t.Errorf("未知源影响了正常源: %+v", body.BookList)
+	}
+}
