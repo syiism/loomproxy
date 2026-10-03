@@ -876,9 +876,10 @@ func DeleteDataSource(c *gin.Context) {
 		return
 	}
 
-	// 检查是否被套餐引用
+	// 检查是否被套餐授权（授权现在就是一行限额，见 gate/grant.go）
 	var count int64
-	db.DB.Model(&models.QuotaPlanDataSource{}).Where("data_source_id = ?", ds.ID).Count(&count)
+	db.DB.Model(&models.QuotaLimit{}).
+		Where("scope = ? AND target = ?", "source", ds.Name).Count(&count)
 	if count > 0 {
 		auth.Fail(c, http.StatusBadRequest, "该数据源被套餐引用，无法删除")
 		return
@@ -896,9 +897,9 @@ func DeleteDataSource(c *gin.Context) {
 	auth.Ok(c, gin.H{"message": "已删除"})
 }
 
-// ===== 套餐-数据源关联管理 =====
+// ===== 套餐-数据源授权（授权与限额同一行，见 gate/grant.go；待办清单 P34）=====
 
-// ListPlanDataSources 获取套餐包含的数据源
+// ListPlanDataSources 获取套餐已授权的数据源（= 有 scope=source 限额行的源）
 func ListPlanDataSources(c *gin.Context) {
 	planID := c.Param("id")
 
@@ -908,27 +909,27 @@ func ListPlanDataSources(c *gin.Context) {
 		return
 	}
 
-	var links []models.QuotaPlanDataSource
-	db.DB.Where("plan_id = ?", plan.ID).Find(&links)
-
-	var dataSourceIDs []uint
-	for _, l := range links {
-		dataSourceIDs = append(dataSourceIDs, l.DataSourceID)
-	}
-
-	var dataSources []models.DataSource
-	if len(dataSourceIDs) > 0 {
-		db.DB.Where("id IN ?", dataSourceIDs).Find(&dataSources)
-	}
-	if dataSources == nil {
-		dataSources = []models.DataSource{}
-	}
-
+	dataSources := grantedDataSources(plan.ID)
 	auth.Ok(c, gin.H{
 		"plan_id":      plan.ID,
 		"plan_name":    plan.Name,
 		"data_sources": dataSources,
 	})
+}
+
+// grantedDataSources 授权源的数据源行（按名排序）；限额行指向已下线的源时自然查不到行。
+func grantedDataSources(planID uint) []models.DataSource {
+	out := []models.DataSource{}
+	ids := gate.PlanAllowedSourceIDs(planID)
+	if len(ids) == 0 {
+		return out
+	}
+	idList := make([]uint, 0, len(ids))
+	for id := range ids {
+		idList = append(idList, id)
+	}
+	db.DB.Where("id IN ?", idList).Order("name").Find(&out)
+	return out
 }
 
 type addPlanDataSourceRequest struct {
@@ -939,12 +940,19 @@ type batchAddPlanDataSourcesRequest struct {
 	DataSourceIDs []uint `json:"data_source_ids" binding:"required,min=1"`
 }
 
-// AddPlanDataSource 为套餐添加数据源
-func AddPlanDataSource(c *gin.Context) {
-	planID := c.Param("id")
+// planDataSourceName 校验数据源存在并返回其数据源码（授权判定认名字，不认 ID）
+func planDataSourceName(dsID uint) (string, bool) {
+	var ds models.DataSource
+	if err := db.DB.First(&ds, dsID).Error; err != nil {
+		return "", false
+	}
+	return ds.Name, true
+}
 
+// AddPlanDataSource 授予套餐一个数据源（= 保证有一行 limit=-1 的限额）
+func AddPlanDataSource(c *gin.Context) {
 	var plan models.QuotaPlan
-	if err := db.DB.First(&plan, planID).Error; err != nil {
+	if err := db.DB.First(&plan, c.Param("id")).Error; err != nil {
 		auth.Fail(c, http.StatusNotFound, "套餐不存在")
 		return
 	}
@@ -954,42 +962,29 @@ func AddPlanDataSource(c *gin.Context) {
 		auth.Fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
 		return
 	}
-
-	// 检查数据源是否存在
-	var ds models.DataSource
-	if err := db.DB.First(&ds, req.DataSourceID).Error; err != nil {
+	name, ok := planDataSourceName(req.DataSourceID)
+	if !ok {
 		auth.Fail(c, http.StatusNotFound, "数据源不存在")
 		return
 	}
 
-	// 检查是否已关联
-	var count int64
-	db.DB.Model(&models.QuotaPlanDataSource{}).
-		Where("plan_id = ? AND data_source_id = ?", plan.ID, ds.ID).
-		Count(&count)
-	if count > 0 {
+	created, err := gate.GrantPlanSource(plan.ID, name)
+	if err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "授权失败")
+		return
+	}
+	if !created {
 		auth.Fail(c, http.StatusConflict, "该套餐已包含此数据源")
 		return
 	}
-
-	link := models.QuotaPlanDataSource{
-		PlanID:       plan.ID,
-		DataSourceID: ds.ID,
-	}
-	if err := db.DB.Create(&link).Error; err != nil {
-		auth.Fail(c, http.StatusInternalServerError, "关联失败")
-		return
-	}
 	catalog.InvalidateDatasourcesCache()
-	auth.Ok(c, link)
+	auth.Ok(c, gin.H{"plan_id": plan.ID, "data_source_id": req.DataSourceID, "limit": -1, "period": "day"})
 }
 
-// BatchAddPlanDataSources 批量为套餐添加数据源
+// BatchAddPlanDataSources 批量授权（跳过不存在的源与已授权的源）
 func BatchAddPlanDataSources(c *gin.Context) {
-	planID := c.Param("id")
-
 	var plan models.QuotaPlan
-	if err := db.DB.First(&plan, planID).Error; err != nil {
+	if err := db.DB.First(&plan, c.Param("id")).Error; err != nil {
 		auth.Fail(c, http.StatusNotFound, "套餐不存在")
 		return
 	}
@@ -1000,47 +995,43 @@ func BatchAddPlanDataSources(c *gin.Context) {
 		return
 	}
 
-	var created []models.QuotaPlanDataSource
+	granted := 0
 	for _, dsID := range req.DataSourceIDs {
-		var ds models.DataSource
-		if err := db.DB.First(&ds, dsID).Error; err != nil {
+		name, ok := planDataSourceName(dsID)
+		if !ok {
 			continue
 		}
-		var count int64
-		db.DB.Model(&models.QuotaPlanDataSource{}).
-			Where("plan_id = ? AND data_source_id = ?", plan.ID, ds.ID).
-			Count(&count)
-		if count > 0 {
+		created, err := gate.GrantPlanSource(plan.ID, name)
+		if err != nil || !created {
 			continue
 		}
-		link := models.QuotaPlanDataSource{
-			PlanID:       plan.ID,
-			DataSourceID: ds.ID,
-		}
-		if err := db.DB.Create(&link).Error; err != nil {
-			continue
-		}
-		created = append(created, link)
+		granted++
 	}
-	if len(created) > 0 {
+	if granted > 0 {
 		catalog.InvalidateDatasourcesCache()
 	}
-	auth.Ok(c, gin.H{"created": len(created)})
+	auth.Ok(c, gin.H{"created": granted})
 }
 
-// RemovePlanDataSource 从套餐移除数据源
+// RemovePlanDataSource 回收一个数据源：**同时取消该源在此套餐下的限额**——它们是同一行。
 func RemovePlanDataSource(c *gin.Context) {
-	planID := c.Param("id")
-	dsID := c.Param("ds_id")
-
 	var plan models.QuotaPlan
-	if err := db.DB.First(&plan, planID).Error; err != nil {
+	if err := db.DB.First(&plan, c.Param("id")).Error; err != nil {
 		auth.Fail(c, http.StatusNotFound, "套餐不存在")
 		return
 	}
+	dsID, err := strconv.ParseUint(c.Param("ds_id"), 10, 64)
+	if err != nil {
+		auth.Fail(c, http.StatusBadRequest, "参数错误: data source id")
+		return
+	}
+	name, ok := planDataSourceName(uint(dsID))
+	if !ok {
+		auth.Fail(c, http.StatusNotFound, "数据源不存在")
+		return
+	}
 
-	if err := db.DB.Where("plan_id = ? AND data_source_id = ?", plan.ID, dsID).
-		Delete(&models.QuotaPlanDataSource{}).Error; err != nil {
+	if err := gate.UngrantPlanSource(plan.ID, name); err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "移除失败")
 		return
 	}

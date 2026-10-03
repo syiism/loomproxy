@@ -38,7 +38,7 @@ def test_access_disabled_source(server):
 
 
 def test_access_plan_not_include(server):
-    """套餐未关联数据源时普通用户 403，管理员豁免。"""
+    """套餐未授权数据源时普通用户 403（授权就是那行限额），管理员豁免。"""
     api, db = server.api, server.db
     token = api.register("q_user2", "q_user2@example.com", "pass1234")
 

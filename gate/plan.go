@@ -61,9 +61,11 @@ func userOverrideLimit(userID uint, code string) (int64, bool) {
 	return override.Limit, true
 }
 
-// EffectiveSourceLimit 用户在某数据源的有效日额度。
+// EffectiveSourceLimit 用户在某数据源的有效日额度。**只管额度轴**：
 // 有效额度 = 套餐限额 + 用户覆盖（覆盖为空视为 0，正值追加、负值扣减，结果下限 0）：
 // 优先用户级数据源覆盖，无覆盖时按套餐限额；套餐未限额则为 -1（不限，覆盖不再生效）。
+// 注意「没有这一行」在 P34 之后还多了一层意思——**该套餐没这个源的权限**，
+// 那条由 access(order 400) 判，不在这里；能走到这里的请求都已经有权限了。
 func EffectiveSourceLimit(user *models.User, sourceName string, planLimits map[string]int64) int64 {
 	if user != nil && user.ID > 0 {
 		// 1) 用户级数据源覆盖：单数据源套餐限额 + 覆盖
@@ -79,7 +81,7 @@ func EffectiveSourceLimit(user *models.User, sourceName string, planLimits map[s
 	if l, ok := planLimits[sourceName]; ok {
 		return l
 	}
-	return -1 // 无套餐限制则不限
+	return -1 // 套餐没限额行：额度轴是不限（有没有权限由 access 轴判，见上方注释）
 }
 
 // clampLimit 额度下限为 0（覆盖扣减超过套餐限额时视为 0，即当日不可用）

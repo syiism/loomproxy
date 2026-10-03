@@ -48,15 +48,8 @@ func ListSourceConfigs(c *gin.Context) {
 		if !isAdmin {
 			plan := gate.ResolvePlanForUser(&user)
 			if plan.ID > 0 {
-				var allowedSourceIDs []uint
-				db.DB.Model(&models.QuotaPlanDataSource{}).
-					Where("plan_id = ?", plan.ID).
-					Pluck("data_source_id", &allowedSourceIDs)
-				if len(allowedSourceIDs) > 0 {
-					allowedMap := make(map[uint]bool)
-					for _, id := range allowedSourceIDs {
-						allowedMap[id] = true
-					}
+				allowedMap := gate.PlanAllowedSourceIDs(plan.ID)
+				if len(allowedMap) > 0 {
 					filtered := make([]models.DataSource, 0, len(dataSources))
 					for _, ds := range dataSources {
 						if allowedMap[ds.ID] {

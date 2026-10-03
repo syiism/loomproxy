@@ -116,6 +116,7 @@ func seedQuotaPlans(db *gorm.DB) error {
 	}
 
 	plans := []models.QuotaPlan{freePlan, vipPlan, adminPlan}
+	justCreated := make(map[string]bool, len(plans))
 	for _, plan := range plans {
 		var count int64
 		db.Model(&models.QuotaPlan{}).Where("code = ?", plan.Code).Count(&count)
@@ -123,6 +124,7 @@ func seedQuotaPlans(db *gorm.DB) error {
 			if err := db.Create(&plan).Error; err != nil {
 				return err
 			}
+			justCreated[plan.Code] = true
 			log.Printf("Created quota plan: %s", plan.Code)
 		}
 	}
@@ -143,38 +145,31 @@ func seedQuotaPlans(db *gorm.DB) error {
 			Update("role_id", role.ID)
 	}
 
-	var free models.QuotaPlan
-	var vip models.QuotaPlan
-	var admin models.QuotaPlan
-	db.Where("code = ?", "free").First(&free)
-	db.Where("code = ?", "vip").First(&vip)
-	db.Where("code = ?", "admin").First(&admin)
-
 	now := time.Now()
-	// 限额播种：全局 API 限额固定三条；数据源级限额按各源声明（sourceSeedProvider）
-	// 动态生成——底座项目无数据源时只有全局限额，接入书源后自动补齐
-	planLimits := []struct {
-		plan      models.QuotaPlan
-		global    int64
-		perSource int64
-	}{
-		{free, 1000, 100},  // 免费版
-		{vip, 10000, 1000}, // VIP 版
-		{admin, -1, -1},    // 管理员版（不限）
-	}
+	// 限额播种**只发生在套餐建出来的那一次**：数据源级的限额行现在同时就是该套餐的授权
+	// （待办清单 P34），每次启动都按行补齐会把管理员删掉的那条授权复活——
+	// 「删了又自己回来」是面板上最说不清的一格。全局 API 限额同一条理由一起收进来。
+	// 后来新接入的源由 attachSourceToBuiltinPlans 补授权，沿用下面这同一份默认档。
 	var limits []models.QuotaLimit
-	for _, pl := range planLimits {
+	for _, d := range builtinPlanLimitDefaults {
+		var plan models.QuotaPlan
+		if err := db.Where("code = ?", d.Code).First(&plan).Error; err != nil {
+			continue
+		}
+		if !justCreated[plan.Code] {
+			continue
+		}
 		limits = append(limits, models.QuotaLimit{
-			PlanID: pl.plan.ID, Scope: "global", Target: "api",
-			Limit: pl.global, Period: "day", CreatedAt: now, UpdatedAt: now,
+			PlanID: plan.ID, Scope: "global", Target: "api",
+			Limit: d.GlobalAPI, Period: "day", CreatedAt: now, UpdatedAt: now,
 		})
 		if sourceSeedProvider == nil {
 			continue
 		}
 		for _, src := range sourceSeedProvider() {
 			limits = append(limits, models.QuotaLimit{
-				PlanID: pl.plan.ID, Scope: "source", Target: src.Name,
-				Limit: pl.perSource, Period: "day", CreatedAt: now, UpdatedAt: now,
+				PlanID: plan.ID, Scope: "source", Target: src.Name,
+				Limit: d.PerSource, Period: "day", CreatedAt: now, UpdatedAt: now,
 			})
 		}
 	}
@@ -286,7 +281,7 @@ func retiredSources() []string {
 }
 
 // cleanupRemovedSources 清理已下线数据源在各配置表中的存量行（幂等：无行时无操作）。
-// data_sources 为软删除模型，用 Unscoped 硬删；套餐-数据源关联按外键先行清理
+// data_sources 为软删除模型，用 Unscoped 硬删；授权（限额表的 scope=source 行）按名字清理
 func cleanupRemovedSources(db *gorm.DB) error {
 	removedSources := retiredSources()
 	if len(removedSources) == 0 {
@@ -297,39 +292,15 @@ func cleanupRemovedSources(db *gorm.DB) error {
 		return err
 	}
 	if len(ids) > 0 {
-		if err := db.Where("data_source_id IN ?", ids).Delete(&models.QuotaPlanDataSource{}).Error; err != nil {
-			return err
-		}
 		if err := db.Unscoped().Where("name IN ?", removedSources).Delete(&models.DataSource{}).Error; err != nil {
 			return err
 		}
-		log.Printf("已下线数据源 %v：清理 data_sources 与套餐关联行", removedSources)
-
-		// 存量库的套餐关联可能停留在早期 seed（seedPlanDataSources 仅在关联表
-		// 首次为空时播种，后续新增的源不会自动补进套餐），借本次下线清理一并对
-		// 三个内置套餐补齐全部存活源的关联（幂等，仅本清理触发时执行一次）
-		var plans []models.QuotaPlan
-		if err := db.Where("code IN ?", []string{"free", "vip", "admin"}).Find(&plans).Error; err != nil {
-			return err
-		}
-		var sources []models.DataSource
-		if err := db.Find(&sources).Error; err != nil {
-			return err
-		}
-		for _, plan := range plans {
-			for _, ds := range sources {
-				var n int64
-				db.Model(&models.QuotaPlanDataSource{}).
-					Where("plan_id = ? AND data_source_id = ?", plan.ID, ds.ID).Count(&n)
-				if n == 0 {
-					if err := db.Create(&models.QuotaPlanDataSource{PlanID: plan.ID, DataSourceID: ds.ID}).Error; err != nil {
-						return err
-					}
-				}
-			}
-		}
-		log.Printf("已为内置套餐补齐 %d 个存活数据源的关联", len(sources))
+		log.Printf("已下线数据源 %v：硬删 data_sources 行（授权行由下方按名字清理）", removedSources)
+		// 这里**不再**给三个内置套餐补齐全部存活源：那条回填会在下一次有源下线时，
+		// 把管理员手动回收过的授权静默发回去。新源由 attachSourceToBuiltinPlans 逐个授权，
+		// 存量授权由 alignPlanGrants 从旧关联表搬来，两个入口都够了。
 	}
+
 	if err := db.Where("group_code IN ?", removedSources).Delete(&models.QuotaCost{}).Error; err != nil {
 		return err
 	}
@@ -487,7 +458,32 @@ func seedQuotaCosts(db *gorm.DB) error {
 	return nil
 }
 
-// builtinPlanCodes 三个内置套餐：新建的数据源默认三个都进（与 seedPlanDataSources 的空表引导同构）。
+// builtinPlanLimitDefaults 三个内置套餐的默认额度档：全局 API 限额 + 每个数据源的日限额。
+// 这份默认值只有这一处定义——建套餐时铺满全部声明源、以及后来新接入的源补授权，
+// 都读它（两处各写一遍就会漂移；-1 = 不限）。
+var builtinPlanLimitDefaults = []struct {
+	Code      string
+	GlobalAPI int64
+	PerSource int64
+}{
+	{"free", 1000, 100},  // 免费版
+	{"vip", 10000, 1000}, // VIP 版
+	{"admin", -1, -1},    // 管理员版（不限）
+}
+
+// DefaultPerSourceLimit 该套餐给新授权源配的默认限额；自定义套餐没有默认档，取 -1（不限）。
+// 播种与 gate.GrantPlanSource 共用它——「授权一个新源」在两条路上落地的数值必须是同一个，
+// 否则脚本装机和面板操作就会各长出一种默认。
+func DefaultPerSourceLimit(planCode string) int64 {
+	for _, d := range builtinPlanLimitDefaults {
+		if d.Code == planCode {
+			return d.PerSource
+		}
+	}
+	return -1
+}
+
+// builtinPlanCodes 三个内置套餐：新接入的源默认授权给这三个（每套餐一行 scope=source 的限额）。
 var builtinPlanCodes = []string{"free", "vip", "admin"}
 
 // seedDataSources 按声明播种 data_sources，并**返回本轮新建的源名**。
@@ -519,85 +515,111 @@ func seedDataSources(db *gorm.DB) ([]string, error) {
 		}
 		created = append(created, ds.Name)
 		log.Printf("Created data source: %s", ds.Name)
-		if err := attachSourceToBuiltinPlans(db, row.ID, row.Name); err != nil {
+		if err := attachSourceToBuiltinPlans(db, row.Name); err != nil {
 			return created, err
 		}
 	}
 	return created, nil
 }
 
-// attachSourceToBuiltinPlans 把一个源补进它尚缺的内置套餐（幂等：已有行就跳过）。
-func attachSourceToBuiltinPlans(db *gorm.DB, dsID uint, name string) error {
+// attachSourceToBuiltinPlans 把一个源授权给尚缺该授权的内置套餐（幂等：已有授权行就跳过）。
+// 授权 = 一行 scope=source 的限额（待办清单 P34，方案 A），新建行取 limit=-1（可用但不设限）。
+func attachSourceToBuiltinPlans(db *gorm.DB, name string) error {
 	for _, code := range builtinPlanCodes {
 		var plan models.QuotaPlan
 		if err := db.Where("code = ?", code).First(&plan).Error; err != nil {
 			continue // 该内置套餐不在这次的库里（例如未播种的空库），交给调用方的其它步骤
 		}
-		var n int64
-		db.Model(&models.QuotaPlanDataSource{}).
-			Where("plan_id = ? AND data_source_id = ?", plan.ID, dsID).Count(&n)
-		if n > 0 {
-			continue
-		}
-		if err := db.Create(&models.QuotaPlanDataSource{PlanID: plan.ID, DataSourceID: dsID}).Error; err != nil {
+		created, err := ensurePlanSourceGrant(db, plan.ID, name, DefaultPerSourceLimit(code))
+		if err != nil {
 			return err
 		}
-		log.Printf("已将新增数据源 %s 加入套餐 %s（新增源默认对全部内置套餐可用）", name, code)
+		if created {
+			log.Printf("已将新增数据源 %s 授权给套餐 %s（新增源默认对全部内置套餐可用）", name, code)
+		}
 	}
 	return nil
 }
 
-// warnUnlinkedSources 存量库里「一行套餐关联都没有」的源对所有人都是 403，
-// 但自动补会把管理员的有意摘除也抹掉——所以只告警，不写数据。
-func warnUnlinkedSources(db *gorm.DB) {
+// ensurePlanSourceGrant 保证「套餐 × 源」有一行 scope=source 的限额；已存在则不动，返回是否新建。
+func ensurePlanSourceGrant(db *gorm.DB, planID uint, sourceName string, limit int64) (bool, error) {
+	var n int64
+	if err := db.Model(&models.QuotaLimit{}).
+		Where("plan_id = ? AND scope = ? AND target = ?", planID, "source", sourceName).
+		Count(&n).Error; err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return false, nil
+	}
+	row := models.QuotaLimit{PlanID: planID, Scope: "source", Target: sourceName, Limit: limit, Period: "day"}
+	if err := db.Create(&row).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// alignPlanGrants 把旧「套餐-数据源关联」表里还活着的事实搬进限额表（幂等、只补行不删行）。
+// 关联表从此不再被读写，留在库里等一次单独的 DDL 发布去 DROP（那是运维动作，要带备份）。
+func alignPlanGrants(db *gorm.DB) error {
+	var links []models.QuotaPlanDataSource
+	if err := db.Find(&links).Error; err != nil {
+		return err
+	}
+	if len(links) == 0 {
+		return nil
+	}
+	ids := make([]uint, 0, len(links))
+	for _, l := range links {
+		ids = append(ids, l.DataSourceID)
+	}
+	var sources []models.DataSource
+	if err := db.Where("id IN ?", ids).Find(&sources).Error; err != nil {
+		return err
+	}
+	nameByID := make(map[uint]string, len(sources))
+	for _, ds := range sources {
+		nameByID[ds.ID] = ds.Name
+	}
+	migrated := 0
+	for _, l := range links {
+		name, ok := nameByID[l.DataSourceID]
+		if !ok {
+			continue // 源已下线的关联行是脏数据，不给它补授权
+		}
+		// 补 -1 是**忠实还原**：旧模型里「有关联行、没限额行」就是不限额。
+		// 这里若沿用套餐默认档（free 每源 100），搬迁本身就成了给用户新加一道上限。
+		created, err := ensurePlanSourceGrant(db, l.PlanID, name, -1)
+		if err != nil {
+			return err
+		}
+		if created {
+			migrated++
+		}
+	}
+	if migrated > 0 {
+		log.Printf("套餐授权已并入限额表：从旧关联表迁移 %d 行（limit=-1，不限额但可用）", migrated)
+	}
+	return nil
+}
+
+// warnUngrantedSources 存量库里「一个套餐都没授权」的源对所有人都是 403，
+// 但自动补会把管理员的有意回收也抹掉——所以只告警，不写数据。
+func warnUngrantedSources(db *gorm.DB) {
 	var sources []models.DataSource
 	if err := db.Find(&sources).Error; err != nil {
 		return
 	}
 	for _, ds := range sources {
 		var n int64
-		db.Model(&models.QuotaPlanDataSource{}).Where("data_source_id = ?", ds.ID).Count(&n)
+		db.Model(&models.QuotaLimit{}).
+			Where("scope = ? AND target = ?", "source", ds.Name).Count(&n)
 		if n == 0 {
-			log.Printf("警告：数据源 %s 未关联任何套餐，其接口对所有人返回 403；"+
-				"确需开放请在管理面板「数据源 → 套餐关联」勾选，确要下线请把该源置为禁用", ds.Name)
+			log.Printf("警告：数据源 %s 未授权给任何套餐，其接口对所有人返回 403；"+
+				"确需开放请在管理面板「额度 → 限制项」加一行（scope=source，限额 -1 即不限额），"+
+				"确要下线请把该源置为禁用", ds.Name)
 		}
 	}
-}
-
-func seedPlanDataSources(db *gorm.DB) error {
-	// 只在 QuotaPlanDataSource 表首次为空时初始化（不覆盖用户手动修改）
-	var count int64
-	db.Model(&models.QuotaPlanDataSource{}).Count(&count)
-	if count > 0 {
-		return nil
-	}
-	if sourceSeedProvider == nil {
-		return nil
-	}
-
-	// 获取套餐和数据源
-	var freePlan, vipPlan, adminPlan models.QuotaPlan
-	db.Where("code = ?", "free").First(&freePlan)
-	db.Where("code = ?", "vip").First(&vipPlan)
-	db.Where("code = ?", "admin").First(&adminPlan)
-
-	var dataSources []models.DataSource
-	db.Find(&dataSources)
-	dsMap := make(map[string]uint)
-	for _, ds := range dataSources {
-		dsMap[ds.Name] = ds.ID
-	}
-
-	// 三个内置套餐均关联全部声明数据源（免费/会员/管理员同构）
-	plans := []models.QuotaPlan{freePlan, vipPlan, adminPlan}
-	for _, plan := range plans {
-		for _, s := range sourceSeedProvider() {
-			if dsID, ok := dsMap[s.Name]; ok {
-				db.Create(&models.QuotaPlanDataSource{PlanID: plan.ID, DataSourceID: dsID})
-			}
-		}
-	}
-	return nil
 }
 
 func Seed(db *gorm.DB) error {
@@ -622,10 +644,10 @@ func Seed(db *gorm.DB) error {
 	if _, err := seedDataSources(db); err != nil {
 		return err
 	}
-	if err := seedPlanDataSources(db); err != nil {
+	if err := alignPlanGrants(db); err != nil {
 		return err
 	}
-	warnUnlinkedSources(db)
+	warnUngrantedSources(db)
 	if err := seedAdmin(db); err != nil {
 		return err
 	}

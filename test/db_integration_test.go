@@ -155,59 +155,54 @@ func TestSeedLegacyGroupExpansionAndRetired(t *testing.T) {
 	}
 }
 
-// TestSeedLinksNewSourceButNotRevivedOne 覆盖 P12 的两面：
-//   - **新增**的数据源（本轮才建出行）必须自动进三个内置套餐，否则存量库上加源＝全员 403；
-//   - 已存在的源被管理员手工摘光套餐关联后，重启**不再**把关联塞回来（那会覆盖管理员的有意配置），
+// TestSeedGrantsNewSourceButNotRevivedOne 覆盖 P12 的两面（授权现在就是限额行，P34）：
+//   - **新增**的数据源（本轮才建出行）必须自动授权给三个内置套餐，否则存量库上加源＝全员 403；
+//   - 已存在的源被管理员手工回收授权（删掉限额行）后，重启**不再**把授权塞回来（那会覆盖管理员的有意配置），
 //     只在启动日志里告警。
-func TestSeedLinksNewSourceButNotRevivedOne(t *testing.T) {
+func TestSeedGrantsNewSourceButNotRevivedOne(t *testing.T) {
 	newTestServer(t)
 
-	countLinks := func(name string) int64 {
+	countGrants := func(name string) int64 {
 		var n int64
-		if err := db.DB.Model(&models.QuotaPlanDataSource{}).
-			Joins("JOIN data_sources ON data_sources.id = quota_plan_data_sources.data_source_id").
-			Where("data_sources.name = ?", name).Count(&n).Error; err != nil {
-			t.Fatalf("统计 %s 的套餐关联失败: %v", name, err)
+		if err := db.DB.Model(&models.QuotaLimit{}).
+			Where("scope = ? AND target = ?", "source", name).Count(&n).Error; err != nil {
+			t.Fatalf("统计 %s 的授权行失败: %v", name, err)
 		}
 		return n
 	}
 
-	// 造出「新源」：把 fake_c 连行带关联硬删（软删会让 name 唯一索引继续占位，seed 就建不出来了）
+	// 造出「新源」：把 fake_c 连行带授权硬删（软删会让 name 唯一索引继续占位，seed 就建不出来了）
 	var c models.DataSource
 	if err := db.DB.Unscoped().Where("name = ?", fakeC).First(&c).Error; err != nil {
 		t.Fatalf("取 fake_c 失败: %v", err)
 	}
-	if err := db.DB.Where("data_source_id = ?", c.ID).Delete(&models.QuotaPlanDataSource{}).Error; err != nil {
-		t.Fatalf("清 fake_c 关联失败: %v", err)
+	if err := db.DB.Where("scope = ? AND target = ?", "source", fakeC).Delete(&models.QuotaLimit{}).Error; err != nil {
+		t.Fatalf("清 fake_c 授权失败: %v", err)
 	}
 	if err := db.DB.Unscoped().Delete(&models.DataSource{}, c.ID).Error; err != nil {
 		t.Fatalf("删 fake_c 行失败: %v", err)
 	}
 
-	// 造出「被管理员摘光关联的存量源」：只删关联，保留 data_sources 行
-	var b models.DataSource
-	if err := db.DB.Where("name = ?", fakeB).First(&b).Error; err != nil {
-		t.Fatalf("取 fake_b 失败: %v", err)
-	}
-	if err := db.DB.Where("data_source_id = ?", b.ID).Delete(&models.QuotaPlanDataSource{}).Error; err != nil {
-		t.Fatalf("清 fake_b 关联失败: %v", err)
+	// 造出「被管理员回收授权的存量源」：只删限额行，保留 data_sources 行
+	if err := db.DB.Where("scope = ? AND target = ?", "source", fakeB).Delete(&models.QuotaLimit{}).Error; err != nil {
+		t.Fatalf("清 fake_b 授权失败: %v", err)
 	}
 
 	if err := db.Seed(db.DB); err != nil {
 		t.Fatalf("Seed 出错: %v", err)
 	}
 
-	if got := countLinks(fakeC); got != 3 {
-		t.Errorf("新增源 %s 的内置套餐关联 = %d, want 3（free/vip/admin 各一行）", fakeC, got)
+	if got := countGrants(fakeC); got != 3 {
+		t.Errorf("新增源 %s 的内置套餐授权 = %d, want 3（free/vip/admin 各一行）", fakeC, got)
 	}
-	if got := countLinks(fakeB); got != 0 {
-		t.Errorf("管理员摘除的关联被重启塞回来了：%s 现有 %d 行（应只告警不改数据）", fakeB, got)
+	if got := countGrants(fakeB); got != 0 {
+		t.Errorf("管理员回收的授权被重启塞回来了：%s 现有 %d 行（应只告警不改数据）", fakeB, got)
 	}
-	// 幂等：再跑一次不得重复插入（唯一索引 idx_plan_source 会直接报错）
+	// 幂等：再跑一次不得重复插入（重复行会让「限额即授权」读出不一致）
 	if err := db.Seed(db.DB); err != nil {
 		t.Fatalf("二次 Seed 出错（幂等被破坏）: %v", err)
 	}
-	if got := countLinks(fakeC); got != 3 {
-		t.Errorf("二次 Seed 后新增源关联 = %d, want 仍为 3", got)
+	if got := countGrants(fakeC); got != 3 {
+		t.Errorf("二次 Seed 后新增源授权 = %d, want 仍为 3", got)
 	}
 }

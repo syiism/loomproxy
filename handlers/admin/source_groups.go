@@ -319,6 +319,7 @@ func ApplySourceGroupLimits(c *gin.Context) {
 
 	written := 0
 	codes := make([]string, 0, len(members))
+	skipped := make([]string, 0, len(members))
 	err := db.DB.Transaction(func(tx *gorm.DB) error {
 		for _, ds := range members {
 			var row models.QuotaLimit
@@ -327,16 +328,18 @@ func ApplySourceGroupLimits(c *gin.Context) {
 				if err := tx.Model(&row).Update("limit", *req.Limit).Error; err != nil {
 					return err
 				}
-			} else if errors.Is(err, gorm.ErrRecordNotFound) {
-				row = models.QuotaLimit{PlanID: plan.ID, Scope: "source", Target: ds.Name, Limit: *req.Limit, Period: period}
-				if err := tx.Create(&row).Error; err != nil {
-					return err
-				}
-			} else {
-				return err
+				written++
+				codes = append(codes, ds.Name)
+				continue
 			}
-			written++
-			codes = append(codes, ds.Name)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// **不新建行**：限额行现在就是授权行（待办清单 P34），
+				// 「按组套用额度」一旦补行就等于替整组发权限，那是另一个动作，
+				// 只能由人在「额度 · 套餐」页逐条做。跳过并回报，让他看得见自己漏了谁。
+				skipped = append(skipped, ds.Name)
+				continue
+			}
+			return err
 		}
 		return nil
 	})
@@ -345,8 +348,12 @@ func ApplySourceGroupLimits(c *gin.Context) {
 		return
 	}
 	// G2：不写覆盖日志（可回滚靠限额页逐行看），只留一条服务端日志说明批量改动了哪些源
-	log.Printf("按分组套用限额: group=%s plan=%s limit=%d sources=%s", group.Name, plan.Code, *req.Limit, strings.Join(codes, ","))
-	auth.Ok(c, gin.H{"applied": written, "plan_code": plan.Code, "limit": *req.Limit, "sources": codes})
+	log.Printf("按分组套用限额: group=%s plan=%s limit=%d sources=%s 未授权跳过=%s",
+		group.Name, plan.Code, *req.Limit, strings.Join(codes, ","), strings.Join(skipped, ","))
+	auth.Ok(c, gin.H{
+		"applied": written, "plan_code": plan.Code, "limit": *req.Limit,
+		"sources": codes, "skipped_ungranted": skipped,
+	})
 }
 
 // findSourceGroup 按路径 id 取组，失败时已写好响应

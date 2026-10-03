@@ -481,28 +481,13 @@ func CreateApp() *gin.Engine {
 		var dataSources []models.DataSource
 		db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources)
 
-		// 按用户套餐过滤
+		// 按用户套餐过滤（授权=限额行，见 gate/grant.go）。
+		// 顺手改了这里唯一的宽松处：过去「套餐一条授权都没有」时会**跳过过滤、把全部源发出去**，
+		// 与 /datasources 那条相反；现在两处都失败关闭（读不到授权就一个都不给）。
 		if userID > 0 {
 			var user models.User
 			if err := db.DB.Preload("Plan").First(&user, userID).Error; err == nil {
-				plan := gate.ResolvePlanForUser(&user)
-				if plan.ID > 0 {
-					var planDS []models.QuotaPlanDataSource
-					db.DB.Where("plan_id = ?", plan.ID).Find(&planDS)
-					allowedMap := make(map[uint]bool)
-					for _, p := range planDS {
-						allowedMap[p.DataSourceID] = true
-					}
-					if len(allowedMap) > 0 {
-						filtered := make([]models.DataSource, 0, len(dataSources))
-						for _, ds := range dataSources {
-							if allowedMap[ds.ID] {
-								filtered = append(filtered, ds)
-							}
-						}
-						dataSources = filtered
-					}
-				}
+				dataSources = gate.FilterByPlan(dataSources, gate.ResolvePlanForUser(&user).ID)
 			}
 		}
 

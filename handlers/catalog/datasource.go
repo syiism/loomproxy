@@ -110,53 +110,16 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 		return nil, err
 	}
 
-	// 2. 如果用户已登录，过滤套餐包含的数据源
-	if userID > 0 {
-		var user models.User
-		if err := db.DB.Preload("Plan").First(&user, userID).Error; err == nil {
-			plan := gate.ResolvePlanForUser(&user)
-			if plan.ID > 0 {
-				var planDS []models.QuotaPlanDataSource
-				db.DB.Where("plan_id = ?", plan.ID).Find(&planDS)
-				allowedMap := make(map[uint]bool)
-				for _, p := range planDS {
-					allowedMap[p.DataSourceID] = true
-				}
-				if len(allowedMap) == 0 {
-					dataSources = []models.DataSource{}
-				} else {
-					filtered := make([]models.DataSource, 0, len(dataSources))
-					for _, ds := range dataSources {
-						if allowedMap[ds.ID] {
-							filtered = append(filtered, ds)
-						}
-					}
-					dataSources = filtered
-				}
+	// 2. 按套餐过滤已授权的数据源（授权=限额行，见 gate/grant.go；匿名按免费版）
+	{
+		planID := gate.FreePlanID()
+		if userID > 0 {
+			var user models.User
+			if err := db.DB.Preload("Plan").First(&user, userID).Error; err == nil {
+				planID = gate.ResolvePlanForUser(&user).ID
 			}
 		}
-	} else {
-		// 匿名用户：只显示免费套餐包含的数据源
-		var freePlan models.QuotaPlan
-		if err := db.DB.Where("code = ?", "free").First(&freePlan).Error; err == nil {
-			var planDS []models.QuotaPlanDataSource
-			db.DB.Where("plan_id = ?", freePlan.ID).Find(&planDS)
-			allowedMap := make(map[uint]bool)
-			for _, p := range planDS {
-				allowedMap[p.DataSourceID] = true
-			}
-			if len(allowedMap) == 0 {
-				dataSources = []models.DataSource{}
-			} else {
-				filtered := make([]models.DataSource, 0, len(dataSources))
-				for _, ds := range dataSources {
-					if allowedMap[ds.ID] {
-						filtered = append(filtered, ds)
-					}
-				}
-				dataSources = filtered
-			}
-		}
+		dataSources = gate.FilterByPlan(dataSources, planID)
 	}
 
 	// 3. 构建响应数据

@@ -102,28 +102,12 @@ func Dashboard(c *gin.Context) {
 	var dataSources []models.DataSource
 	db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources)
 
-	// 如果用户非管理员，按套餐过滤
+	// 如果用户非管理员，按套餐过滤：判据就一个——套餐有没有这个源的限额行（待办清单 P34）。
+	// 过去这里是「EffectiveSourceLimit != 0 且关联表有记录」两个条件叠着，
+	// 中间还留着一句「此处逻辑需确认」的注释：override 把额度打到 0 的源会被当成"没授权"显示出来，
+	// 而真正的授权判据在另一张表里。合并成一张表之后没有这个歧义了。
 	if !isAdmin {
-		planLimits := gate.PlanSourceLimits(planID)
-		filtered := make([]models.DataSource, 0, len(dataSources))
-		for _, ds := range dataSources {
-			limit := gate.EffectiveSourceLimit(&user, ds.Name, planLimits)
-			if limit != 0 { // limit == 0 表示该套餐未包含该数据源（通过 override=0 表示不限制，但此处逻辑需确认）
-				// 实际上 effectiveSourceLimit 返回 -1 表示不限制，>=0 表示具体限额
-				// 套餐包含的数据源在 QuotaPlanDataSource 中有记录
-				var count int64
-				db.DB.Model(&models.QuotaPlanDataSource{}).
-					Where("plan_id = ? AND data_source_id = ?", plan.ID, ds.ID).
-					Count(&count)
-				if count > 0 {
-					filtered = append(filtered, ds)
-				}
-			} else {
-				// 管理员或无限制套餐
-				filtered = append(filtered, ds)
-			}
-		}
-		dataSources = filtered
+		dataSources = gate.FilterByPlan(dataSources, planID)
 	}
 
 	planLimits := gate.PlanSourceLimits(planID)

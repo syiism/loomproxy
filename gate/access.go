@@ -1,6 +1,7 @@
 package gate
 
 // 访问控制：数据源是否启用、用户生效套餐是否包含该数据源。
+// 「套餐包含」现在就是一行限额（`gate/grant.go`，待办清单 P34）——不再有第二张关联表。
 //
 // 注册 Def：Name="access"，Scope=Route，Order=400。
 // 三轴里最早的一位（先问「能不能用」，再问「值多少钱」「多快能用第二次」）；
@@ -32,7 +33,7 @@ func init() {
 
 // DataSourceAccessMiddleware 检查数据源访问权限：
 // 1. 数据源是否启用（DataSource.Status = 1）
-// 2. 用户套餐是否包含该数据源（QuotaPlanDataSource 关联）
+// 2. 用户套餐是否包含该数据源（= 有没有一行 scope=source 的限额，见 grant.go）
 // 管理员跳过检查
 func DataSourceAccessMiddleware(sourceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -69,7 +70,7 @@ func DataSourceAccessMiddleware(sourceName string) gin.HandlerFunc {
 			tokenStr := utils.TokenFromRequest(c)
 			if tokenStr == "" {
 				// 匿名用户：只允许访问免费套餐包含的数据源
-				if !isDataSourceInFreePlan(sourceName) {
+				if !FreePlanAllowsSource(sourceName) {
 					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 						"code": conf.Config.ErrorCode,
 						"msg":  "请登录后访问该数据源",
@@ -113,12 +114,8 @@ func DataSourceAccessMiddleware(sourceName string) gin.HandlerFunc {
 				return
 			}
 
-			// 4. 检查套餐是否包含该数据源
-			var count int64
-			db.DB.Model(&models.QuotaPlanDataSource{}).
-				Where("plan_id = ? AND data_source_id = ?", plan.ID, ds.ID).
-				Count(&count)
-			if count == 0 {
+			// 4. 检查套餐是否包含该数据源（授权=限额行存在）
+			if !PlanHasSource(plan.ID, ds.Name) {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"code": conf.Config.ErrorCode,
 					"msg":  "当前套餐不包含该数据源，请升级套餐",
@@ -129,40 +126,4 @@ func DataSourceAccessMiddleware(sourceName string) gin.HandlerFunc {
 
 		c.Next()
 	}
-}
-
-// isDataSourceInFreePlan 检查数据源是否在免费套餐中
-func isDataSourceInFreePlan(sourceName string) bool {
-	var ds models.DataSource
-	if err := db.DB.Where("name = ?", sourceName).First(&ds).Error; err != nil {
-		return false
-	}
-	var freePlan models.QuotaPlan
-	if err := db.DB.Where("code = ?", "free").First(&freePlan).Error; err != nil {
-		return false
-	}
-	var count int64
-	db.DB.Model(&models.QuotaPlanDataSource{}).
-		Where("plan_id = ? AND data_source_id = ?", freePlan.ID, ds.ID).
-		Count(&count)
-	return count > 0
-}
-
-// userHasDataSourceAccess 检查用户套餐是否包含该数据源
-func userHasDataSourceAccess(user *models.User, sourceName string) bool {
-	var ds models.DataSource
-	if err := db.DB.Where("name = ?", sourceName).First(&ds).Error; err != nil {
-		return false
-	}
-
-	plan := ResolvePlan(user)
-	if plan.ID == 0 {
-		return false
-	}
-
-	var count int64
-	db.DB.Model(&models.QuotaPlanDataSource{}).
-		Where("plan_id = ? AND data_source_id = ?", plan.ID, ds.ID).
-		Count(&count)
-	return count > 0
 }

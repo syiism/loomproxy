@@ -80,16 +80,14 @@ func TestAccessDisabledSource(t *testing.T) {
 	}
 }
 
-// TestAccessPlanNotInclude 套餐未关联数据源时普通用户 403，管理员不受影响
+// TestAccessPlanNotInclude 套餐未授权数据源时普通用户 403，管理员不受影响
 func TestAccessPlanNotInclude(t *testing.T) {
 	srv := newTestServer(t)
 	token := registerUser(t, srv, "q_user2", "q_user2@example.com", "pass1234")
 
-	// 解除 free 套餐与 fake_a 的关联
-	if err := db.DB.Where("plan_id = ? AND data_source_id = ?",
-		planIDByCode(t, "free"), dataSourceIDByName(t, "fake_a"),
-	).Delete(&models.QuotaPlanDataSource{}).Error; err != nil {
-		t.Fatalf("解除套餐-数据源关联失败: %v", err)
+	// 回收 free 套餐对 fake_a 的授权（授权=限额行，gate/grant.go）
+	if err := gate.UngrantPlanSource(planIDByCode(t, "free"), "fake_a"); err != nil {
+		t.Fatalf("回收套餐授权失败: %v", err)
 	}
 
 	status, raw := searchA(t, srv, token)

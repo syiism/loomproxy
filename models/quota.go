@@ -162,7 +162,10 @@ func (DataSource) TableName() string {
 	return "data_sources"
 }
 
-// QuotaPlanDataSource 套餐-数据源关联（定义哪个套餐包含哪些数据源）
+// QuotaPlanDataSource 套餐-数据源关联。**已弃用（待办清单 P34，方案 A）**：
+// 「哪个套餐包含哪个源」现在就是 quota_limits 里那行 scope=source 的限额，两处记录同一份事实
+// 就会两处都能被单独改一遍。启动时 db.Seed 的 alignPlanGrants 把存量行一次性搬进限额表，
+// 之后本表不再被读写；DROP 留给一次单独的带备份 DDL 发布。
 type QuotaPlanDataSource struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
 	PlanID       uint      `gorm:"uniqueIndex:idx_plan_source;not null" json:"plan_id"`

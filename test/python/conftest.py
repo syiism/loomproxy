@@ -242,8 +242,8 @@ class Db:
                  (source, base_url))
 
     def unbind_source_from_plan(self, plan_code, source):
-        self.sql("DELETE FROM quota_plan_data_sources WHERE plan_id = ? AND data_source_id = "
-                 "(SELECT id FROM data_sources WHERE name = ?)",
+        """回收授权 = 删掉那行 scope='source' 的限额（待办清单 P34：限额行即授权）。"""
+        self.sql("DELETE FROM quota_limits WHERE plan_id = ? AND scope = 'source' AND target = ?",
                  (self.plan_id_by_code(plan_code), source))
 
 

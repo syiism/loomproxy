@@ -11,6 +11,7 @@ import (
 	"loomproxy/db"
 	"loomproxy/gate"
 	"loomproxy/handlers/auth"
+	"loomproxy/handlers/catalog"
 	"loomproxy/models"
 )
 
@@ -203,6 +204,8 @@ func DeleteQuotaPlan(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "删除失败")
 		return
 	}
+	// 删套餐会连带删掉它的授权行（限额即授权），缓存视图要跟着失效
+	catalog.InvalidateDatasourcesCache()
 	auth.Ok(c, gin.H{"message": "已删除"})
 }
 
@@ -241,6 +244,19 @@ func CreateQuotaLimit(c *gin.Context) {
 		return
 	}
 
+	// 授权判定现在就靠这一行（gate/grant.go），写错名字不会报错、只会静默不发源，所以在入口炸掉
+	if req.Scope == "source" {
+		var n int64
+		if err := db.DB.Model(&models.DataSource{}).Where("name = ?", req.Target).Count(&n).Error; err != nil {
+			auth.Fail(c, http.StatusInternalServerError, "数据库错误")
+			return
+		}
+		if n == 0 {
+			auth.Fail(c, http.StatusBadRequest, "数据源不存在: "+req.Target)
+			return
+		}
+	}
+
 	var count int64
 	if err := db.DB.Model(&models.QuotaLimit{}).
 		Where("plan_id = ? AND scope = ? AND target = ?", req.PlanID, req.Scope, req.Target).
@@ -267,6 +283,10 @@ func CreateQuotaLimit(c *gin.Context) {
 	if err := db.DB.Create(&quotaLimit).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "创建额度限制失败")
 		return
+	}
+	if quotaLimit.Scope == "source" {
+		// 新增一行 source 限额 = 该套餐多了一个可用源，/datasources 的缓存视图要跟着变
+		catalog.InvalidateDatasourcesCache()
 	}
 	auth.Ok(c, quotaLimit)
 }
@@ -331,6 +351,10 @@ func DeleteQuotaLimit(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "删除失败")
 		return
 	}
+	if quotaLimit.Scope == "source" {
+		// 删一行 = 回收该源（授权与限额同一行），不失效缓存就会让旧视图多留一个点
+		catalog.InvalidateDatasourcesCache()
+	}
 	auth.Ok(c, gin.H{"message": "已删除"})
 }
 
@@ -338,7 +362,8 @@ type QuotaOverrideItem struct {
 	SourceCode string `json:"source_code"` // 数据源标识
 	SourceName string `json:"source_name"` // 显示名称
 	Category   string `json:"category"`    // 所属组，如 fq
-	PlanLimit  *int64 `json:"plan_limit"`  // 套餐限额（-1=不限，nil=未配置）
+	Granted    bool   `json:"granted"`     // 该套餐是否授权了这个源（= 有没有那行限额，P34）
+	PlanLimit  *int64 `json:"plan_limit"`  // 套餐限额（-1=不限；granted=false 时为 nil=未授权，不是「不限」）
 	Used       int64  `json:"used"`        // 当日该用户在此数据源已消耗
 	UserLimit  *int64 `json:"user_limit"`  // 用户覆盖（调整量，可加可减）
 	Effective  int64  `json:"effective"`   // 生效额度 = 计划 + 覆盖（-1=不限）
@@ -386,14 +411,9 @@ func GetUserQuota(c *gin.Context) {
 			planCode = freePlan.Code
 		}
 	}
-	planLimits := make(map[string]int64)
-	if planID != nil {
-		var limits []models.QuotaLimit
-		db.DB.Where("plan_id = ? AND scope = ?", *planID, "source").Find(&limits)
-		for _, l := range limits {
-			planLimits[l.Target] = l.Limit
-		}
-	}
+	// 套餐轴的限额与授权是同一张表同一批行（gate/grant.go），这里只读一份：
+	// map 里有这个源 = 授权了；值 -1 = 授权且不限额；没有这一项 = 无权限（不是不限）。
+	planLimits := gate.PlanSourceLimits(ptrOrZero(planID))
 
 	var sources []models.DataSource
 	db.DB.Order("category ASC, sort_order ASC, id ASC").Find(&sources)
@@ -408,6 +428,7 @@ func GetUserQuota(c *gin.Context) {
 		if l, ok := planLimits[ds.Name]; ok {
 			v := l
 			item.PlanLimit = &v
+			item.Granted = true
 		}
 		if l, ok := overrideMap[ds.Name]; ok {
 			v := l
@@ -415,8 +436,12 @@ func GetUserQuota(c *gin.Context) {
 		}
 		item.Used = gate.UsedToday(user.ID, ds.Name)
 		// 生效额度 = 计划额度 + 用户覆盖（覆盖为空视为 0，可加可减，下限 0；
-		// 计划未配置或为负（不限）时生效额度为不限）
-		if item.PlanLimit != nil && *item.PlanLimit >= 0 {
+		// 计划额度为负（不限）时覆盖不生效，仍是不限）。
+		// **未授权的源不参与这条算式**：访问控制（order 400）先于计费（500），
+		// 该源对这名用户就是 403，所以这里给 -1 会被读成「不限」——面板按 granted 显示「无权限」。
+		if !item.Granted {
+			item.Effective = -1
+		} else if item.PlanLimit != nil && *item.PlanLimit >= 0 {
 			var adj int64
 			if item.UserLimit != nil {
 				adj = *item.UserLimit
@@ -486,4 +511,12 @@ func UpdateUserQuota(c *gin.Context) {
 		}
 	}
 	auth.Ok(c, gin.H{"message": "额度覆盖已更新"})
+}
+
+// ptrOrZero 取可选套餐 ID 的值；nil（用户没绑套餐）返回 0，让 gate 那侧失败关闭。
+func ptrOrZero(p *uint) uint {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
