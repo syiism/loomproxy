@@ -5,10 +5,12 @@ package test
 // 号池框架与上游协议无关，用例不需要任何真实数据源。
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,7 @@ var errResourceExpired = errors.New("资源到期")
 type fakeProvider struct {
 	quota       map[string]pool.Quota // ident → 上游真实额度
 	failRefresh map[string]bool       // ident → 刷新失败（模拟上游故障/风控）
+	failCreate  bool                  // 建号失败（模拟上游拒绝注册）——只有「被上限判住」才允许不重复喊
 	claimExtend time.Duration         // 单次领取延长的有效期（零值=1 小时）
 	created     int
 	claims      map[string]int
@@ -54,6 +57,9 @@ func (f *fakeProvider) Name() string {
 }
 
 func (f *fakeProvider) Create(_ context.Context) (*pool.Device, error) {
+	if f.failCreate {
+		return nil, errors.New("模拟上游拒绝注册")
+	}
 	f.created++
 	ident := fmt.Sprintf("dev-%06d-0000-0000-000000000001", f.created)
 	f.quota[ident] = pool.Quota{Total: fakeQuotaMax}
@@ -1016,5 +1022,111 @@ func TestPoolDeadRetentionYieldsToCapacity(t *testing.T) {
 	}
 	if n := p3.HotCount(); n < 2 {
 		t.Errorf("spread 池没补到轮询目标：hot=%d, want ≥2", n)
+	}
+}
+
+// TestPoolWatermarkYieldsToCapacity 冷备水位与总上限必须自洽，且「被上限判住」不能每轮喊一次。
+// 生产形状（分支 S34 发布时实测）：七猫游客池 MaxDevices=1、冷备水位默认 2——一个名额该给那一个
+// 活跃号，冷备永远补不齐，于是每个巡检 tick 一条 error 形状的日志（功能没坏，读数被泡坏）。
+// P35 收的是死号保留上限，这条收的是可用目标本身与它的日志。
+func TestPoolWatermarkYieldsToCapacity(t *testing.T) {
+	newTestServer(t)
+
+	// 1) 配置自洽：水位被名额压下来，而**名额一个字都不动**（它是「建号对上游是不可逆增长」的闸门，
+	//    P35 还要靠它给错误驱动扩容留余量）。最后一行是下限：夹到 0 等于「这池不要号」，池会一个都建不出来
+	for _, tc := range []struct {
+		name           string
+		cold, maxIn    int
+		wantCold       int
+		wantMaxUntouch int
+	}{
+		{"名额宽裕不动水位", 2, 9, 2, 9},
+		{"名额刚好不动", 2, 3, 2, 3},
+		{"名额挤掉一个冷备", 2, 2, 1, 2},
+		{"单号池水位下限 1", 2, 1, 1, 1},
+		{"不限总号数不参与", 2, 0, 2, 0},
+	} {
+		fp := newFakeProvider()
+		fp.poolName = "wm_" + tc.name
+		cfg := fakePoolConfig()
+		cfg.ColdSpares, cfg.MaxDevices = tc.cold, tc.maxIn
+		p := newFakePool(t, pool.New(fp, cfg))
+		st := p.Status().Config
+		if st.ColdSpares != tc.wantCold {
+			t.Errorf("%s: 生效冷备水位 = %d, want %d（名义 %d、名额 %d）", tc.name, st.ColdSpares, tc.wantCold, tc.cold, tc.maxIn)
+		}
+		if st.MaxDevices != tc.wantMaxUntouch {
+			t.Errorf("%s: 总上限被改动 = %d, want %d（闸门不得被水位收紧）", tc.name, st.MaxDevices, tc.wantMaxUntouch)
+		}
+	}
+
+	// spread 型：显式声明的目标人数超过名额时收到名额（未声明时 spreadTarget 本就退到名额）
+	fps := newFakeProvider()
+	fps.poolName = "wm_spread_over"
+	cfgs := spreadConfig()
+	cfgs.TargetDevices, cfgs.MaxDevices = 9, 5
+	ps := newFakePool(t, pool.New(fps, cfgs))
+	if got := ps.Status().Config.TargetDevices; got != 5 {
+		t.Errorf("spread 目标人数 = %d, want 5（被名额压住）", got)
+	}
+
+	// 2) 单号池（水位已被夹到 1，但一个名额该给那一个活跃号，冷备仍然补不齐）：
+	//    出声的判据是**状态变化**——首次被判住一条，同一状态反复巡检不再重复；
+	//    换个实例（等同重启）再判住时还要出声，不是永久静音。
+	var buf bytes.Buffer
+	oldOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldOut) })
+	count := func() int { return strings.Count(buf.String(), "冷备补不满") }
+
+	fp1 := newFakeProvider()
+	fp1.poolName = "wm_quiet"
+	cfg1 := fakePoolConfig()
+	cfg1.ColdSpares, cfg1.MaxDevices = 1, 1
+	p1 := newFakePool(t, pool.New(fp1, cfg1))
+	p1.Maintain() // 建出那一个号（名额尚空）
+	if fp1.created != 1 {
+		t.Fatalf("Maintain 没建号（created=%d），后面的判住无从测起", fp1.created)
+	}
+	if _, err := p1.Acquire(); err != nil { // 转正为活跃号：名额被占满，冷备补不出来
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	p1.Maintain()
+	if n := count(); n != 1 {
+		t.Fatalf("补不齐冷备的出声次数 = %d, want 1（首轮）", n)
+	}
+	p1.Maintain()
+	p1.Maintain()
+	p1.Maintain()
+	if n := count(); n != 1 {
+		t.Fatalf("又三轮巡检后出声次数 = %d, want 仍是 1（同一卡住状态不重复喊——生产每 60 秒一条就是这么来的）", n)
+	}
+
+	p1.Stop()
+	pool.Unregister(p1.Name())
+	p2 := pool.New(fp1, cfg1) // 同池名的新实例 = 一次重启后的形状
+	p2.Maintain()
+	if n := count(); n != 2 {
+		t.Errorf("新实例再被判住的出声次数 = %d, want 2（静音只针对重复巡检，不针对重启）", n)
+	}
+
+	// 3) 反向守卫：**只有**「被总上限判住」可以不重复喊。上游拒绝注册这类真故障必须每轮都出声——
+	//    把静音做成对一切建号失败生效，这个用例就会红。
+	var buf2 bytes.Buffer
+	log.SetOutput(&buf2)
+	t.Cleanup(func() { log.SetOutput(oldOut) })
+	fp3 := newFakeProvider()
+	fp3.poolName = "wm_loud"
+	fp3.failCreate = true
+	cfg3 := fakePoolConfig()
+	cfg3.ColdSpares, cfg3.MaxDevices = 2, 0 // 不限名额：失败只能来自上游，不是闸门
+	p3 := newFakePool(t, pool.New(fp3, cfg3))
+	p3.Maintain()
+	p3.Maintain()
+	if n := strings.Count(buf2.String(), "create cold device failed"); n != 2 {
+		t.Errorf("上游建号失败的出声次数 = %d, want 2（每轮都要喊）", n)
+	}
+	if n := strings.Count(buf2.String(), "冷备补不满"); n != 0 {
+		t.Errorf("真故障被判成了「上限内不重复的补不满」: %d 次不该出现", n)
 	}
 }

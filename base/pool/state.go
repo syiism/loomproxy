@@ -91,6 +91,28 @@ func (c Config) withDefaults() Config {
 	if c.Interval == 0 {
 		c.Interval = d.Interval
 	}
+	// 水位不得超过名额——这是 deadRetention 那条规则（「先留得下可用号，再谈留档」）的另一半：
+	// 燃烧型的名义目标是 1 个活跃 + ColdSpares 个冷备，而 MaxDevices 把 cold+hot+dead 全算进去，
+	// 两个数字过去互不知情（源侧写死的 MaxDevices 与运维改过的 POOL_COLD_SPARES 各说各话）。
+	// 补不到的水位不是算错，是**每个巡检都要新建一个号、每次都被自己的上限判住**：生产 qm_device
+	// （MaxDevices=1、默认水位 2）就是这个形状——功能没坏（活跃号照常服务），但日志每 60 秒一条
+	// error，把「这个池有问题」的读数长期污染（分支 S34 发布时实测）。
+	// 只往下夹水位，**MaxDevices 本身不动**：它是「建号对上游是不可逆增长」的闸门，
+	// 按水位收紧它会把错误驱动扩容的余量一起削掉（P35 特意留给它的那部分）。
+	// 且下限 1：建号只走「补齐冷备」这一条路，夹到 0 等于让池一个号都建不出来。MaxDevices=0 即不限。
+	if c.MaxDevices > 0 {
+		if c.Kind == KindSpread {
+			// 摊薄型没有活跃/冷备之分，水位就是目标人数；未声明时 spreadTarget 自己退到名额
+			if c.TargetDevices > c.MaxDevices {
+				c.TargetDevices = c.MaxDevices
+			}
+		} else if room := c.MaxDevices - 1; room < c.ColdSpares { // 名额先给那 1 个活跃号
+			if room < 1 {
+				room = 1
+			}
+			c.ColdSpares = room
+		}
+	}
 	return c
 }
 
@@ -121,6 +143,8 @@ type Pool struct {
 	ticker   *time.Ticker
 	stopCh   chan struct{}
 	running  atomic.Bool
+	// capNoted 建号被总上限判住是否已出声——只在状态变化时记一条，见 topUpColdLocked
+	capNoted bool
 }
 
 // New 构造号池（不启动维护协程，不落库）
@@ -533,9 +557,21 @@ func (p *Pool) topUpColdLocked() {
 			continue
 		}
 		if _, err := p.createColdLocked(); err != nil {
+			if errors.Is(err, ErrCapacityReached) {
+				// 被总上限判住是**闸门在做事**，不是故障：名额已被活跃号与冷备占满时补不出号。
+				// 每个巡检重复喊一条，只会把日志与面板读数泡成「这个池坏了」——单设备池
+				// （MaxDevices=1）必然长期如此，因为它的一个名额就该给那一个活跃号。
+				// 出声规则：状态变化时一条（首次被判住），建号成功即复位。
+				if !p.capNoted {
+					p.logf("冷备补不满: %v（按总上限判定，非故障）", err)
+					p.capNoted = true
+				}
+				return
+			}
 			p.logf("create cold device failed: %v", err)
 			return
 		}
+		p.capNoted = false
 	}
 }
 
