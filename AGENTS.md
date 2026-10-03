@@ -50,6 +50,8 @@
 - Provider 三钩子 `Create`/`Refresh`/`Claim`（**Claim 必须叠加无损**）+ 可选 `ResourceExpiredClassifier`；状态机 `hot`/`cold`/`cooldown`/`spent`/`dead`，表 `pool_devices`。
 - 水位参数是 `ColdSpares`/`MaxHot`/`MaxDead`，**总号数上限是另一个声明位 `Config.MaxDevices`**（0=不限，
   判在框架的建号入口，报 `ErrCapacityReached`）——建号会对上游产生不可逆增长的源用它，别在源内自己数行。
+  **死号保留上限是算出来的**：`min(MaxDead, MaxDevices - 可用目标)`——`MaxDevices < MaxDead` 时旧代码里死号
+  既清不掉又占满名额（生产 uxx 是 5<10），现在先留得下可用号再谈留档，建号被判住前还会先清一次腾名额（待办清单 P35）。
 - **`Config.Kind` 是调度分叉位，不只是标签**：`burn_wall_clock`（默认）= 墙钟燃烧型，只保持 1 个活跃号
   + N 个冷备，临期续领、用尽换号、错误驱动扩容；`spread` = 用量摊薄型，框架**只调 `Create`**（不 Claim
   不探活），把请求轮询到全部可用号上，失效走 `Pool.Cooldown` 的临时冷却而不是判死（P5）。
