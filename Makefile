@@ -6,6 +6,7 @@
 #   make web      仅构建前端（web/dist，go:embed 编译期必需）
 #   make test     运行全部测试（-race）
 #   make vet      go vet + gofmt 检查 + 手写 SQL 的保留字别名/反引号扫描 + 前端未定义类扫描
+#                 + 管理后台导航完整性扫描
 #   make run      build 后启动服务
 #   make clean    清理二进制与 web/dist
 
@@ -15,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check test go-build run docker clean
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean
 
 build: web vet test go-build
 
@@ -35,6 +36,7 @@ vet:
 	@$(MAKE) --no-print-directory fmt-check
 	@$(MAKE) --no-print-directory sql-check
 	@$(MAKE) --no-print-directory css-check
+	@$(MAKE) --no-print-directory nav-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -44,6 +46,14 @@ fmt-check:
 # 前端自定义类：用了没定义的类 Tailwind 静默跳过，构建与用例都不会红（待办清单 P31）
 css-check:
 	@./scripts/check-css-classes.sh
+
+# 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
+# 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。
+nav-check:
+	@routes=$$(grep -o "path: '/admin[^']*'" web/src/main.js | sed "s#.*'/##; s#'##" | sort -u); \
+	navs=$$(grep -o "to: '/admin[^']*'" web/src/pages/Admin.vue | sed "s#.*'/##; s#'##" | sort -u); \
+	missing=$$(comm -23 <(echo "$$routes") <(echo "$$navs") | grep -v '^admin$$' || true); \
+	if [ -n "$$missing" ]; then echo "管理后台导航缺页（Admin.vue 的 shortcuts 里没有入口）:"; echo "$$missing" | sed 's/^/  /'; exit 1; fi
 
 # 手写 SQL 的保留字别名与反引号：SQLite 容忍、只有 MySQL 报，所以必须在构建时扫
 sql-check:

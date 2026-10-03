@@ -6,6 +6,15 @@
       </template>
     </PageHeader>
 
+    <!-- 站点级账号读数就放在账号管理这一页（以前它在「管理后台」那页显示一遍，
+         而这里又有一份筛选总数——两份会漂移，所以按 P28·D1 收成一处）。
+         只读端点失败不影响本页主体，静默留空即可。 -->
+    <div v-if="stats.total_users" class="reveal font-mono text-xs text-text-muted mb-4">
+      站点共 {{ stats.total_users }} 个账号 · 管理员 {{ stats.admin_count }} · VIP {{ stats.vip_count }}
+      · 普通 {{ stats.normal_count }} · 今日新增 {{ stats.today_new }}
+      <span class="text-text-muted/70">（当前列表命中 {{ total }} 条，含筛选与「显示已删除」）</span>
+    </div>
+
     <div class="reveal flex flex-col sm:flex-row gap-3 mb-6">
       <input v-model="keyword" placeholder="搜索用户名 / 邮箱 / 昵称" class="input flex-1" @keydown.enter="doSearch">
       <button @click="doSearch" class="btn-ghost whitespace-nowrap">搜索</button>
@@ -275,6 +284,7 @@ const page = ref(1)
 const pageSize = ref(20)
 const keyword = ref('')
 const withDeleted = ref(false)
+const stats = ref({})
 const submitting = ref(false)
 const allRoles = ref([])
 const allPlans = ref([])
@@ -511,4 +521,6 @@ const clearQuota = async (item) => {
 
 onMounted(() => { revealObserve() })
 load()
+// 账号读数与列表分开取：它是全站口径，不该跟着筛选条件变
+adminApi.stats().then((d) => { stats.value = d || {} }).catch(() => {})
 </script>
