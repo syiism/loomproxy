@@ -35,6 +35,30 @@ type CallSubject struct {
 	// 内部标识：只用于查命名缓存，不对外暴露（面板展示的是名称）
 	BookKey    string `json:"-"`
 	ChapterKey string `json:"-"`
+	// ContentWithheld 内容维度是**被本人关掉的**、不是没抽到。
+	// 这一格存在的理由不是给用户看，是让读数分得开两种「全空」：
+	// 覆盖率算 `COALESCE(col,'')<>''`，退出的人必然掉进「缺失」那一侧——
+	// 没有这个标记，采集在漏（P19 那条）与用户选择留存关闭长得一模一样，
+	// 下一个人又会重新猜一遍「这 47% 是谁的锅」。
+	ContentWithheld bool `json:"-"`
+}
+
+// WithholdContent 抹掉本次调用的全部内容维度。用户不同意留存时由 monitor 在
+// 写进环形缓冲**之前**调用——此后进程外没有任何一份副本，不是「先落库再遮」。
+//
+// 标识（BookKey/ChapterKey）必须一起清：名称回填循环按 (source, 标识) 反查命名缓存
+// 补写 book_name/chapter_title，留着标识等于「当场说不捕获、下一轮被自己补回来」，
+// 开关就形同虚设了。
+//
+// InBandError 保留：它说的是这次请求成没成，不是用户读了什么，
+// 清掉它会让成功率读数对退出用户说谎。
+func (s *CallSubject) WithholdContent() {
+	if s == nil {
+		return
+	}
+	s.Keyword, s.BookName, s.ChapterTitle, s.Media, s.ResultCount = "", "", "", "", 0
+	s.BookKey, s.ChapterKey = "", ""
+	s.ContentWithheld = true
 }
 
 // 内容维度字段的长度上限（rune）。上游书名/章节名可以很长，明细表要保住有界：

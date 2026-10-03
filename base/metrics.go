@@ -40,6 +40,9 @@ type RecentCall struct {
 	ChapterIdent string `json:"chapter_ident,omitempty"`
 	Media        string `json:"media,omitempty"` // 枚举见 media.go；空 = 未判定
 	ResultCount  int    `json:"result_count"`
+	// ContentWithheld 内容维度是本人关掉的（隐私协议），不是没抽到——
+	// 分不开这两种「全空」，覆盖率低就永远说不清是谁的锅
+	ContentWithheld bool `json:"content_withheld,omitempty"`
 }
 
 // recentCallsCap 最近调用明细的内存保留条数（环形缓冲）
@@ -126,6 +129,7 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 		rc.ChapterIdent = subject.ChapterKey
 		rc.Media = subject.Media
 		rc.ResultCount = subject.ResultCount
+		rc.ContentWithheld = subject.ContentWithheld
 	}
 	metricsState.recent = append(metricsState.recent, rc)
 	// 缓冲达到 cap+batch：淘汰最旧 batch 条，异步批量落库（不阻塞请求路径）

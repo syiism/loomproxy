@@ -55,6 +55,8 @@ func persistCallLogs(calls []base.RecentCall) {
 			ChapterIdent: rc.ChapterIdent,
 			Media:        rc.Media,
 			ResultCount:  rc.ResultCount,
+			// 空的原因是「本人关掉」还是「没抽到」，只有写的一刻知道——不落库就再也分不出来
+			ContentWithheld: rc.ContentWithheld,
 		})
 	}
 	if err := db.DB.Create(&rows).Error; err != nil {

@@ -8,23 +8,29 @@ import (
 )
 
 type User struct {
-	ID                uint           `gorm:"primaryKey" json:"id"`
-	Username          string         `gorm:"size:64;uniqueIndex;not null" json:"username"`
-	Email             string         `gorm:"size:128;uniqueIndex;not null" json:"email"`
-	PasswordHash      string         `gorm:"size:255;not null" json:"-"`
-	Nickname          string         `gorm:"size:64" json:"nickname"`
-	Avatar            string         `gorm:"size:512" json:"avatar"`
-	Status            int            `gorm:"default:1" json:"status"`
-	Roles             []Role         `gorm:"many2many:user_roles;" json:"roles,omitempty"`
-	PlanID            *uint          `gorm:"index" json:"plan_id"`
-	Plan              *QuotaPlan     `gorm:"foreignKey:PlanID" json:"plan,omitempty"`
-	PlanExpireAt      *time.Time     `json:"plan_expire_at"` // 套餐到期时间；NULL=永久（存量用户兼容）
-	LastLoginAt       *time.Time     `json:"last_login_at"`
-	UsernameChangedAt *time.Time     `json:"username_changed_at"` // 上次修改用户名时间；NULL=从未修改（用户名每 30 天限改一次）
-	TokenExpireHours  *int           `json:"token_expire_hours"`  // 个人登录 token 有效时长（小时）；NULL=跟随系统设置，对下次及以后登录生效
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
-	DeletedAt         gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                uint       `gorm:"primaryKey" json:"id"`
+	Username          string     `gorm:"size:64;uniqueIndex;not null" json:"username"`
+	Email             string     `gorm:"size:128;uniqueIndex;not null" json:"email"`
+	PasswordHash      string     `gorm:"size:255;not null" json:"-"`
+	Nickname          string     `gorm:"size:64" json:"nickname"`
+	Avatar            string     `gorm:"size:512" json:"avatar"`
+	Status            int        `gorm:"default:1" json:"status"`
+	Roles             []Role     `gorm:"many2many:user_roles;" json:"roles,omitempty"`
+	PlanID            *uint      `gorm:"index" json:"plan_id"`
+	Plan              *QuotaPlan `gorm:"foreignKey:PlanID" json:"plan,omitempty"`
+	PlanExpireAt      *time.Time `json:"plan_expire_at"` // 套餐到期时间；NULL=永久（存量用户兼容）
+	LastLoginAt       *time.Time `json:"last_login_at"`
+	UsernameChangedAt *time.Time `json:"username_changed_at"` // 上次修改用户名时间；NULL=从未修改（用户名每 30 天限改一次）
+	TokenExpireHours  *int       `json:"token_expire_hours"`  // 个人登录 token 有效时长（小时）；NULL=跟随系统设置，对下次及以后登录生效
+	// ContentConsent 是否同意网关留存「搜索词与阅读记录」（监控明细的内容维度）。
+	// **NULL = 从未表态 = 同意**：默认档写在这里，升级前的存量用户读出来就是同意，
+	// 不需要一次回填写数据（那是生产库写操作）。显式 false 才是不同意。
+	// 只有本人能改，且走会话 only 的 /auth/me（API Key 改不动自己的同意位）——
+	// 同意位是「谁授权网关留」的记录，让长期密钥能改它等于把授权来源搞混。
+	ContentConsent *bool          `gorm:"column:content_consent" json:"-"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // EmailStr 安全获取 email 字符串（向后兼容）
@@ -44,6 +50,16 @@ func (u *User) SetPassword(password string) error {
 func (u *User) CheckPassword(password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password))
 	return err == nil
+}
+
+// KeepsContentData 内容维度同意位的**有效值**：没表态（NULL）按默认档读成「同意」。
+// 判据收成这一个方法，是因为「NULL 意味着什么」有三处要问它（monitor 的采集闸口、
+// 面板下发、用例断言）——写在三处字面量判断里，早晚会有一处写成 `!= nil` 反了向。
+func (u *User) KeepsContentData() bool {
+	if u == nil || u.ContentConsent == nil {
+		return true
+	}
+	return *u.ContentConsent
 }
 
 func (u *User) Public() map[string]interface{} {
@@ -73,7 +89,9 @@ func (u *User) Public() map[string]interface{} {
 		"last_login_at":       u.LastLoginAt,
 		"username_changed_at": u.UsernameChangedAt,
 		"token_expire_hours":  u.TokenExpireHours,
-		"created_at":          u.CreatedAt,
+		// 下发的是**有效值**而不是原始指针：面板不该需要知道「NULL 算什么」这条规则
+		"content_consent": u.KeepsContentData(),
+		"created_at":      u.CreatedAt,
 	}
 	if u.Plan != nil {
 		result["plan"] = map[string]interface{}{

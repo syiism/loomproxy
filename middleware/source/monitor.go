@@ -12,6 +12,7 @@ import (
 	"loomproxy/base"
 	"loomproxy/middleware"
 	"loomproxy/middleware/ipblock"
+	"loomproxy/models"
 )
 
 func init() {
@@ -40,6 +41,15 @@ func monitorMiddleware(source, action string) gin.HandlerFunc {
 		// handler，取到 nil 就是全空——各维度留空而不是编造一个值
 		raw, _ := c.Get(middleware.CtxCallSubject)
 		subject, _ := raw.(*base.CallSubject)
+		// 隐私协议（同意位见 models/user.go）：用户不同意留存搜索词与阅读记录时，
+		// 这里是**最后一道闸**——维度在写进环形缓冲之前就被抹掉，此后进程外没有任何一份副本，
+		// 不是「先落库、展示时再遮」。匿名/env 键调用没有用户对象，按默认档（同意）走，
+		// 那一档本来就只有 IP 可数。
+		if v, ok := c.Get(middleware.CtxCurrentUser); ok {
+			if user, isUser := v.(*models.User); isUser && !user.KeepsContentData() {
+				subject.WithholdContent()
+			}
+		}
 		base.RecordCall(source, action, uname, c.ClientIP(), status, time.Since(start), subject)
 		ipblock.RecordFailure(c.ClientIP(), status)
 	}

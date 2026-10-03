@@ -83,6 +83,7 @@ func RegisterRoutes(r *gin.Engine) {
 		auth.POST("/forgot-password", ForgotPassword)
 		auth.GET("/me", AuthRequired(), Me)
 		auth.PATCH("/me", AuthRequired(), UpdateMe)
+		auth.PATCH("/privacy", AuthRequired(), UpdatePrivacyConsent)
 		auth.POST("/password", AuthRequired(), ChangePassword)
 		auth.POST("/logout", AuthRequired(), Logout)
 		auth.GET("/sessions", AuthRequired(), ListSessions)
@@ -442,7 +443,9 @@ type updateMeRequest struct {
 	TokenExpireHours *int   `json:"token_expire_hours"` // 0=清除个人设置（跟随系统），1-8760=个人时长
 }
 
-// UpdateMe 修改当前用户资料（用户名 / 昵称 / 邮箱）
+// UpdateMe 修改当前用户资料（用户名 / 昵称 / 邮箱 / token 时长）
+// 隐私同意位**不在这里**改——它有专用端点 PATCH /auth/privacy（见 UpdatePrivacyConsent），
+// 一份事实只留一个写入口。
 // 用户名每 30 天限改一次（从未修改过不受限），且不可与其他用户重复
 func UpdateMe(c *gin.Context) {
 	var req updateMeRequest
@@ -546,6 +549,49 @@ func UpdateMe(c *gin.Context) {
 		return
 	}
 	ok(c, user.Public())
+}
+
+type privacyConsentRequest struct {
+	ContentConsent *bool `json:"content_consent"` // 必须显式给出：nil 不是「不改」，这条端点只干这一件事
+}
+
+// UpdatePrivacyConsent 写「阅读数据留存」同意位——这个事实的唯一写入口
+// （/auth/me 不收这个字段；两处能写同一份值，迟早会互相覆盖）。
+//
+// 只认会话（与 /auth/me·password·sessions 同一组，见 AGENTS §7）：这一位记的是
+// **本人授权网关留不留自己的搜索词与阅读记录**。让长期 API Key 也能改它，等于把「谁做的授权」记混——
+// 密钥泄露时攻击者可以把同意位打开、让受害者的阅读记录重新开始被采集，而这件事在会话列表里看不见。
+//
+// 只存 true/false，不开放写回 NULL：NULL 与 true 同义（默认同意），多一个状态就多一处要解释的地方。
+//
+// 生效边界随响应一起下发，面板不必自己复制规则：**关闭后新的调用不再捕获**内容维度
+// （搜索词/书名/章节/媒介/结果数/标识，见 base/subject.go 的 WithholdContent），
+// 已经落库的历史明细不追溯删除——用户按这个开关的语义是「以后别留」，删历史是另一个决策。
+func UpdatePrivacyConsent(c *gin.Context) {
+	var req privacyConsentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+	if req.ContentConsent == nil {
+		fail(c, http.StatusBadRequest, "缺少 content_consent（true=同意留存，false=不同意）")
+		return
+	}
+	uid, _ := c.Get("user_id")
+	if err := db.DB.Model(&models.User{}).Where(map[string]interface{}{"id": uid}).
+		Update("content_consent", *req.ContentConsent).Error; err != nil {
+		fail(c, http.StatusInternalServerError, "更新失败")
+		return
+	}
+	var user models.User
+	if err := db.DB.Preload("Roles").First(&user, uid).Error; err != nil {
+		fail(c, http.StatusNotFound, "用户不存在")
+		return
+	}
+	ok(c, map[string]interface{}{
+		"content_consent": user.KeepsContentData(),
+		"scope":           "关闭后新的调用不再捕获搜索词与阅读记录；已落库的历史明细不追溯删除",
+	})
 }
 
 func ChangePassword(c *gin.Context) {

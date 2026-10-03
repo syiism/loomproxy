@@ -70,7 +70,7 @@
           </div>
           <table class="table-base">
             <thead>
-              <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th><th>带内失败</th></tr>
+              <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th><th>带内失败</th><th>未捕获</th></tr>
             </thead>
             <tbody>
               <tr v-for="(r, i) in coverage" :key="i">
@@ -313,6 +313,9 @@ const pctCells = (r) => ([
   { k: 'media', text: pct(r.has_media, r.rows) + '%', bad: pct(r.has_media, r.rows) < 90 },
   { k: 'failed', text: String(r.failed), bad: false },
   { k: 'inband', text: String(r.in_band_failed || 0), bad: (r.in_band_failed || 0) > 0 },
+  // 未捕获 = 用户自己关掉了留存（待办清单 P37）。它不进上面的分母，所以标不红都不是缺陷，
+  // 给出来只是为了让「分母怎么变小了」在这一页就有答案
+  { k: 'withheld', text: String(r.withheld || 0), bad: false },
 ])
 
 // subjectSummary：折叠块收起态的那一行读数。**只报数，不报形容词**——

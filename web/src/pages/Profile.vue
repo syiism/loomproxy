@@ -42,6 +42,30 @@
         </form>
       </section>
 
+      <!-- 隐私协议：阅读数据留存的同意位。唯一写入口 PATCH /auth/privacy（只认会话） -->
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">阅读数据留存</h2>
+        <p class="text-sm text-text-muted leading-relaxed mb-4">
+          网关会记录你调用接口的<strong>搜索词</strong>与<strong>阅读记录</strong>（书名、章节、媒介），
+          这些内容只用于生成公开排行榜。榜上只出现书名与搜索词本身，
+          不会出现你的用户名、邮箱、IP 或任何其它身份信息。
+        </p>
+        <label class="flex items-start gap-2 mb-4">
+          <input type="checkbox" v-model="privacyForm.content_consent" class="checkbox mt-0.5">
+          <span class="text-sm">同意网关留存上述内容（默认同意，可随时关闭）</span>
+        </label>
+        <p class="text-xs text-text-muted leading-relaxed mb-4">
+          关闭后，新的调用不再捕获搜索词与阅读记录，公开排行榜也不再计入你的阅读行为；
+          已经记录的历史明细不会追溯删除。
+        </p>
+        <div class="flex items-center gap-3">
+          <button type="button" class="btn-primary" :disabled="savingPrivacy" @click="onSavePrivacy">
+            {{ savingPrivacy ? '保存中' : '保存设置' }}
+          </button>
+          <span v-if="privacySavedAt" class="text-xs text-text-muted">已保存</span>
+        </div>
+      </section>
+
       <!-- 右列：修改密码 + API 密钥 -->
       <div class="space-y-12 md:space-y-16">
         <!-- 修改密码 -->
@@ -192,6 +216,11 @@ import { fmtDate, roleTone, toast, revealObserve } from '../utils.js'
 
 const me = ref({})
 const profileForm = ref({ username: '', nickname: '', email: '', token_expire_hours: 0 })
+// 隐私协议的同意位：后端给的是**有效值**（NULL 已折算成同意），所以这里只管 true/false；
+// 老会话缓存里没这个键时读成 undefined，`!== false` 按默认档（同意）走
+const privacyForm = ref({ content_consent: true })
+const savingPrivacy = ref(false)
+const privacySavedAt = ref('')
 const pwdForm = ref({ old_password: '', new_password: '' })
 const savingProfile = ref(false)
 const savingPwd = ref(false)
@@ -258,6 +287,7 @@ const load = async () => {
   try {
     me.value = session.user || {}
     profileForm.value = { username: me.value.username || '', nickname: me.value.nickname || '', email: me.value.email || '', token_expire_hours: me.value.token_expire_hours || 0 }
+    privacyForm.value.content_consent = me.value.content_consent !== false
   } catch (e) { /* 401 已由客户端处理 */ }
   nextTick(revealObserve)
 }
@@ -292,6 +322,27 @@ const onSaveProfile = async () => {
     toast(err.message, 'error')
   } finally {
     savingProfile.value = false
+  }
+}
+
+// 同意位单独一条端点：它不是「资料」的一部分，语义是本人对网关的授权，
+// 而且 /auth/me 必须带邮箱——把两件事捆在一起，改一个开关要顺带重写邮箱
+const onSavePrivacy = async () => {
+  if (savingPrivacy.value) return
+  savingPrivacy.value = true
+  try {
+    const data = await authApi.updatePrivacy(privacyForm.value.content_consent)
+    privacyForm.value.content_consent = data.content_consent !== false
+    me.value = { ...me.value, content_consent: privacyForm.value.content_consent }
+    session.user = me.value
+    privacySavedAt.value = new Date().toISOString()
+    toast(privacyForm.value.content_consent ? '已同意留存阅读数据' : '已关闭留存，新的调用不再记录搜索词与阅读记录', 'success')
+  } catch (err) {
+    // 失败要把开关拨回服务端的事实，不能让用户以为已经生效
+    privacyForm.value.content_consent = me.value.content_consent !== false
+    toast(err.message, 'error')
+  } finally {
+    savingPrivacy.value = false
   }
 }
 

@@ -10,6 +10,9 @@ export const authApi = {
   sendVerifyCode: (scene, target) => request('/verify/send', { method: 'POST', body: { scene, target } }),
   me: () => request('/auth/me'),
   updateMe: (payload) => request('/auth/me', { method: 'PATCH', body: payload }),
+  // 阅读数据留存同意位（隐私协议）：唯一写入口，只认会话
+  updatePrivacy: (contentConsent) =>
+    request('/auth/privacy', { method: 'PATCH', body: { content_consent: contentConsent } }),
   changePassword: (oldPassword, newPassword) =>
     request('/auth/password', { method: 'POST', body: { old_password: oldPassword, new_password: newPassword } }),
   logout: () => request('/auth/logout', { method: 'POST' }),

@@ -30,6 +30,14 @@
             <span :style="{ color: hasDigit ? strengthColor : '' }">数字</span>
           </div>
         </div>
+        <!-- 阅读数据留存的告知放在注册这一步：默认同意意味着「不做什么就会开始留存」，
+             那告知就不能等到用户已经进了个人中心 -->
+        <p class="text-xs text-text-muted leading-relaxed">
+          关于阅读数据：网关会记录你搜索的词与读过的书名、章节，只用于生成公开排行榜；
+          榜上只出现书名与搜索词，不会出现你的用户名、邮箱或 IP。
+          默认为同意，登录后可在「个人资料 → 阅读数据留存」随时关闭——
+          关闭后新的调用不再记录这些内容（已记录的历史不追溯删除）。
+        </p>
         <button type="submit" class="btn-primary w-full" :disabled="submitting">{{ submitting ? '注册中' : '注册' }}</button>
       </form>
       <div class="mt-6 text-center text-sm text-text-muted">已有账号？ <router-link to="/login" class="text-text border-b border-border hover:border-text transition-colors">返回登录</router-link></div>

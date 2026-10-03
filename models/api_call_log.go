@@ -28,6 +28,10 @@ type ApiCallLog struct {
 	ChapterIdent string `gorm:"size:512" json:"chapter_ident"`   // 章节标识（itemId/章节 url 等）
 	Media        string `gorm:"size:16;index" json:"media_type"` // 媒介：novel/audio/comic/video，空=未判定
 	ResultCount  int    `gorm:"default:0" json:"result_count"`   // 结果条数（0 = 空结果，榜单据此统计）
+	// ContentWithheld 内容维度全空的原因是**本人关掉了留存**（隐私协议），不是采集没抽到。
+	// 与 InBandError 同一个 NOT NULL 默认 false 的写法：口径要在 SQL 里直接可用，NULL 会造出第三种状态。
+	// 覆盖率读它，才分得开「用户在退」与「系统在漏」（P19 那条判据的另一半）。
+	ContentWithheld bool `gorm:"not null;default:false" json:"content_withheld"`
 }
 
 func (ApiCallLog) TableName() string {

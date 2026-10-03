@@ -65,6 +65,12 @@ const (
 	// handler 返回后由 legado.ObserveCall 回填，source/monitor 在 c.Next() 之后读取。
 	// 归属本包而不是 base：base 不依赖 gin，跨包契约键与上面两个保持一致。
 	CtxCallSubject = "call_subject"
+	// CtxCurrentUser 访问控制中间件已经查出来的调用者（*models.User）。
+	// 挂在这里而不是让下游再查一遍，是因为那条 `First(&user)` 带两个 Preload、每个数据请求都要跑一次，
+	// 而「同意位」（monitor 用）与「套餐授权」（聚合搜索逐源判定用）都需要它——
+	// 各自再查一遍等于把同一条读路径复制成三份。没查到用户（匿名/env 键）时这个键不存在，
+	// 读的一方按默认档处理，不要写「取不到就当 false」。
+	CtxCurrentUser = "current_user"
 )
 
 // Spec 描述一条待挂载路由，供 Applies 判定与 Build 取参。

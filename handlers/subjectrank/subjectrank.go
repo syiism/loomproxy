@@ -445,7 +445,10 @@ type CoverageRow struct {
 	// Failed 失败请求数 = HTTP 层失败 + 带内失败（P22：200 但正文是错误载荷的请求，
 	// 只有标出来覆盖率才读得懂——一格不满可能只是请求在失败，不是采集在漏）。
 	// InBandFailed 是其中带内的那部分；两者之差才是真正的 HTTP 层失败。
-	Failed       int64 `json:"failed"`
+	Failed int64 `json:"failed"`
+	// Withheld 因用户关闭留存而主动不捕获的行数（待办清单 P37）。它们不进 rows_、也不进 failed——
+	// 这一列的存在就是为了让「分母为什么变小」有地方可查，而不是靠人猜。
+	Withheld     int64 `json:"withheld"`
 	InBandFailed int64 `json:"in_band_failed"`
 	// ExpectBook 该动作是否理应记到书名/书目标识：为真才谈得上"缺失"。
 	// 面板据此决定要不要标红，而不是对着一片合法的 0% 报警。
@@ -483,14 +486,20 @@ func Coverage(days int, sourceFilter string, allowSources []string) ([]CoverageR
 	// 一律 COALESCE：这三列都出现过 NULL（列是后加的，旧行没有默认值），
 	// 直接 <> '' 会把 NULL 行算成"没采到"，而这类误判的代价是有人去"修一个不存在的问题"
 	if err := db.DB.Model(&models.ApiCallLog{}).
-		Select("source, action, COUNT(*) AS rows_, "+
+		// 明细数与失败数都**只数没退出留存的行**（待办清单 P37）：用户关掉同意位之后那几列本来就是空的，
+		// 把它们算进分母等于用用户的合规选择去扣采集的分——下一个读覆盖率的人会去「修一个不存在的问题」。
+		// 判据用 IS TRUE / IS NOT TRUE 而不是 = 0/1：这一列可能为 NULL（列是后加的），
+		// 与上面 in_band_error 同一套写法（P22 那条踩过的坑）。
+		Select("source, action, "+
+			"SUM(CASE WHEN content_withheld IS NOT TRUE THEN 1 ELSE 0 END) AS rows_, "+
+			"SUM(CASE WHEN content_withheld IS TRUE THEN 1 ELSE 0 END) AS withheld, "+
 			"SUM(CASE WHEN COALESCE(book_name,'') <> '' THEN 1 ELSE 0 END) AS has_book_name, "+
 			"SUM(CASE WHEN COALESCE(book_ident,'') <> '' THEN 1 ELSE 0 END) AS has_book_ident, "+
 			"SUM(CASE WHEN COALESCE(chapter_title,'') <> '' THEN 1 ELSE 0 END) AS has_chapter_title, "+
 			"SUM(CASE WHEN COALESCE(keyword,'') <> '' THEN 1 ELSE 0 END) AS has_keyword, "+
 			"SUM(CASE WHEN COALESCE(media,'') <> '' THEN 1 ELSE 0 END) AS has_media, "+
 			// IS TRUE 对 NULL 成立：旧行没有这一列的值，只按 status >= 400 计失败
-			"SUM(CASE WHEN status >= 400 OR in_band_error IS TRUE THEN 1 ELSE 0 END) AS failed, "+
+			"SUM(CASE WHEN (status >= 400 OR in_band_error IS TRUE) AND content_withheld IS NOT TRUE THEN 1 ELSE 0 END) AS failed, "+
 			"SUM(CASE WHEN in_band_error IS TRUE THEN 1 ELSE 0 END) AS in_band_failed").
 		Where(cond, args...).
 		Group("source, action").
