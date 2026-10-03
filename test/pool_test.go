@@ -443,23 +443,55 @@ func TestPoolMaxDevicesGate(t *testing.T) {
 	// 假 Provider 的 ident 是确定性的，池名默认固定——一条用例里建三个池会在 (pool, ident)
 	// 唯一索引上撞车，所以给每个池换个名字
 
-	// 1) 已到顶：池里唯一的号是 dead，Acquire 需要补号，补号被上限判住，且错误可 errors.Is 判定
+	// 1) 已到顶且占位的是**活号**（spent 且周期未重置，复活不了）：Acquire 要补号，
+	//    补号被上限判住，错误可 errors.Is 判定，且**不向上游建号**
 	prov := newFakeProvider()
 	cfg := fakePoolConfig()
 	cfg.ColdSpares = 1
 	cfg.MaxDevices = 1
 	prov.poolName = "gate_cap"
 	p := newFakePool(t, pool.New(prov, cfg))
+	const spentIdent = "用满待复活的号"
+	prov.quota[spentIdent] = pool.Quota{Total: fakeQuotaMax, Used: fakeQuotaMax}
 	if err := db.DB.Create(&models.PoolDevice{
-		Pool: p.Name(), Ident: "已判死的号", Status: pool.StatusDead,
+		Pool: p.Name(), Ident: spentIdent, Status: pool.StatusSpent,
+		TotalQuota: fakeQuotaMax, UsedQuota: fakeQuotaMax,
+		Attrs: `{"sn":"sn-` + spentIdent + `"}`,
 	}).Error; err != nil {
-		t.Fatalf("预置 dead 号失败: %v", err)
+		t.Fatalf("预置 spent 号失败: %v", err)
 	}
 	if _, err := p.Acquire(); !errors.Is(err, pool.ErrCapacityReached) {
 		t.Fatalf("补号应被总号数上限判住并给出 ErrCapacityReached，实得 %v", err)
 	}
 	if prov.created != 0 {
 		t.Errorf("到顶后仍向上游建了 %d 个号（应在建号前就判住）", prov.created)
+	}
+
+	// 1b) 同一种「到顶」，占位换成 dead：死号必须先腾名额、再谈上限（待办清单 P35）。
+	//     修前这条池子会永久卡住——MaxDead 默认 10 比 MaxDevices=1 大，巡检的清理由来 never 触发，
+	//     而那一条死号正占着唯一的建号位。
+	provB := newFakeProvider()
+	cfgB := fakePoolConfig()
+	cfgB.ColdSpares = 1
+	cfgB.MaxDead = 10
+	cfgB.MaxDevices = 1
+	provB.poolName = "gate_cap_dead"
+	pB := newFakePool(t, pool.New(provB, cfgB))
+	if err := db.DB.Create(&models.PoolDevice{
+		Pool: pB.Name(), Ident: "占位的死号", Status: pool.StatusDead,
+	}).Error; err != nil {
+		t.Fatalf("预置 dead 号失败: %v", err)
+	}
+	if _, err := pB.Acquire(); err != nil {
+		t.Fatalf("占位是死号时补号应成功（先腾名额），实得 %v", err)
+	}
+	if provB.created != 1 {
+		t.Errorf("上游建号次数 = %d, want 1（腾出来的名额确实被用上）", provB.created)
+	}
+	var deadLeft int64
+	db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", pB.Name(), pool.StatusDead).Count(&deadLeft)
+	if got := pB.Status().Config.DeadRetention; got != 0 || deadLeft != 0 {
+		t.Errorf("保留上限 = %d、库里剩 %d 条死号, want 0/0（可用目标 2 已越过总上限 1）", got, deadLeft)
 	}
 
 	// 2) 补冷备时被拦在门外：ColdSpares 想建 5 个，池内总数只到 2
@@ -765,14 +797,15 @@ func TestPoolSpreadFillRespectsMaxDevices(t *testing.T) {
 func TestPoolSpreadNoDeviceErrorCarriesCause(t *testing.T) {
 	newTestServer(t)
 
-	// 1) 池里只有一个 dead 号：补号被上限拦住，错误必须能 errors.Is 判定
+	// 1) 池里只有一个**活号占位**（spent）：补号被上限拦住，错误必须能 errors.Is 判定。
+	//     过去这条用 dead 号占位，正好撞上 P35 修的那个形状——死号现在会先被腾掉。
 	fp := newFakeProvider()
 	fp.poolName = "spread_err_cap"
 	cfg := spreadConfig()
 	cfg.TargetDevices, cfg.MaxDevices = 1, 1
 	p := newFakePool(t, pool.New(fp, cfg))
-	if err := db.DB.Create(&models.PoolDevice{Pool: fp.Name(), Ident: "唯一那个死号", Status: pool.StatusDead}).Error; err != nil {
-		t.Fatalf("预置 dead 号失败: %v", err)
+	if err := db.DB.Create(&models.PoolDevice{Pool: fp.Name(), Ident: "唯一那个用满的号", Status: pool.StatusSpent}).Error; err != nil {
+		t.Fatalf("预置 spent 号失败: %v", err)
 	}
 	if _, err := p.Acquire(); !errors.Is(err, pool.ErrCapacityReached) {
 		t.Fatalf("补号被上限拦住时应带出 ErrCapacityReached，实得 %v", err)
@@ -897,5 +930,91 @@ func TestPoolSpreadPayloadAndSnapshot(t *testing.T) {
 		t.Errorf("/admin/pools 泄出了载荷值")
 	} else if !strings.Contains(raw, `"payload_keys"`) {
 		t.Errorf("/admin/pools 未带出 payload_keys：%s", raw)
+	}
+}
+
+// TestPoolDeadRetentionYieldsToCapacity 死号保留上限必须给可用性让路（待办清单 P35，登记于分支 S27）：
+// 生产 uxx 的形状是 MaxDevices=5、冷备 2、MaxDead 默认 10——两个旋钮互不知情，
+// 于是 dead 行既清不掉（永远到不了 10）又占着建号名额，池只剩一条 error 日志在喊拿不到号。
+func TestPoolDeadRetentionYieldsToCapacity(t *testing.T) {
+	newTestServer(t)
+
+	// 1) 生产形状：总上限 5、可用目标 1+2=3 → 生效保留上限 = 5-3 = 2（配置仍是 10）
+	fp := newFakeProvider()
+	fp.poolName = "retain_cap"
+	cfg := fakePoolConfig()
+	cfg.ColdSpares, cfg.MaxDead, cfg.MaxDevices = 2, 10, 5
+	p := newFakePool(t, pool.New(fp, cfg))
+	for i := 0; i < 4; i++ {
+		if err := db.DB.Create(&models.PoolDevice{
+			Pool: p.Name(), Ident: fmt.Sprintf("dead-%02d-0000-0000-0000-000000000001", i),
+			Status: pool.StatusDead,
+		}).Error; err != nil {
+			t.Fatalf("预置 dead 号失败: %v", err)
+		}
+	}
+	if got := p.Status().Config.DeadRetention; got != 2 {
+		t.Fatalf("生效保留上限 = %d, want 2（MaxDevices 5 - 可用目标 3）", got)
+	}
+	p.Maintain()
+	var dead int64
+	db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", p.Name(), pool.StatusDead).Count(&dead)
+	if dead != 2 {
+		t.Errorf("Maintain 后死号剩 %d 条, want 2（留档不得挤掉可用名额）", dead)
+	}
+	// 腾出的名额必须真的能用上：池要补到冷备水位，建号不该被判住
+	if _, err := p.Acquire(); err != nil {
+		t.Fatalf("腾名额之后 Acquire 仍失败: %v", err)
+	}
+	if fp.created == 0 {
+		t.Error("Acquire 没向上游建过号，说明名额没腾出来")
+	}
+
+	// 2) 没设总上限（0=不限）时不收紧：保留上限就是配置值，行为与改前逐字一致
+	fp2 := newFakeProvider()
+	fp2.poolName = "retain_uncapped"
+	cfg2 := fakePoolConfig()
+	cfg2.ColdSpares, cfg2.MaxDead, cfg2.MaxDevices = 2, 1, 0
+	p2 := newFakePool(t, pool.New(fp2, cfg2))
+	for i := 0; i < 3; i++ {
+		if err := db.DB.Create(&models.PoolDevice{
+			Pool: p2.Name(), Ident: fmt.Sprintf("free-%02d-0000-0000-0000-000000000001", i),
+			Status: pool.StatusDead,
+		}).Error; err != nil {
+			t.Fatalf("预置 dead 号失败: %v", err)
+		}
+	}
+	if got := p2.Status().Config.DeadRetention; got != 1 {
+		t.Fatalf("不限总号数时保留上限 = %d, want 1（就是配置值）", got)
+	}
+	p2.Maintain()
+	var dead2 int64
+	db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", p2.Name(), pool.StatusDead).Count(&dead2)
+	if dead2 != 1 {
+		t.Errorf("不限总号数时死号剩 %d 条, want 1（MaxDead 语义不得被改动带歪）", dead2)
+	}
+
+	// 3) spread 且 TargetDevices==MaxDevices：每台死号都是纯名额损失 → 上限 0，一台不留
+	fp3 := newFakeProvider()
+	fp3.poolName = "retain_spread"
+	cfg3 := spreadConfig()
+	cfg3.TargetDevices, cfg3.MaxDevices, cfg3.MaxDead = 2, 2, 10
+	p3 := newFakePool(t, pool.New(fp3, cfg3))
+	if err := db.DB.Create(&models.PoolDevice{
+		Pool: p3.Name(), Ident: "spread 里的死号", Status: pool.StatusDead,
+	}).Error; err != nil {
+		t.Fatalf("预置 dead 号失败: %v", err)
+	}
+	if got := p3.Status().Config.DeadRetention; got != 0 {
+		t.Fatalf("spread 满配池的保留上限 = %d, want 0", got)
+	}
+	p3.Maintain()
+	var dead3 int64
+	db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", p3.Name(), pool.StatusDead).Count(&dead3)
+	if dead3 != 0 {
+		t.Errorf("Maintain 后死号剩 %d 条, want 0", dead3)
+	}
+	if n := p3.HotCount(); n < 2 {
+		t.Errorf("spread 池没补到轮询目标：hot=%d, want ≥2", n)
 	}
 }

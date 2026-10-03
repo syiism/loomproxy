@@ -76,14 +76,20 @@ const kindLabel = (kind) => {
   return KIND_LABELS[k] || k
 }
 const isSpread = (p) => p.config && p.config.kind === 'spread'
+// 死号保留被总号上限压下来时要说出来：运维看到「死号只留 2 条」而配置写 10，
+// 不该去翻代码才知道是谁压的（待办清单 P35）
+const deadNote = (c) => (
+  c.max_dead != null && c.dead_retention != null && c.dead_retention !== c.max_dead
+    ? ` · 死号只留 ${c.dead_retention}（配置 ${c.max_dead}，被总号上限压到）` : ''
+)
 const burnSummary = (p) => {
   const c = p.config || {}
-  return `冷备 ${c.cold_spares} · 活跃上限 ${c.max_hot} · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 临期续领 ${c.renew_before_sec}s · 巡检 ${c.maintain_sec}s`
+  return `冷备 ${c.cold_spares} · 活跃上限 ${c.max_hot} · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 临期续领 ${c.renew_before_sec}s · 巡检 ${c.maintain_sec}s${deadNote(c)}`
 }
 const spreadSummary = (p) => {
   const c = p.config || {}
   const target = c.target_devices > 0 ? c.target_devices : (c.max_devices > 0 ? c.max_devices : 1)
-  return `轮询目标 ${target} 台 · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 兜底冷却 ${c.cooldown_default_sec}s · 巡检 ${c.maintain_sec}s`
+  return `轮询目标 ${target} 台 · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 兜底冷却 ${c.cooldown_default_sec}s · 巡检 ${c.maintain_sec}s${deadNote(c)}`
 }
 
 // 凭证只列键名：摊薄型的嵌套凭证走 Payload，其第一层键名同样只出键名

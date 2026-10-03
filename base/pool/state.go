@@ -496,12 +496,21 @@ func (p *Pool) promoteLocked() (*models.PoolDevice, error) {
 // （待办清单 P4）。计数含 spent/dead，与源侧原先自己实现的口径一致：判死清理腾出的名额重新可用。
 func (p *Pool) createColdLocked() (*models.PoolDevice, error) {
 	if p.cfg.MaxDevices > 0 {
-		var n int64
-		if err := db.DB.Model(&models.PoolDevice{}).Where("pool = ?", p.Name()).Count(&n).Error; err != nil {
+		n, err := p.countRows()
+		if err != nil {
 			return nil, err
 		}
 		if n >= int64(p.cfg.MaxDevices) {
-			return nil, fmt.Errorf("%w: %s（上限 %d，现有 %d）", ErrCapacityReached, p.Name(), p.cfg.MaxDevices, n)
+			// 占着名额的可能全是死号：先让 purgeDead 按生效保留上限腾一次，再判失败。
+			// 不等下一轮巡检是因为巡检间隔里源侧一直在拿不到号的错里空转。
+			p.purgeDead()
+			if n, err = p.countRows(); err != nil {
+				return nil, err
+			}
+		}
+		if n >= int64(p.cfg.MaxDevices) {
+			return nil, fmt.Errorf("%w: %s（上限 %d，现有 %d，其中死号占位 %d 条而保留上限 %d）",
+				ErrCapacityReached, p.Name(), p.cfg.MaxDevices, n, p.countDead(), p.deadRetention())
 		}
 	}
 	dev, err := p.provider.Create(context.Background())
@@ -557,20 +566,90 @@ func (p *Pool) reviveOneSpentLocked() bool {
 	return false
 }
 
-// purgeDead 死号超量物理清理（限量保留便于排查上游风控）
+// purgeDead 死号超量物理清理（限量保留便于排查上游风控）。
+// 保留上限走 deadRetention，不直接用 MaxDead——否则 MaxDead > MaxDevices 的池
+// 永远清不动死号，而那些死号正占着建号名额（待办清单 P35，登记于分支 S27）。
 func (p *Pool) purgeDead() {
 	var count int64
 	if err := db.DB.Model(&models.PoolDevice{}).
 		Where("pool = ? AND status = ?", p.Name(), StatusDead).Count(&count).Error; err != nil {
 		return
 	}
-	if count <= int64(p.cfg.MaxDead) {
+	keep := p.deadRetention()
+	if count <= int64(keep) {
 		return
 	}
-	toDelete := int(count) - p.cfg.MaxDead
-	db.DB.Unscoped().Where("pool = ? AND status = ?", p.Name(), StatusDead).
-		Limit(toDelete).Delete(&models.PoolDevice{})
+	// 「删最旧的几条」必须先把 id 捞出来再按 id 删：GORM 的 `Limit(n).Delete()` 只在 MySQL 成立，
+	// SQLite 直接忽略 LIMIT（= 把匹配到的全删了），而开发/测试库正是 SQLite——
+	// 用例断言「保留集还剩几条」才看得见这件事，只断言「变少了」会一路绿到生产（待办清单 P35）
+	var ids []uint
+	if err := db.DB.Unscoped().Model(&models.PoolDevice{}).
+		Where("pool = ? AND status = ?", p.Name(), StatusDead).
+		Order("id ASC").Limit(int(count)-keep).Pluck("id", &ids).Error; err != nil {
+		p.logf("purge dead devices failed: %v", err)
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if err := db.DB.Unscoped().Delete(&models.PoolDevice{}, ids).Error; err != nil {
+		p.logf("purge dead devices failed: %v", err)
+		return
+	}
+	toDelete := len(ids)
+	if keep != p.cfg.MaxDead {
+		// 上限被容量压下来时必须说出来：运维看到的 5 台里为什么死号只留 2 条，
+		// 不该靠翻代码（同 P19 那条「该由系统自己说」）
+		p.logf("purged %d dead devices（保留 %d 条；配置 MaxDead=%d，被总号上限 %d 与可用目标 %d 压到 %d）",
+			toDelete, keep, p.cfg.MaxDead, p.cfg.MaxDevices, p.usableTarget(), keep)
+		return
+	}
 	p.logf("purged %d dead devices", toDelete)
+}
+
+// usableTarget 这个池要维持的可用号数：spread 看轮询目标，燃烧型是 1 个活跃 + N 个冷备。
+func (p *Pool) usableTarget() int {
+	if p.spread() {
+		return p.spreadTarget()
+	}
+	return 1 + p.cfg.ColdSpares
+}
+
+// deadRetention 实际生效的死号保留上限。
+//
+// 两个旋钮过去互不知情：`MaxDevices` 是「建号对上游是不可逆增长」的闸门（P4，计数含 dead），
+// `MaxDead` 是排查风控的留档上限；**当 MaxDevices < MaxDead 时死号既清不掉、又占满名额**，
+// 池只剩一条 "create cold device failed" 的 error 日志就静默失能——生产 uxx 就是 5 < 10 这个形状。
+// 规则：**先留得下可用号，再谈留档**——保留上限不得超过「总上限减去可用目标」，
+// 且只在设了总上限时收紧（`MaxDevices=0` 即不限，保留上限就是配置值）。
+// 于是 spread 池里 `TargetDevices == MaxDevices` 时上限为 0：那类池每台死号都是纯名额损失。
+func (p *Pool) deadRetention() int {
+	if p.cfg.MaxDevices <= 0 {
+		return p.cfg.MaxDead
+	}
+	room := p.cfg.MaxDevices - p.usableTarget()
+	if room < 0 {
+		room = 0
+	}
+	if room < p.cfg.MaxDead {
+		return room
+	}
+	return p.cfg.MaxDead
+}
+
+// countRows 池内行数（GORM 默认作用域，**软删的行不占名额**——这也是手工清死号
+// 用软删就能腾位的原因，见分支 S27）
+func (p *Pool) countRows() (int64, error) {
+	var n int64
+	err := db.DB.Model(&models.PoolDevice{}).Where("pool = ?", p.Name()).Count(&n).Error
+	return n, err
+}
+
+// countDead 池内 dead 行数（只给错误文案用，读数失败按 0 处理不影响判定）
+func (p *Pool) countDead() int64 {
+	var n int64
+	db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", p.Name(), StatusDead).Count(&n)
+	return n
 }
 
 // removeLocked 从列表移除（调用方持锁），按 Ident 匹配

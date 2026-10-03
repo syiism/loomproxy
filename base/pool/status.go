@@ -12,6 +12,7 @@ type ConfigInfo struct {
 	ColdSpares     int    `json:"cold_spares"`
 	MaxHot         int    `json:"max_hot"`
 	MaxDead        int    `json:"max_dead"`
+	DeadRetention  int    `json:"dead_retention"`                 // 实际生效的死号保留上限（被总号上限压小时 ≠ MaxDead，待办清单 P35）
 	MaxDevices     int    `json:"max_devices"`                    // 0=不限
 	Kind           string `json:"kind"`                           // 池形态；空=燃烧型，spread=用量摊薄型
 	TargetDevices  int    `json:"target_devices,omitempty"`       // spread：目标可用号数（燃烧型不带）
@@ -93,6 +94,7 @@ func (p *Pool) configInfo() ConfigInfo {
 		ColdSpares:     p.cfg.ColdSpares,
 		MaxHot:         p.cfg.MaxHot,
 		MaxDead:        p.cfg.MaxDead,
+		DeadRetention:  p.deadRetention(),
 		MaxDevices:     p.cfg.MaxDevices,
 		TargetDevices:  p.cfg.TargetDevices,
 		CooldownDefSec: int(p.cfg.CooldownDefault.Seconds()),
