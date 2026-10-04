@@ -41,6 +41,10 @@ const onSubmit = async () => {
     setToken(data.token)
     await initSession(true)
     toast('登录成功', 'success')
+    // 后端在登录响应里算好的安全提示（P44：上次登录以来有几台设备被移出）不能被丢掉——
+    // 它是那句「如非本人操作，请尽快修改密码」到达使用者的唯一一条路。
+    // 比一般 toast 留更久的时间：这条要让人读完，不是让人瞥见。
+    if (data && data.notice) toast(data.notice, 'info', 10000)
     router.push(isAdmin() ? '/admin' : '/dashboard')
   } catch (err) {
     toast(err.message, 'error')

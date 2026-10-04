@@ -23,7 +23,9 @@ export function statusTone(status) {
   return status === 1 ? 'green' : 'red'
 }
 
-export function toast(msg, type = 'info') {
+// toast 默认 3 秒。**安全类提示不是装饰**（例如「上次登录以来有 N 台设备被移出」），
+// 所以留一个 ms 参数让调用方能按重要性延长，而不是新造一套弹窗组件。
+export function toast(msg, type = 'info', ms = 3000) {
   const el = document.createElement('div')
   el.className = 'animate-slide-in bg-surface border border-border rounded-lg px-4 py-3 text-sm min-w-[240px] max-w-full'
   el.style.borderLeft = '3px solid ' + (type === 'error' ? '#9F2F2D' : type === 'success' ? '#346538' : '#111111')
@@ -35,7 +37,7 @@ export function toast(msg, type = 'info') {
       el.style.opacity = '0'
       el.style.transition = 'opacity 200ms'
       setTimeout(() => el.remove(), 200)
-    }, 3000)
+    }, ms)
   }
 }
 
