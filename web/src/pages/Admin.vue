@@ -56,6 +56,7 @@ const shortcuts = [
   { to: '/admin/pools', tag: '运营', title: '号池', desc: '凭证池的水位、状态与冷却原因（只读，号由源自己建）' },
   { to: '/admin/redeem-codes', tag: '运营', title: '卡密管理', desc: '套餐兑换卡密的生成、作废与批次追踪' },
   { to: '/admin/blocked-ips', tag: '安全', title: 'IP 拉黑', desc: '黑名单 IP 的登录、注册与接口调用拦截' },
+  { to: '/admin/devices', tag: '安全', title: '设备与密钥', desc: '按账号看活跃会话、来源 IP 与密钥数量（IP 只标红，处置只按会话数）' },
   { to: '/admin/settings', tag: '系统', title: '系统设置', desc: '注册开关、默认角色与套餐' },
 ]
 

@@ -53,6 +53,9 @@ export const adminApi = {
   addBlockedIP: (payload) => request('/admin/blocked-ips', { method: 'POST', body: payload }),
   removeBlockedIP: (id) => request('/admin/blocked-ips/' + id, { method: 'DELETE' }),
   // 登录防爆破的限频状态（进程内存，不落库）：读快照 + 定向解锁
+  // 多设备与密钥分布读数（待办清单 P44）
+  listDeviceActivity: ({ page = 1, pageSize = 20, keyword = '' } = {}) =>
+    request('/admin/devices', { query: { page, page_size: pageSize, keyword: keyword || undefined } }),
   listSecurityAttempts: () => request('/admin/security/attempts'),
   resetSecurityAttempts: (payload) => request('/admin/security/attempts/reset', { method: 'POST', body: payload }),
   // 角色

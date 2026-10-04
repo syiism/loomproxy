@@ -150,6 +150,7 @@ const iconMap = {
   '/admin/monitor': 'activity',
   '/admin/pools': 'layers',
   '/admin/blocked-ips': 'ban',
+  '/admin/devices': 'monitor',
   '/admin/settings': 'settings',
 }
 
@@ -182,6 +183,7 @@ const adminTabs = [
   { to: '/admin/monitor', label: '监控' },
   { to: '/admin/pools', label: '号池' },
   { to: '/admin/blocked-ips', label: 'IP 拉黑' },
+  { to: '/admin/devices', label: '设备与密钥' },
   { to: '/admin/settings', label: '设置' },
 ]
 const tabIconMap = iconMap

@@ -3,6 +3,7 @@ package db
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"time"
 
 	"loomproxy/models"
@@ -68,6 +69,55 @@ func RevokeSessionByID(userID uint, id uint) bool {
 		Where("id = ? AND user_id = ? AND revoked_at IS NULL", id, userID).
 		Update("revoked_at", now)
 	return res.RowsAffected > 0
+}
+
+// RevokeExcessSessions 保留该用户最近活跃的 maxKeep 个会话（keepSessionID 一定在保留之列，
+// 那是刚签发的当前会话），其余吊销，返回移出数量。
+//
+// 这是多设备监控唯一的处置动作，**判据是会话数而不是 IP 数**：一个出口 IP 后面可能是整个公司，
+// 按 IP 踢人必然大面积误伤（待办清单 P44）。maxKeep<=0 视为不处置。
+func RevokeExcessSessions(userID uint, keepSessionID string, maxKeep int) int64 {
+	if maxKeep <= 0 {
+		return 0
+	}
+	var keep models.AuthSession
+	if err := DB.Where("session_id = ? AND user_id = ?", keepSessionID, userID).First(&keep).Error; err != nil {
+		return 0
+	}
+	// 保留 maxKeep-1 个「比当前会话更早活跃」的，加当前会话凑成 maxKeep 个
+	var stale []models.AuthSession
+	if err := DB.Where("user_id = ? AND revoked_at IS NULL AND expires_at > ? AND id <> ? AND last_active_at <= ?",
+		userID, time.Now(), keep.ID, keep.LastActiveAt).
+		Order("last_active_at DESC").Offset(maxKeep - 1).Find(&stale).Error; err != nil {
+		return 0
+	}
+	if len(stale) == 0 {
+		return 0
+	}
+	ids := make([]uint, 0, len(stale))
+	for _, s := range stale {
+		ids = append(ids, s.ID)
+	}
+	now := time.Now()
+	res := DB.Model(&models.AuthSession{}).Where("id IN ?", ids).Update("revoked_at", now)
+	if res.Error != nil {
+		log.Printf("ERROR: 移出多余会话失败 user_id=%d: %v", userID, res.Error)
+		return 0
+	}
+	return res.RowsAffected
+}
+
+// RevokedSince 该用户在 since 之后被移出的会话数——登录提示用的就是它。
+// **不建处置日志表**：`revoked_at` 本身带时刻，配合「上次登录时间」就能算出「你这次登录后有几台设备被移出」，
+// 代价是分不出是自动处置还是用户自己点的「登出其他设备」——所以 journal 那行必须写清是哪一种（P44）。
+func RevokedSince(userID uint, since time.Time) int64 {
+	var n int64
+	if err := DB.Model(&models.AuthSession{}).
+		Where("user_id = ? AND revoked_at IS NOT NULL AND revoked_at >= ?", userID, since).
+		Count(&n).Error; err != nil {
+		log.Printf("ERROR: 统计移出会话失败 user_id=%d: %v", userID, err)
+	}
+	return n
 }
 
 // ListActiveSessions 列出用户未吊销且未过期的会话

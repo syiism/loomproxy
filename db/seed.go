@@ -58,6 +58,11 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "auto_block_enabled", Value: "false", Type: "bool", Description: "IP 自动拉黑开关：滑动窗口内 403/429 次数达阈值自动加入黑名单（回环地址永不自动拉黑）"},
 		{Key: "auto_block_threshold", Value: "30", Type: "number", Description: "IP 自动拉黑阈值：窗口内允许的 403/429 次数上限"},
 		{Key: "auto_block_window_sec", Value: "60", Type: "number", Description: "IP 自动拉黑统计窗口（秒）"},
+		// 多设备登录监控（待办清单 P44）：默认关——一上线就踢人会误伤，先让人看见读数再开处置
+		{Key: "device_watch_enabled", Value: "false", Type: "bool", Description: "多设备监控开关：开启后登录时把超出上限的旧会话移出（保留最近的）。只按会话数处置，不按 IP 数"},
+		{Key: "max_active_sessions", Value: "5", Type: "number", Description: "同一账号允许同时存在的活跃登录会话数上限（登录时按最后活跃时间保留这么多）"},
+		{Key: "device_watch_window_days", Value: "7", Type: "number", Description: "设备与密钥监控的统计窗口（天）"},
+		{Key: "suspect_distinct_ips", Value: "8", Type: "number", Description: "窗口内不同 IP 数达到该值即在面板标红（只标红，不因此踢人——NAT/家庭共享下一个 IP 后面是多个真人）"},
 	}
 
 	// 已废弃的设置键：策略换了形态时把旧键清掉，否则它会以「未被管理的 key」形式

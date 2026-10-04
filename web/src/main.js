@@ -18,6 +18,7 @@ import AdminUsageLogs from './pages/admin/UsageLogs.vue'
 import AdminMonitor from './pages/admin/Monitor.vue'
 import AdminPools from './pages/admin/Pools.vue'
 import AdminBlockedIPs from './pages/admin/BlockedIPs.vue'
+import AdminDevices from './pages/admin/Devices.vue'
 import AdminRedeemCodes from './pages/admin/RedeemCodes.vue'
 import AdminInterfaces from './pages/admin/Interfaces.vue'
 import NotFound from './pages/NotFound.vue'
@@ -45,6 +46,7 @@ const routes = [
   { path: '/admin/monitor', component: AdminMonitor, meta: { admin: true } },
   { path: '/admin/pools', component: AdminPools, meta: { admin: true } },
   { path: '/admin/blocked-ips', component: AdminBlockedIPs, meta: { admin: true } },
+  { path: '/admin/devices', component: AdminDevices, meta: { admin: true } },
   { path: '/admin/redeem-codes', component: AdminRedeemCodes, meta: { admin: true } },
   { path: '/:pathMatch(.*)*', component: NotFound, meta: { public: true } },
 ]

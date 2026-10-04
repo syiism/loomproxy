@@ -342,6 +342,9 @@ func issueToken(c *gin.Context, userID uint, user *models.User) (string, time.Ti
 	}); err != nil {
 		return "", time.Time{}, err
 	}
+	// 新会话签出后立刻按上限收口：多设备监控唯一的处置点就在这里
+	// （注册/登录/找回密码三条路都过这个函数，写两处就会长出两套口径）
+	pruneExcessSessions(userID, sessionID)
 	utils.SetTokenCookie(c, token, expireHours)
 	return token, expiresAt, nil
 }
@@ -400,7 +403,16 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// 更新最后登录时间，失败不阻断登录
+	// 更新最后登录时间，失败不阻断登录。
+	// 旧值必须先取出来：移出提示算的是「上次登录以来」，覆盖之后再取就变成「本次登录以来」，
+	// 那句话永远是空的。
+	// 取**值**的拷贝而不是复制指针：下面那次 Update 会顺着同一个 *time.Time 改写，
+	// 直接 `prev := user.LastLoginAt` 拿到的是同一个被改的目标（本轮就是这么读到空 notice 的）
+	var prevLoginAt *time.Time
+	if user.LastLoginAt != nil {
+		t0 := *user.LastLoginAt
+		prevLoginAt = &t0
+	}
 	now := time.Now()
 	if err := db.DB.Model(&user).Update("last_login_at", now).Error; err == nil {
 		user.LastLoginAt = &now
@@ -415,11 +427,16 @@ func Login(c *gin.Context) {
 	}
 
 	loginLimiter.record(ip, true)
-	ok(c, gin.H{
+	body := gin.H{
 		"token":      token,
 		"expires_at": expiresAtJSON(expiresAt),
 		"user":       user.Public(db.DisplayAliasesFor(user.ID)),
-	})
+	}
+	// 移出提示复用这条响应，不建站内信表（P44）
+	if notice := deviceLoginNotice(user.ID, prevLoginAt); notice != "" {
+		body["notice"] = notice
+	}
+	ok(c, body)
 }
 
 func Me(c *gin.Context) {
