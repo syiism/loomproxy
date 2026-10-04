@@ -70,7 +70,9 @@
   不探活），把请求轮询到全部可用号上，失效走 `Pool.Cooldown` 的临时冷却而不是判死（P5）。
   给「不因墙钟过期、燃烧看请求量」的号套默认形态，等于把所有请求打到同一台设备上。
 - 嵌套凭证（会话 cookie 一类）走 `Device.Payload` / `pool_devices.payload`，框架不解析、只搬运
-  （回写用 `Pool.UpdatePayload`）；`Attrs` 是扁平 `map[string]string`，塞嵌套会被**静默丢弃**。
+  （回写用 `Pool.UpdatePayload`）；`Attrs` 是扁平 `map[string]string`——**塞嵌套在 Go 里就编译不过**，
+  真实的坏形态是这一列被库外面改坏（手填 SQL、截断文本），那会表现为"号在库里但凭证为空"；
+  现在 `deviceOf` 对解不开的 `attrs` 出一条脱敏 ERROR，同一行只喊一次（待办清单 P59）。
 - 底座不携带任何 Provider，号池列表为空是正常状态；面板读 `GET /admin/pools`（凭证只列出键名）。
 - 详情：[`docs/架构/号池框架.md`](docs/架构/号池框架.md)
 
@@ -90,7 +92,11 @@
   `GET /admin/security/attempts` 的 `accounts` 出，面板「IP 拉黑」页有只读一节，标黄阈值由响应的
   `accounts_meta.multi_ip_yellow` 下发（复用 `suspect_distinct_ips` 那一条定义）。**要不要据此锁人是没拍的那一步。**
 - 用户自助密钥（`lp_` 前缀）匹配时**注入归属身份**，计费/配额/监控/套餐门控随该用户生效；静态 env 键保持匿名语义。
-- 会话由 JWT 的 `jti` 对应 `auth_sessions`，无 `jti` 的旧 token 一律 401；禁用/删除用户与改密都吊销会话。
+- 会话由 JWT 的 `jti` 对应 `auth_sessions`，无 `jti` 的旧 token 一律 401；**会话行就是鉴权的执行点**
+  （每请求 `db.ValidateSession` 查 `revoked_at`），所以"吊销没做成"等于那个人还能用。
+  禁用/删除用户、改密、找回密码、改名都吊销会话，且**与那次凭证写入同一个事务**（待办清单 P56）：
+  分开提交会造出"密码改了、旧设备还在、响应说成功"。改密与登出保留当前设备（`keepSessionID`），
+  只有"改名/禁用/删除/找回"按语义把当前会话也算进去；`Logout` 在吊销失败时仍返回 200 但带 `notice`。
   **密钥是同一次处置的另一条通路，不会跟着会话走**：归属由 `utils.LookupApiKeyIdentity` 解析、
   命中缓存时不复查 `users.status`，所以禁用/删除用户必须显式 `utils.InvalidateUserApiKeys(userID)`
   清掉他名下密钥的归属缓存，否则「禁用了但他还在跑」最长持续一个 `CACHE_TTL`（待办清单 P47）。
