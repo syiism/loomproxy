@@ -11,6 +11,7 @@ package utils
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"sync/atomic"
@@ -18,6 +19,8 @@ import (
 
 	"loomproxy/db"
 	"loomproxy/models"
+
+	"gorm.io/gorm"
 )
 
 const ApiKeyPrefix = "lp_"
@@ -64,10 +67,24 @@ func LookupApiKeyIdentity(plain string) (*ApiKeyIdentity, error) {
 	// 而 KEY 是 MySQL 保留字 → Error 1064 → 所有 API Key 在 MySQL 部署上直接判成「不存在」
 	// （SQLite 容忍裸写，所以用例全绿、只有生产暴露，见 AGENTS §10）
 	if err := db.DB.Where(map[string]interface{}{"key": plain}).First(&ak).Error; err != nil {
+		// 「查不到」与「查不动」是两件事，但响应侧只能回同一句（不能把内部状态透给调用者）。
+		// 于是这一族的失效长这样：库出了错 → 每一条密钥都"不存在"，而服务端一片安静，
+		// 现场看到的永远是"用户的 key 坏了"（P47/P56 同族；判据见待办清单 P67）。
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("ERROR: API Key 校验查询失败（按「不存在」回给调用者，但这不是不存在）：%v", err)
+		}
 		return nil, fmt.Errorf("API Key 不存在")
 	}
 	var user models.User
-	if err := db.DB.First(&user, ak.UserID).Error; err != nil || user.Status == 0 {
+	// 同一条判据的另一半：读归属失败（库故障）与"这个用户被禁用"原来共用一个 `||`，
+	// 分不开。现在**回给调用者的话一字不变**，只把成因留在日志里。
+	if err := db.DB.First(&user, ak.UserID).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("ERROR: API Key 归属用户查询失败（按「不可用」回给调用者）：%v", err)
+		}
+		return nil, fmt.Errorf("API Key 归属用户不可用")
+	}
+	if user.Status == 0 {
 		return nil, fmt.Errorf("API Key 归属用户不可用")
 	}
 	id := &ApiKeyIdentity{ApiKeyID: ak.ID, UserID: user.ID, Username: user.Username}

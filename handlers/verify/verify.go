@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"sync/atomic"
@@ -176,7 +177,12 @@ func Issue(ip, scene, target string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("生成验证码失败: %w", err)
 	}
-	if err := getSender().Send(scene, target, code); err != nil {
+	// 给用户的那句是固定文案：不含上游状态码，也不含发码平台回吐的响应体（P23① 那条收口管的是
+	// 两条出口，这里本来就没泄——但**代价不能是服务端也不知道为什么发不出去**。
+	// 归因进服务端日志；刻意不记 target：那是用户的邮箱/手机号，运维事件里不需要它。
+	sender := getSender()
+	if err := sender.Send(scene, target, code); err != nil {
+		log.Printf("ERROR: 验证码发送失败（通道=%s 场景=%s）：%v", sender.Name(), scene, err)
 		return time.Time{}, fmt.Errorf("验证码发送失败，请稍后再试")
 	}
 
@@ -188,7 +194,11 @@ func Issue(ip, scene, target string) (time.Time, error) {
 		IP:        ip,
 		ExpiresAt: expires,
 	}
+	// 同一族的第二处：写库失败也一样只回固定文案。给用户的话不必改（这句本来就面向用户），
+	// 但**库里没落行**这件事在服务端必须是可见的一条 ERROR——否则"发出去了却查不到码"
+	// 与"平台根本没收到"在事后完全分不开。
 	if err := db.DB.Create(&row).Error; err != nil {
+		log.Printf("ERROR: 验证码落库失败（通道已发出，这张码将不可校验）：%v", err)
 		return time.Time{}, fmt.Errorf("验证码写入失败，请稍后再试")
 	}
 
