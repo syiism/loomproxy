@@ -56,3 +56,35 @@ export function revealObserve() {
     io.observe(el)
   })
 }
+
+// 额度档位（待办清单 P42）：**卡片上的三颗圆点与右上角百分比标签共用这一处判据**。
+// 说的是「还剩多少」：剩余 ≤33% 红、34~66% 黄、≥67% 绿。
+// 判据长在一处是这条的全部意义——两处各写一套阈值，一张卡片就能同时说「黄」和「绿」。
+export const quotaBand = (remaining) => {
+  if (remaining == null || isNaN(remaining)) return null
+  if (remaining <= 33) return 'red'
+  if (remaining <= 66) return 'yellow'
+  return 'green'
+}
+
+// remainingPct 直接从后端的 remaining / effective_total 算，不用 `100 - usage_pct`：
+// usage_pct 是整数**向下**取整的已用比例，两头各取一次整，会读出「已用 0%、剩余 0%」这种自相矛盾的数。
+// total<0（不限额）返回 null —— 那不是「还剩很多」，是「没有额度概念」，视觉上必须是缺格而不是绿档。
+export const remainingPct = (item) => {
+  if (!item) return null
+  const total = item.effective_total
+  if (total == null || total < 0) return null
+  if (total === 0) return 0 // 额度 0 = 一点都没有 = 红档（这是有额度概念、且已经没了）
+  return Math.min(100, Math.max(0, Math.round((item.remaining / total) * 100)))
+}
+
+// 亮几颗灯：一档 1 颗红、二档 2 颗黄、三档 3 颗绿；null 一颗都不亮
+export const quotaLitCount = (band) => (band === 'red' ? 1 : band === 'yellow' ? 2 : band === 'green' ? 3 : 0)
+
+// 灯的颜色写成**静态类名表**：Tailwind 只扫源码里出现过的字面量，
+// 拼字符串（'bg-pale-' + band + '-fg'）不会产出 CSS，而且不报错——正是 P31 那一族的形状。
+export const QUOTA_DOT_CLASS = {
+  red: 'bg-pale-red-fg',
+  yellow: 'bg-pale-yellow-fg',
+  green: 'bg-pale-green-fg',
+}

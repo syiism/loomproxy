@@ -57,16 +57,17 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           <div v-for="s in sec.items" :key="s.source_code" class="reveal border border-border rounded-xl overflow-hidden bg-surface card-hover">
             <div class="flex items-center gap-1.5 px-4 py-2.5 border-b border-border bg-surface-alt">
-              <span class="w-2.5 h-2.5 rounded-full bg-border"></span>
-              <span class="w-2.5 h-2.5 rounded-full bg-border"></span>
-              <span class="w-2.5 h-2.5 rounded-full bg-border"></span>
+              <!-- 额度指示灯：亮几颗与颜色都由 quotaBand(剩余额度) 决定，与右上角百分比标签同一处判据
+                   （待办清单 P42）。没有额度概念（不限额、管理员视角）时一颗都不亮——那是缺格，不是绿档。 -->
+              <span v-for="i in 3" :key="i" class="w-2.5 h-2.5 rounded-full"
+                    :class="quotaLitCount(quotaBandOf(s)) >= i ? QUOTA_DOT_CLASS[quotaBandOf(s)] : 'bg-border'"></span>
               <span class="ml-2 font-mono text-xs text-text-muted">{{ s.source_code }}</span>
             </div>
             <div class="p-5 md:p-6">
               <div class="flex items-center justify-between mb-4">
                 <div class="font-medium text-base">{{ s.name }}</div>
                 <UiTag v-if="isAdmin" tone="blue" :label="'活跃 ' + (s.active_users || 0)" />
-                <UiTag v-else :tone="usageTone(s.usage_pct)" :label="s.usage_pct + '%'" />
+                <UiTag v-else :tone="quotaTag(s).tone" :label="quotaTag(s).label" />
               </div>
 
               <!-- 管理员：全站消耗视角；普通用户：个人额度视角 -->
@@ -175,7 +176,7 @@ import UiSpinner from '../components/UiSpinner.vue'
 import UiEmpty from '../components/UiEmpty.vue'
 import UiPagination from '../components/UiPagination.vue'
 import { quotaApi, adminApi, userConfigApi } from '../api/index.js'
-import { fmtDate, revealObserve } from '../utils.js'
+import { fmtDate, revealObserve, quotaBand, remainingPct, quotaLitCount, QUOTA_DOT_CLASS } from '../utils.js'
 
 const loading = ref(true)
 const error = ref('')
@@ -300,10 +301,16 @@ const loadLogs = async () => {
   nextTick(revealObserve)
 }
 
-const usageTone = (pct) => {
-  if (pct >= 90) return 'red'
-  if (pct >= 60) return 'yellow'
-  return 'green'
+// 档位在卡片这一层算一次（quotaBandOf），灯数与百分比标签都从它派生——
+// 一张卡片上两个读数共用一套判据，不会出现「灯说黄、标签说绿」（待办清单 P42）
+//
+// 没有额度概念（不限额、管理员视角）算**满格绿**而不是缺格：
+// 三颗不亮的灯读起来像「这里没有数据」，而真相是「这个源不受额度约束」——那是最充裕的一档。
+// 「不限」这件事由标签的文字说清，不靠灯去表达。
+const quotaBandOf = (s) => quotaBand(remainingPct(s)) ?? 'green'
+const quotaTag = (s) => {
+  const hasQuota = remainingPct(s) != null
+  return { tone: quotaBandOf(s), label: hasQuota ? s.usage_pct + '%' : '不限' }
 }
 
 const fmtQuota = (v) => (v ?? 0) >= 0 ? v : '不限'
