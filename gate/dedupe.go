@@ -111,20 +111,25 @@ func deductIdent(subj *base.CallSubject) string {
 }
 
 // startDedupeJanitor 懒启动回收协程（每进程一次），清掉超过窗口的旧键。
+//
+// **窗口在协程启动时取一次快照，循环里不再读 `conf.Config`。**
+// 这不是为了省事：`conf.Config` 在生产里由 `conf.Load()` 写一次就不再动，
+// 而这个协程**跨整个进程存活**——它每 tick 去读那个全局指针，
+// 在集成测试里就与"下一条用例替换 conf.Config"构成一次真数据竞争
+// （-race 下整包失败，症状是毫不相干的一条用例报 `race detected`）。
+// 快照不改变行为：回收阈值只决定"键别无限攒着"，不需要跟着配置同步；
+// 真要改冷却窗口是改环境变量，而那必然伴随一次重启。
 func startDedupeJanitor() {
 	deductJanitorOnce.Do(func() {
+		window := deductWindow()
+		idle := window * 2
+		if window <= 0 || idle > deductIdleTTL {
+			idle = deductIdleTTL
+		}
 		go func() {
 			ticker := time.NewTicker(5 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
-				window := deductWindow()
-				if window <= 0 {
-					window = deductIdleTTL
-				}
-				idle := window * 2
-				if idle > deductIdleTTL {
-					idle = deductIdleTTL
-				}
 				now := time.Now()
 				deductMu.Lock()
 				for k, at := range deductAt {
