@@ -76,6 +76,9 @@ func RegisterRoutes(r *gin.Engine) {
 		g.GET("/blocked-ips", ListBlockedIPs)
 		g.POST("/blocked-ips", AddBlockedIP)
 		g.DELETE("/blocked-ips/:id", RemoveBlockedIP)
+		// 登录防爆破的限频状态（内存态、只读快照 + 定向解锁，见 security_attempts.go 与待办清单 P40）
+		g.GET("/security/attempts", ListSecurityAttempts)
+		g.POST("/security/attempts/reset", ResetSecurityAttempts)
 		// 数据源管理
 		g.GET("/data-sources", ListDataSources)
 		g.POST("/data-sources", CreateDataSource)

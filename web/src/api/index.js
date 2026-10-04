@@ -47,6 +47,9 @@ export const adminApi = {
   listBlockedIPs: () => request('/admin/blocked-ips'),
   addBlockedIP: (payload) => request('/admin/blocked-ips', { method: 'POST', body: payload }),
   removeBlockedIP: (id) => request('/admin/blocked-ips/' + id, { method: 'DELETE' }),
+  // 登录防爆破的限频状态（进程内存，不落库）：读快照 + 定向解锁
+  listSecurityAttempts: () => request('/admin/security/attempts'),
+  resetSecurityAttempts: (payload) => request('/admin/security/attempts/reset', { method: 'POST', body: payload }),
   // 角色
   listRoles: () => request('/admin/roles'),
   createRole: (payload) => request('/admin/roles', { method: 'POST', body: payload }),

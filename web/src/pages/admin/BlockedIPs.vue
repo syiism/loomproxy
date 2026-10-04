@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="IP 拉黑" subtitle="被拉黑的 IP 无法登录、注册，也无法调用任何接口。" />
+    <PageHeader title="IP 拉黑" subtitle="被拉黑的 IP 无法登录、注册，也无法调用任何接口；下方另列当前的登录限频锁定（进程内存，与黑名单是两件事）。" />
 
     <div class="reveal flex flex-col sm:flex-row gap-3 mb-6">
       <input v-model="form.ip" placeholder="IP 地址（IPv4 / IPv6）" class="input sm:w-64 font-mono" @keydown.enter="add">
@@ -32,6 +32,42 @@
         </table>
       </div>
     </template>
+
+    <!-- 登录限频锁定（待办清单 P40）：与上面那张表是两件事。
+         上面是库里的黑名单（拦所有请求、删行才放行），这里是进程内存里的限频锁（重启即清零）。
+         所以「解锁」不解黑名单，文案必须把这句写在按钮旁边而不是藏在说明里。 -->
+    <div class="mt-10">
+      <div class="flex items-baseline justify-between gap-3 mb-2">
+        <h2 class="text-sm font-semibold text-text">登录限频锁定</h2>
+        <button @click="loadAttempts" class="text-xs text-pale-blue-fg hover:opacity-70 transition-opacity" :disabled="attemptsLoading">刷新</button>
+      </div>
+      <p v-if="attemptsError" class="text-sm text-pale-red-fg">{{ attemptsError }}</p>
+      <p v-else-if="attempts.length === 0" class="text-sm text-text-muted">
+        当前没有锁定记录。读数只反映这个进程：重启即清零，也不代表「最近没人试过」。
+      </p>
+      <div v-else class="table-wrap overflow-x-auto">
+        <table class="table-base">
+          <thead>
+            <tr><th>通道</th><th>IP</th><th>窗口内尝试</th><th class="hidden md:table-cell">失败连击</th><th>状态</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="a in attempts" :key="a.kind + a.ip">
+              <td class="text-sm">{{ a.kind === 'forgot' ? '找回密码' : '登录' }}</td>
+              <td class="font-mono text-sm">{{ a.ip }}</td>
+              <td class="font-mono text-xs">{{ a.window_count }} / {{ a.max_per_minute }}</td>
+              <td class="hidden md:table-cell font-mono text-xs">{{ a.fail_streak }}</td>
+              <td>
+                <UiTag v-if="a.locked" tone="red" :label="'锁到 ' + fmtClock(a.locked_until)" />
+                <span v-else class="text-xs text-text-muted">未锁（计数中）</span>
+              </td>
+              <td>
+                <button @click="unlock(a)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity" :disabled="submitting">解锁</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -49,6 +85,29 @@ const error = ref('')
 const list = ref([])
 const submitting = ref(false)
 const form = ref({ ip: '', note: '' })
+
+const attempts = ref([])
+const attemptsLoading = ref(false)
+const attemptsError = ref('')
+
+// 锁定到期时间只到分钟：面板上要的是「还要等多久」，不是秒
+const fmtClock = (iso) => {
+  const d = new Date(iso)
+  if (isNaN(d)) return '—'
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+const loadAttempts = async () => {
+  attemptsLoading.value = true
+  attemptsError.value = ''
+  try {
+    const data = await adminApi.listSecurityAttempts()
+    attempts.value = (data && data.items) || []
+  } catch (e) {
+    attemptsError.value = e.message
+  }
+  attemptsLoading.value = false
+}
 
 const load = async () => {
   loading.value = true
@@ -85,6 +144,19 @@ const remove = async (b) => {
   } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
 }
 
+// 解锁限频锁：cleared=0 不是失败，但也不能报「已解锁」——那个 IP 当前压根没有记录
+const unlock = async (a) => {
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    const r = await adminApi.resetSecurityAttempts({ ip: a.ip })
+    if (r && r.cleared > 0) toast('已解除该 IP 的限频锁（不影响上方黑名单）', 'success')
+    else toast('该 IP 当前没有锁定记录', 'info')
+    loadAttempts()
+  } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
+}
+
 onMounted(() => { revealObserve() })
 load()
+loadAttempts()
 </script>

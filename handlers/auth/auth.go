@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -699,12 +700,109 @@ func (l *ipAttemptLimiter) record(ip string, success bool) {
 			a.lockedUntil = now.Add(attemptLockMinutes)
 		}
 	}
+	// 条目按 IP 建、没有任何回收路径：见过的每个 IP 都留一行，被爆破时行数直接跟着对方的 IP 池长。
+	// 不加定时器，改成越过阈值顺手扫一次——平时热路径零额外成本，长尾有界。
+	if len(l.attempts) > attemptPurgeThreshold {
+		l.pruneLocked(now)
+	}
+}
+
+// attemptPurgeThreshold 是「顺手扫一次」的触发点，不是容量上限：低于它时 map 不做任何额外工作。
+const attemptPurgeThreshold = 4096
+
+// attemptPruneAfter 是「这条记录还有信息量」的界限：窗口早过、又不在锁里的行，
+// 与不存在等价（下一次尝试本来就从零开始计数），留着只会长内存。
+const attemptPruneAfter = 2 * time.Minute
+
+// pruneLocked 删掉过窗且未锁定的条目。调用方必须已持有 l.mu。
+func (l *ipAttemptLimiter) pruneLocked(now time.Time) {
+	for ip, a := range l.attempts {
+		if now.Before(a.lockedUntil) {
+			continue
+		}
+		if now.Sub(a.windowStart) > attemptPruneAfter {
+			delete(l.attempts, ip)
+		}
+	}
 }
 
 var (
 	forgotLimiter = newIPAttemptLimiter(forgotMaxPerMinute)
 	loginLimiter  = newIPAttemptLimiter(loginMaxPerMinute)
 )
+
+// AttemptSnapshot 是限频器一条记录在管理面的可见形状。**内存态、不入库**：
+// 防爆破的计数与锁定从来只是进程内状态，所以这里的读数与清理都只针对当前进程
+// （单实例部署下等价于全局；多实例时每台各有一份，见 AGENTS §12 的已知取舍）。
+type AttemptSnapshot struct {
+	Kind         string    `json:"kind"` // login / forgot
+	IP           string    `json:"ip"`
+	WindowCount  int       `json:"window_count"` // 当前一分钟窗口内的尝试数；窗口已过报 0，不给读数留一个假高值
+	FailStreak   int       `json:"fail_streak"`
+	MaxPerMinute int       `json:"max_per_minute"`
+	Locked       bool      `json:"locked"`
+	LockedUntil  time.Time `json:"locked_until"`
+}
+
+// SecurityAttemptSnapshot 导出登录与找回密码两个限频器的当前状态：锁着的排前面，其余按 IP 排。
+// 顺带做一次清理，所以调用它不会让「面板打开着」变成内存增长点。
+func SecurityAttemptSnapshot() []AttemptSnapshot {
+	now := time.Now()
+	out := []AttemptSnapshot{}
+	for _, e := range []struct {
+		kind    string
+		limiter *ipAttemptLimiter
+	}{
+		{"login", loginLimiter},
+		{"forgot", forgotLimiter},
+	} {
+		e.limiter.mu.Lock()
+		e.limiter.pruneLocked(now)
+		for ip, a := range e.limiter.attempts {
+			s := AttemptSnapshot{
+				Kind:         e.kind,
+				IP:           ip,
+				FailStreak:   a.failStreak,
+				MaxPerMinute: e.limiter.maxPerMinute,
+				Locked:       now.Before(a.lockedUntil),
+				LockedUntil:  a.lockedUntil,
+			}
+			if now.Sub(a.windowStart) <= time.Minute {
+				s.WindowCount = a.count
+			}
+			out = append(out, s)
+		}
+		e.limiter.mu.Unlock()
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Locked != out[j].Locked {
+			return out[i].Locked
+		}
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].IP < out[j].IP
+	})
+	return out
+}
+
+// ResetAttemptLock 清掉某个 IP 在两个限频器里的全部状态（锁定与失败连击一起归零），
+// 返回清掉的条数。0 不是错误——那个 IP 当前本来就没有记录，面板按这个数决定提示文案。
+//
+// 它**不解 IP 黑名单**：`blocked_ips` 是库里的行、拦的是所有请求，与这里的「限频锁」是两件事，
+// 别在文案里把它们混成「解锁」。两者都需要放行时，黑名单走 /admin/blocked-ips。
+func ResetAttemptLock(ip string) int {
+	n := 0
+	for _, l := range []*ipAttemptLimiter{loginLimiter, forgotLimiter} {
+		l.mu.Lock()
+		if _, ok := l.attempts[ip]; ok {
+			delete(l.attempts, ip)
+			n++
+		}
+		l.mu.Unlock()
+	}
+	return n
+}
 
 // ResetAttemptLimitersForTest 清空登录/找回密码的限频状态。
 // 限频器为进程级状态且按 IP 计数，集成测试所有用例共享 127.0.0.1，

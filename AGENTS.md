@@ -73,9 +73,14 @@
 ## 7. 鉴权模型
 
 - 两层：API 网关层（`middleware/apiauth` → `utils.VerifyAuth`，JWT 或 API Key）与用户层（`AuthRequired()`/`AdminRequired()` 查库）。
-- **三形态（token / cookie / apiKey）在用户面端点统一可用**，但**凭证引导类（`/apikey`、`/auth/me·password·sessions·logout`）
+- **三形态（token / cookie / apiKey）在用户面端点统一可用**，但**凭证引导类（`/apikey`、`/auth/me·password·privacy·sessions·logout`）
   与管理面（`/admin/*`）只认会话**：长期密钥不该能铸造别的密钥、改密码或绕过「一次登出全部失效」。
   两层共用同一个凭证解析器，别在第二处再写一遍解析顺序（P26）。
+- **登录/找回密码的防爆破是进程内存状态，不落库**：按**客户端 IP** 限频（登录 10 次/分、找回 5 次/分），
+  连击失败 10 次或超窗口即锁 1 小时。它**不是 IP 黑名单**（`blocked_ips` 在库里、拦所有请求）。
+  管理面可读可清：`GET /admin/security/attempts`（快照，锁定项排前）与 `POST /admin/security/attempts/reset`
+  （按 IP 清锁与连击）——重启进程也会全清，所以这条端点的价值是把「为救一个 NAT 出口而重启」换成定向操作（待办清单 P40）。
+  已知边界：不按账号、且自动拉黑只看数据面 403/429，**登录失败不喂给它**。
 - 用户自助密钥（`lp_` 前缀）匹配时**注入归属身份**，计费/配额/监控/套餐门控随该用户生效；静态 env 键保持匿名语义。
 - 会话由 JWT 的 `jti` 对应 `auth_sessions`，无 `jti` 的旧 token 一律 401；禁用/删除用户与改密都吊销会话。
 - 详情：[`docs/架构/鉴权模型与会话.md`](docs/架构/鉴权模型与会话.md)
