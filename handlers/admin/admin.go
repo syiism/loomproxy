@@ -699,6 +699,13 @@ func UpdateQuotaCost(c *gin.Context) {
 		auth.Fail(c, http.StatusNotFound, "记录不存在")
 		return
 	}
+	// 计费读的是 gate 里那份带 TTL 的缓存，不失效就得等一个 CACHE_TTL 才见效（待办清单 P39）。
+	// 「改完单价没反应」的下一步通常是再点一次保存、或重启进程去「确保生效」，而重启会连带清掉所有人的限流锁。
+	// 按**行自己的** group_code 与 interface 失效，而不是按请求体里的字段拼键：请求体可以只带 cost 或只带 status。
+	var cost models.QuotaCost
+	if err := db.DB.Select("group_code", "interface").First(&cost, id).Error; err == nil {
+		gate.InvalidateCostCache(cost.GroupCode, cost.Interface)
+	}
 	auth.Ok(c, gin.H{"message": "已更新"})
 }
 

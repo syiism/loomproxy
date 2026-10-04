@@ -26,9 +26,11 @@ func searchA(t *testing.T, srv *httptest.Server, token string) (int, []byte) {
 	}), nil, authHeader(token))
 }
 
-// delCostCache 直接改库后清理 QuotaCost 缓存（getCachedCost 走 utils.DefaultCache）
+// delCostCache 直接改库后清理 QuotaCost 缓存（getCachedCost 走 utils.DefaultCache）。
+// 键一律由 gate.CostCacheKey 给：**不在测试里再拼一遍格式**——拼法有两份的时候，
+// 改了读侧拼法测试照样绿，而生产上门面改的单价就是不动（待办清单 P39 的固化位）。
 func delCostCache(sourceCode, action string) {
-	utils.DefaultCache().Del(fmt.Sprintf("quota:cost:%s:%s", sourceCode, action))
+	utils.DefaultCache().Del(gate.CostCacheKey(sourceCode, action))
 }
 
 // planIDByCode / dataSourceIDByName 查库辅助

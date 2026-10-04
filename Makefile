@@ -40,6 +40,7 @@ vet:
 	@$(MAKE) --no-print-directory sql-check
 	@$(MAKE) --no-print-directory css-check
 	@$(MAKE) --no-print-directory nav-check
+	@$(MAKE) --no-print-directory test-order-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -49,6 +50,12 @@ fmt-check:
 # 前端自定义类：用了没定义的类 Tailwind 静默跳过，构建与用例都不会红（待办清单 P31）
 css-check:
 	@./scripts/check-css-classes.sh
+
+# 集成用例必须先装配测试服务器再碰跨用例共享的全局态（conf.Config / db.DB / utils.DefaultCache）。
+# 真实症状是一条用例在 newTestServer 之前读 conf.Config：单跑它 nil panic，整包却绿——
+# 它靠的是上一个用例把全局指针建好了，而用例顺序没有任何保证（待办清单 P39 顺带暴露）。
+test-order-check:
+	@./scripts/check-test-order.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

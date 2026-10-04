@@ -306,6 +306,10 @@ func cleanupRemovedSources(db *gorm.DB) error {
 		// 存量授权由 alignPlanGrants 从旧关联表搬来，两个入口都够了。
 	}
 
+	// 已下线源的计费键**不在这里失效**（待办清单 P39 提过这一处）：包依赖上 db 不能导入 utils/gate
+	// （utils 已经导入 db，反过来就成环），而机制上它是**读不到**的——源行刚被硬删，
+	// 访问控制 access(400) 排在 billing(500) 之前，任何指向该源的请求先在上一环被挡掉，
+	// 那份缓存键从此没有读者，只会随 TTL 自然消失。真要改的是顺序，不是这里。
 	if err := db.Where("group_code IN ?", removedSources).Delete(&models.QuotaCost{}).Error; err != nil {
 		return err
 	}

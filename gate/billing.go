@@ -8,7 +8,6 @@ package gate
 
 import (
 	"bufio"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -80,9 +79,30 @@ func (w *captureWriter) succeeded() bool {
 // cacheTTL 计费配置缓存周期（配置项极少变动，长期缓存安全）
 const cacheTTL = 5 * time.Minute
 
+// costCachePrefix 接口消耗缓存键的唯一前缀。
+//
+// 待办清单 P39：计费读的是这份带 TTL 的缓存，而全仓**只有这里生成键、没有任何一处删除它**——
+// 面板改完单价仍按旧价扣，最长 300 秒；同一行里的「禁用接口」同理，**禁用不是立刻停用**。
+// 代价不是算错钱（缓存只会晚生效），是运维直觉的反面：改完看不见效果，人就再点一次保存、
+// 或者重启进程去「确保生效」（那次重启会连带清掉所有人的限流锁与在途请求）。
+//
+// 键格式只许出现在这一处：读侧用 `CostCacheKey`、写侧调 `InvalidateCostCache`，
+// 测试也走这两个函数——键拼法长出第二份，失效就会打空而构建照样绿。
+const costCachePrefix = "quota:cost:"
+
+// CostCacheKey 某个「数据源 × 动作」的计费配置缓存键。
+func CostCacheKey(sourceCode, action string) string {
+	return costCachePrefix + sourceCode + ":" + action
+}
+
+// InvalidateCostCache 让某个「数据源 × 动作」的计费配置立即失效（改价、改开关之后调用）。
+func InvalidateCostCache(sourceCode, action string) {
+	utils.DefaultCache().Del(CostCacheKey(sourceCode, action))
+}
+
 // getCachedCost 从缓存读取 QuotaCost，未命中时查库并填充缓存
 func getCachedCost(groupCode, action string) (models.QuotaCost, error) {
-	cacheKey := fmt.Sprintf("quota:cost:%s:%s", groupCode, action)
+	cacheKey := CostCacheKey(groupCode, action)
 	if cached, ok := utils.DefaultCache().Get(cacheKey); ok {
 		if cost, ok := cached.(models.QuotaCost); ok {
 			return cost, nil
