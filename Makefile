@@ -51,6 +51,7 @@ vet:
 	@$(MAKE) --no-print-directory judgment-count-check
 	@$(MAKE) --no-print-directory doc-numbers-check
 	@$(MAKE) --no-print-directory tz-check
+	@$(MAKE) --no-print-directory param-assert-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -90,6 +91,12 @@ doc-numbers-check:
 # 触发它的经验是本轮第十四遍数出来的七种写法——现网三种口径恰好重合，所以它不会自己报错。
 tz-check:
 	@./scripts/check-tz-single-source.sh
+
+# 请求参数的值一律是 string：对它做数字断言 = 静默死代码（分支的 toPage 真中过：page 永远回到 1）；
+# 同时禁止声明以 `_` 开头的参数名——那是平台注入键的保留前缀（待办清单 P75）。
+# 注意这条**扫 sources/\*\***（两棵树的代码都要干净），与 tz-check 的豁免方向不同。
+param-assert-check:
+	@./scripts/check-param-number-assert.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

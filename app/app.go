@@ -129,9 +129,29 @@ func releaseParams(params map[string]interface{}) {
 	paramsPool.Put(params)
 }
 
+// reservedParamPrefix 平台自己注入的 params 键都以下划线开头（`__uid`、`_datafile_parts`）。
+// 源声明里出现同名参数一律忽略：不然客户端 `?__uid=7` 就能占住这个键——
+// 平台只在"解析出了用户 id 时"覆盖它，没解析出来时**不会把它删掉**，
+// 于是将来任何按 string 读这个键的代码读到的都是伪造值。
+var warnedReserved = sync.Map{}
+
+func reservedParamPrefix(name string) bool {
+	if !strings.HasPrefix(name, "_") {
+		return false
+	}
+	if _, seen := warnedReserved.LoadOrStore(name, true); !seen {
+		log.Printf("ERROR: 参数名 %q 以下划线开头，那是平台保留前缀（__uid 一类由平台注入），"+
+			"本次请求已忽略这个声明；声明位请换个名字（守卫在 buildParams，判据见踩坑判据）", name)
+	}
+	return true
+}
+
 func buildParams(c *gin.Context, paramNames []string) map[string]interface{} {
 	params := acquireParams()
 	for _, p := range paramNames {
+		if reservedParamPrefix(p) {
+			continue
+		}
 		if val := c.Query(p); val != "" {
 			params[p] = val
 		} else if p == "baseUrl" {
