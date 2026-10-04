@@ -79,7 +79,7 @@ func SetMetricsFlusher(f func([]RecentCall)) {
 }
 
 // RecordCall 记录一次数据源接口调用（status 为最终 HTTP 状态码，2xx 视为成功；
-// username 为调用者用户名，匿名/API Key 调用传空串；ip 为调用者客户端 IP；
+// username 为调用者用户名（用户密钥调用也带归属用户名；匿名与静态 env 键传空串）；ip 为调用者客户端 IP；
 // subject 是本次调用的内容维度（搜索词/书名/章节/媒介/结果数），可为 nil——那时各维度留空）
 func RecordCall(source, action, username, ip string, status int, latency time.Duration, subject *CallSubject) {
 	ms := latency.Milliseconds()

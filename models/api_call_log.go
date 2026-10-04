@@ -6,12 +6,15 @@ import "time"
 // 由内存环形缓冲淘汰时批量落库 + 服务关停时兜底落库。
 // 保留期由 MONITOR_RETENTION_DAYS 决定：默认 0=永久保留且不清理，>0 时写入方顺带清理。
 type ApiCallLog struct {
-	ID       uint   `gorm:"primaryKey" json:"id"`
-	Username string `gorm:"size:64;index" json:"username"` // 调用者用户名（API Key/匿名为空）
-	IP       string `gorm:"size:64" json:"ip"`             // 调用者客户端 IP
-	Source   string `gorm:"size:32;index" json:"source"`   // 数据源码
-	Action   string `gorm:"size:32" json:"action"`         // 接口动作，如 search
-	Status   int    `json:"status"`                        // HTTP 状态码
+	ID uint `gorm:"primaryKey" json:"id"`
+	// Username 调用者用户名：**用户自助密钥（lp_）也归属到用户名下**（`utils/auth.go` 的密钥分支 `Set("username", …)`），
+	// 只有匿名与静态 env 键（按设计不归属任何人）才是空串。旧注释写「API Key 为空」是过期的——
+	// 按它理解就会以为「一个账号多个 IP」在密钥调用上算不出来（其实算得出，见待办清单 P44）。
+	Username string `gorm:"size:64;index" json:"username"`
+	IP       string `gorm:"size:64" json:"ip"`           // 调用者客户端 IP
+	Source   string `gorm:"size:32;index" json:"source"` // 数据源码
+	Action   string `gorm:"size:32" json:"action"`       // 接口动作，如 search
+	Status   int    `json:"status"`                      // HTTP 状态码
 	// 带内失败（P22）：HTTP 200 但正文是 ContentType=="error" 的错误载荷。
 	// 列 NOT NULL 默认 false——成功/失败口径在 SQL 里直接用它，NULL 会把旧行读成第三种状态。
 	InBandError bool      `gorm:"not null;default:false" json:"in_band_error"`
