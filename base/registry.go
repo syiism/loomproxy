@@ -82,18 +82,32 @@ type DataFileDesc struct {
 	Description string `json:"description"`
 }
 
-// DescribeDataFile 按文件名取数据字典说明；未声明则返回空串
-func DescribeDataFile(name string) string {
+// lookupDataFile 按文件名在注册表里找那条声明（同一文件名可能被多个源共用声明，取第一个）
+func lookupDataFile(name string) (DataFileDesc, bool) {
 	sourceMu.Lock()
 	defer sourceMu.Unlock()
 	for _, m := range sourceMetas {
 		for _, f := range m.DataFiles {
 			if f.Name == name {
-				return f.Description
+				return f, true
 			}
 		}
 	}
-	return ""
+	return DataFileDesc{}, false
+}
+
+// DescribeDataFile 按文件名取数据字典说明；未声明则返回空串
+func DescribeDataFile(name string) string {
+	f, _ := lookupDataFile(name)
+	return f.Description
+}
+
+// DeclaresDataFile 这个名字**有没有**被某个源声明为数据字典。
+// 与 `DescribeDataFile(...) != ""` **不是一回事**：声明可以不带说明，
+// 用空串当"没声明"会把这类文件判成"没人要的东西"（调用点：静态字典缺位的读数，待办清单 P51）。
+func DeclaresDataFile(name string) bool {
+	_, ok := lookupDataFile(name)
+	return ok
 }
 
 // RequiredParamsFor 取某源某动作声明的必填请求参数；未声明返回 nil（= 不校验）。

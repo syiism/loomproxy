@@ -155,6 +155,8 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 			}
 			data, err := h.readFileRaw(source, name+".json")
 			if err != nil {
+				// 服务端自己要看得见这笔缺位（响应一字未改；缺文件回 200 还是 404 等拍，见待办清单 P51②）
+				dataFileMisses.Note(source, name)
 				var available []string
 				for _, f := range h.listFiles(source) {
 					validatePath := filepath.Join(h.dataDir(source), fmt.Sprintf("%s.json", f.Name))
