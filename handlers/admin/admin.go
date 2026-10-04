@@ -407,24 +407,44 @@ func UpdateUser(c *gin.Context) {
 		}
 	}
 
-	if err := db.DB.Model(&models.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+	// 如果将用户禁用（status=0），吊销该用户全部登录会话，阻止已登录的禁用用户继续使用 API。
+	// **与那次状态写入同一个事务**（待办清单 P56）：分开写会造出"库里显示已禁用、那个人却还在正常使用"，
+	// 而且管理员看到的正是"已禁用"这三个字。
+	disabling := req.Status != nil && *req.Status == 0
+	var uidNum uint
+	if disabling {
+		// 解析不出 id（畸形路径参数）时与原语义一致：不吊销、不清密钥（下面的写库照常做）
+		if n, e := strconv.ParseUint(id, 10, 64); e == nil {
+			uidNum = uint(n)
+		} else {
+			disabling = false
+		}
+	}
+	err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Model(&models.User{}).Where("id = ?", id).Updates(updates).Error; e != nil {
+			return e
+		}
+		if !disabling {
+			return nil
+		}
+		_, e := db.RevokeOtherSessionsTx(tx, uidNum, "")
+		return e
+	})
+	if err != nil {
 		if isDuplicateKeyErr(err) { // 预检与写入之间被人抢注，兜底成 409 而不是 500
 			auth.Fail(c, http.StatusConflict, "用户名或邮箱已被占用")
 			return
 		}
-		log.Printf("ERROR: 更新用户 %s 失败: %v", id, err)
+		log.Printf("ERROR: 更新用户 %s 失败（含会话吊销，已整体回滚）: %v", id, err)
 		auth.Fail(c, http.StatusInternalServerError, "更新失败")
 		return
 	}
 
-	// 如果将用户禁用（status=0），吊销该用户全部登录会话，阻止已登录的禁用用户继续使用 API
-	if req.Status != nil && *req.Status == 0 {
-		if uid, err := strconv.ParseUint(id, 10, 64); err == nil {
-			db.RevokeOtherSessions(uint(uid), "")
-			// 「阻止继续使用 API」这句话要成立，光吊销会话不够：密钥走的是另一条身份通路，
-			// 而那条通路的缓存命中分支不复查 users.status（待办清单 P47）。
-			utils.InvalidateUserApiKeys(uint(uid))
-		}
+	if disabling {
+		// 「阻止继续使用 API」这句话要成立，光吊销会话不够：密钥走的是另一条身份通路，
+		// 而那条通路的缓存命中分支不复查 users.status（待办清单 P47）。
+		// 缓存清理是进程内动作，放进事务没有意义，失败自己会喊。
+		utils.InvalidateUserApiKeys(uidNum)
 	}
 
 	auth.Ok(c, gin.H{"message": "更新成功"})
@@ -442,15 +462,29 @@ func DeleteUser(c *gin.Context) {
 		}
 	}
 
-	if err := db.DB.Delete(&models.User{}, id).Error; err != nil {
+	// 软删与吊销同一个事务（同 P56：分开写会留下"库里已删、JWT 还能用"这一段）
+	var uidNum uint
+	parseOK := false
+	if n, e := strconv.ParseUint(id, 10, 64); e == nil {
+		uidNum, parseOK = uint(n), true
+	}
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Delete(&models.User{}, id).Error; e != nil {
+			return e
+		}
+		if !parseOK {
+			return nil
+		}
+		_, e := db.RevokeOtherSessionsTx(tx, uidNum, "")
+		return e
+	}); err != nil {
+		log.Printf("ERROR: 删除用户 %s 失败（含会话吊销，已整体回滚）: %v", id, err)
 		auth.Fail(c, http.StatusInternalServerError, "删除失败")
 		return
 	}
-	// 吊销被删用户的全部会话，防止其持有未过期 JWT 继续调用
-	if uid, err := strconv.ParseUint(id, 10, 64); err == nil {
-		db.RevokeOtherSessions(uint(uid), "")
+	if parseOK {
 		// 同上：密钥那条通路不看会话（待办清单 P47）
-		utils.InvalidateUserApiKeys(uint(uid))
+		utils.InvalidateUserApiKeys(uidNum)
 	}
 	auth.Ok(c, gin.H{"message": "已删除"})
 }

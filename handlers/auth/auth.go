@@ -581,14 +581,27 @@ func UpdateMe(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Model(&user).Updates(updates).Error; err != nil {
+	// 用户名与密码都是登录凭证：改了它们，"别人的登录要一起作废"是同一句话的另一半。
+	// 原来这两处（以及禁用/删除用户）都是**先写用户、再单独吊销**，而吊销函数把 `res.Error` 丢掉，
+	// 于是最坏组合是"凭证改了、旧会话还活着、响应说成功"（待办清单 P56）。现在放进同一个事务。
+	err = db.DB.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Model(&user).Updates(updates).Error; e != nil {
+			return e
+		}
+		if usernameChanged {
+			if _, e := db.RevokeOtherSessionsTx(tx, user.ID, ""); e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("ERROR: 更新用户 %d 失败（含会话吊销，已整体回滚）: %v", user.ID, err)
 		fail(c, http.StatusInternalServerError, "更新失败")
 		return
 	}
 
-	// 用户名即登录凭证：变更后吊销该用户全部会话（含当前），强制使用新用户名重新登录
 	if usernameChanged {
-		db.RevokeOtherSessions(user.ID, "")
 		// 密钥的归属缓存里存的是**用户名**（监控明细与计费归属都读它），
 		// 不清就会在 TTL 内继续把调用记成旧名——账是对的（随 user_id），读数不是（待办清单 P47 同族）
 		utils.InvalidateUserApiKeys(user.ID)
@@ -675,7 +688,20 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Save(&user).Error; err != nil {
+	// **改密必须把别的设备一起作废**——这是 `AGENTS.md` §7 一直写着的语义（「禁用/删除用户与改密都吊销会话」），
+	// 而这条最常用的路径其实从来没吊销过：只有「找回密码」做了。
+	// 一个人怀疑号被别人用时，做的动作就是改密码，不是走找回流程。
+	// 保留当前会话（改密的这台设备就是本人），其余全部吊销；与写在同一事务里，失败一起回滚。
+	sid, _ := c.Get("session_id")
+	currentSID, _ := sid.(string)
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Save(&user).Error; e != nil {
+			return e
+		}
+		_, e := db.RevokeOtherSessionsTx(tx, user.ID, currentSID)
+		return e
+	}); err != nil {
+		log.Printf("ERROR: 修改密码失败（含会话吊销，已整体回滚）user_id=%d: %v", user.ID, err)
 		fail(c, http.StatusInternalServerError, "修改密码失败")
 		return
 	}
@@ -928,16 +954,23 @@ func ForgotPassword(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "密码加密失败")
 		return
 	}
-	if err := db.DB.Model(&user).Update("password_hash", user.PasswordHash).Error; err != nil {
+	// 旧密码可能已泄露：吊销该用户全部旧会话，仅保留本次找回自动登录签发的会话。
+	// **与新密码写在同一个事务里**（待办清单 P56）：分开写就会造出"密码改了、旧设备还能用"，
+	// 而这正是走找回密码的那个人所最怕的事。
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Model(&user).Update("password_hash", user.PasswordHash).Error; e != nil {
+			return e
+		}
+		_, e := db.RevokeOtherSessionsTx(tx, user.ID, "")
+		return e
+	}); err != nil {
+		log.Printf("ERROR: 重置密码失败（含会话吊销，已整体回滚）user_id=%d: %v", user.ID, err)
 		fail(c, http.StatusInternalServerError, "重置密码失败")
 		return
 	}
 	if vcRow != nil {
 		verify.Consume(vcRow.ID)
 	}
-
-	// 旧密码可能已泄露：吊销该用户全部旧会话，仅保留本次找回自动登录签发的会话
-	db.RevokeOtherSessions(user.ID, "")
 
 	// 更新最后登录时间，失败不阻断
 	now := time.Now()
@@ -962,13 +995,29 @@ func ForgotPassword(c *gin.Context) {
 }
 
 func Logout(c *gin.Context) {
-	if sessionID, ok := c.Get("session_id"); ok {
-		if sid, ok := sessionID.(string); ok {
-			db.RevokeSession(sid)
+	body := gin.H{"message": "已退出登录"}
+	if sessionID, ok := sessionIDOf(c); ok {
+		// 服务端没吊销成功时不能默默说"已退出"：客户端删掉 token 之后，
+		// 那条会话在库里还活着、那个 JWT 在过期前仍然可用（`ValidateSession` 查的是库）。
+		// 这里不改成 500——用户点"退出"要的是把这台设备交出去，挡住它没有意义——
+		// 但要说出来（同一个 `notice` 字段，与登录提示同形），并让服务端日志里有这条。
+		if err := db.RevokeSession(sessionID); err != nil {
+			log.Printf("ERROR: 退出登录时吊销会话失败 session=%s: %v", sessionID, err)
+			body["notice"] = "服务端未能作废这次登录，请稍后重试或改用「登出其他设备」"
 		}
 	}
 	utils.ClearTokenCookie(c)
-	ok(c, gin.H{"message": "已退出登录"})
+	ok(c, body)
+}
+
+// sessionIDOf 取当前请求的会话 ID（`AuthRequired` 在 `parseTokenFromContext` 里注入）
+func sessionIDOf(c *gin.Context) (string, bool) {
+	v, ok := c.Get("session_id")
+	if !ok {
+		return "", false
+	}
+	sid, ok := v.(string)
+	return sid, ok && sid != ""
 }
 
 // ListSessions 当前用户的登录设备列表
@@ -997,10 +1046,20 @@ func ListSessions(c *gin.Context) {
 func RevokeOtherSessions(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	uid, _ := userID.(uint)
-	sessionID, _ := c.Get("session_id")
-	sid, _ := sessionID.(string)
+	sid, hasSID := sessionIDOf(c)
+	if !hasSID {
+		// 拿不到当前会话 ID 时**不能**按 keepSessionID="" 去吊销"除空串外的全部"——
+		// 那等于把用户这台设备也踢下线，而且是在他点了"登出其他设备"之后
+		fail(c, http.StatusInternalServerError, "会话信息缺失，请重新登录后再试")
+		return
+	}
 
-	n := db.RevokeOtherSessions(uid, sid)
+	n, err := db.RevokeOtherSessions(uid, sid)
+	if err != nil {
+		log.Printf("ERROR: 登出其他设备失败 user_id=%d: %v", uid, err)
+		fail(c, http.StatusInternalServerError, "登出其他设备失败，请稍后再试")
+		return
+	}
 	ok(c, gin.H{"message": "已退出其他设备", "count": n})
 }
 
@@ -1014,7 +1073,15 @@ func RevokeSession(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
-	if !db.RevokeSessionByID(uid, uint(id)) {
+	// 「没命中」与「查不了」原来都返回 false，于是数据库出问题时会对用户说"这个会话不存在或已退出"——
+	// 一句善意的假话会让人以为已经退出了那台设备（待办清单 P56）
+	hit, dbErr := db.RevokeSessionByID(uid, uint(id))
+	if dbErr != nil {
+		log.Printf("ERROR: 登出指定设备失败 user_id=%d session_id=%d: %v", uid, id, dbErr)
+		fail(c, http.StatusInternalServerError, "登出该设备失败，请稍后再试")
+		return
+	}
+	if !hit {
 		fail(c, http.StatusNotFound, "会话不存在或已退出")
 		return
 	}

@@ -6,6 +6,8 @@ import (
 	"log"
 	"time"
 
+	"gorm.io/gorm"
+
 	"loomproxy/models"
 )
 
@@ -45,30 +47,54 @@ func ValidateSession(sessionID string, userID uint) bool {
 	return true
 }
 
-// RevokeSession 吊销单个会话
-func RevokeSession(sessionID string) {
+// RevokeSession 吊销单个会话。
+//
+// **报错必须交回调用方**（待办清单 P56）：会话行就是鉴权的执行点
+// （`AuthRequired` → `ValidateSession` 每请求查 `revoked_at`），
+// 所以"吊销没做成"不等于"没有会话要吊销"——它等于**那个人还能继续用**。
+// 这几个函数原来只返回计数/布尔，把 `res.Error` 整个丢掉：一次失败的 UPDATE 与
+// "本来就没有可吊销的行"长得一模一样（都是 0 / false），调用方于是心安理得地回 200。
+func RevokeSession(sessionID string) error {
 	now := time.Now()
-	DB.Model(&models.AuthSession{}).
+	return DB.Model(&models.AuthSession{}).
 		Where("session_id = ? AND revoked_at IS NULL", sessionID).
-		Update("revoked_at", now)
+		Update("revoked_at", now).Error
 }
 
-// RevokeOtherSessions 吊销用户除 keepSessionID 外的全部会话，返回吊销数量
-func RevokeOtherSessions(userID uint, keepSessionID string) int64 {
+// RevokeOtherSessions 吊销用户除 keepSessionID 外的全部会话，返回吊销数量与错误。
+func RevokeOtherSessions(userID uint, keepSessionID string) (int64, error) {
+	return RevokeOtherSessionsTx(DB, userID, keepSessionID)
+}
+
+// RevokeOtherSessionsTx 同一件事，但跑在调用方给的事务里。
+//
+// 为什么要有这个口子：改密码 / 找回密码 / 禁用 / 删除这几处，语义都是
+// 「凭证变了，别人的登录要一起作废」。分两条独立语句写，中间任何一步失败就正好造出
+// 最坏的组合——**密码改了、旧会话还活着**，而响应已经说了"成功"。放进同一个事务，
+// 回滚就是一起回滚，用户拿到 500 时知道这次没做成。
+func RevokeOtherSessionsTx(tx *gorm.DB, userID uint, keepSessionID string) (int64, error) {
 	now := time.Now()
-	res := DB.Model(&models.AuthSession{}).
+	res := tx.Model(&models.AuthSession{}).
 		Where("user_id = ? AND session_id <> ? AND revoked_at IS NULL", userID, keepSessionID).
 		Update("revoked_at", now)
-	return res.RowsAffected
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
 }
 
-// RevokeSessionByID 吊销用户的指定会话（仅限本人），返回是否命中
-func RevokeSessionByID(userID uint, id uint) bool {
+// RevokeSessionByID 吊销用户的指定会话（仅限本人）。
+// 返回「是否命中」与错误：**没命中与查失败是两件事**——
+// 合成一个 false，面板就会在数据库出问题时对用户说"这个会话不存在"。
+func RevokeSessionByID(userID uint, id uint) (bool, error) {
 	now := time.Now()
 	res := DB.Model(&models.AuthSession{}).
 		Where("id = ? AND user_id = ? AND revoked_at IS NULL", id, userID).
 		Update("revoked_at", now)
-	return res.RowsAffected > 0
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // RevokeExcessSessions 保留该用户最近活跃的 maxKeep 个会话（keepSessionID 一定在保留之列，
