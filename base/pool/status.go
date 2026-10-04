@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"log"
 	"time"
 
 	"loomproxy/db"
@@ -40,6 +41,12 @@ type Status struct {
 	Config  ConfigInfo       `json:"config"`
 	Counts  map[string]int64 `json:"counts"`
 	Devices []DeviceInfo     `json:"devices"`
+	// SoftDeleted 是被软删后留下的行数（`deleted_at IS NOT NULL`）。
+	// 它**不进 `Counts`**：框架自己不产生软删行（回收那一路走 `Unscoped()` 硬删），
+	// 这些行只可能来自手工 SQL；而它们在所有按状态的计数里都隐形——
+	// 占库、可能撞唯一索引，却不占名额、也没有任何地方会再看见它（待办清单 P35② 的可见性那一半）。
+	// 这里只报数，不清理：要不要框架代劳还没拍。
+	SoftDeleted int64 `json:"soft_deleted"`
 }
 
 // deviceStatusLimit 非活跃号明细的展示上限（防死号刷屏）
@@ -61,6 +68,7 @@ func (p *Pool) Status() *Status {
 
 	if !p.Running() {
 		fillCountsFromDB(st, p.Name())
+		st.SoftDeleted = countSoftDeleted(p.Name())
 		st.Devices = append(st.Devices, listDevices(p.Name(), deviceStatusLimit)...)
 		return st
 	}
@@ -83,6 +91,7 @@ func (p *Pool) Status() *Status {
 	st.Counts[StatusCooldown] = int64(len(p.cooldown)) // 运行中的冷却集合以内存为准
 	st.Counts[StatusSpent] = countByStatus(p.Name(), StatusSpent)
 	st.Counts[StatusDead] = countByStatus(p.Name(), StatusDead)
+	st.SoftDeleted = countSoftDeleted(p.Name())
 	st.Devices = append(st.Devices, listDevices(p.Name(), deviceStatusLimit, StatusSpent, StatusDead)...)
 	return st
 }
@@ -121,6 +130,22 @@ func fillCountsFromDB(st *Status, name string) {
 func countByStatus(name, status string) int64 {
 	var n int64
 	db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", name, status).Count(&n)
+	return n
+}
+
+// countSoftDeleted 数一个池里被软删留下的行。`Unscoped()` 只能拿到"全部行"，
+// 所以必须再带一个 `deleted_at IS NOT NULL`——少写这半句，这个数就恒等于总行数，
+// 面板会开始报一堆根本不存在的堆积。
+//
+// 查不到时返回 **-1 而不是 0**：这条读数的用途是"确认没有堆积"，
+// 把一次查询失败报成 0 就等于撒一个让人放心的谎（同一族判据：审计类写入不许吞错）。
+func countSoftDeleted(name string) int64 {
+	var n int64
+	if err := db.DB.Unscoped().Model(&models.PoolDevice{}).
+		Where("pool = ? AND deleted_at IS NOT NULL", name).Count(&n).Error; err != nil {
+		log.Printf("ERROR: 号池 %s 的软删行读数失败（面板按「读数不可用」显示，不按 0）：%v", name, err)
+		return -1
+	}
 	return n
 }
 

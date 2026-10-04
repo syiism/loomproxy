@@ -76,6 +76,16 @@ const kindLabel = (kind) => {
   return KIND_LABELS[k] || k
 }
 const isSpread = (p) => p.config && p.config.kind === 'spread'
+// 软删留下的行要说出来（待办清单 P35② 的可见性那一半）：框架自己不产生软删行，
+// 这些行只可能来自手工 SQL，而它们在按状态的计数里**全部隐形**——占库、可能撞唯一索引，
+// 却不占名额也没人再看见。0 时不挂这句（空态不写长说明，P24）；-1 是"查不到"，
+// 绝不能显示成 0，那等于报一个让人放心的假清白。
+const softDeletedNote = (p) => {
+  const n = p.soft_deleted
+  if (n == null || n === 0) return ''
+  if (n < 0) return ' · 软删行读数不可用'
+  return ` · 手工软删留下 ${n} 行（不计入任何状态，也不会被自动清理）`
+}
 // 死号保留被总号上限压下来时要说出来：运维看到「死号只留 2 条」而配置写 10，
 // 不该去翻代码才知道是谁压的（待办清单 P35）
 const deadNote = (c) => (
@@ -84,12 +94,12 @@ const deadNote = (c) => (
 )
 const burnSummary = (p) => {
   const c = p.config || {}
-  return `冷备 ${c.cold_spares} · 活跃上限 ${c.max_hot} · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 临期续领 ${c.renew_before_sec}s · 巡检 ${c.maintain_sec}s${deadNote(c)}`
+  return `冷备 ${c.cold_spares} · 活跃上限 ${c.max_hot} · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 临期续领 ${c.renew_before_sec}s · 巡检 ${c.maintain_sec}s${deadNote(c)}${softDeletedNote(p)}`
 }
 const spreadSummary = (p) => {
   const c = p.config || {}
   const target = c.target_devices > 0 ? c.target_devices : (c.max_devices > 0 ? c.max_devices : 1)
-  return `轮询目标 ${target} 台 · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 兜底冷却 ${c.cooldown_default_sec}s · 巡检 ${c.maintain_sec}s${deadNote(c)}`
+  return `轮询目标 ${target} 台 · 总号上限 ${c.max_devices > 0 ? c.max_devices : '不限'} · 兜底冷却 ${c.cooldown_default_sec}s · 巡检 ${c.maintain_sec}s${deadNote(c)}${softDeletedNote(p)}`
 }
 
 // 凭证只列键名：摊薄型的嵌套凭证走 Payload，其第一层键名同样只出键名
