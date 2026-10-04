@@ -25,6 +25,14 @@ import glob, os, re, sys
 
 styles_path = sys.argv[1]
 custom_prefixes = ('btn-',)
+# `custom_exact` 是**手抄**的，但它不是 styles.css 那份定义的复印件，别把它"对齐"回去：
+# 名单的语义是"这些名字长得像本仓组件类，用了就必须查得到定义"，所以
+# **已经消失的类要留在名单里**（`table-head` 现在哪儿都没有定义、也没人用——
+# 有人重新写出 `class="table-head"` 时，正是这条名单把它拦下来）。
+# 今天试过改成"从 `web/dist` 的生成 CSS 推导"，结论是**不做**：
+# 用一个正则去解 CSS 选择器会同时吃到 `.reveal.in`、`.hover\:opacity-70:hover`、
+# 以及注释里 `example.org` 这类东西，15 条"找不到"复核后 15 条全是扫描器自己的错
+# （判据见踩坑判据《用正则扫「配置项漂移」，扫出来四条假开关》那一条的第 ④ ⑤ 两种机制）。
 custom_exact = {
     'btn', 'card', 'card-hover', 'table-wrap', 'table-base', 'table-head',
     'tag', 'kbd', 'input', 'input-sm', 'label', 'checkbox', 'reveal', 'pg-btn',
