@@ -47,6 +47,7 @@ vet:
 	@$(MAKE) --no-print-directory css-check
 	@$(MAKE) --no-print-directory nav-check
 	@$(MAKE) --no-print-directory test-order-check
+	@$(MAKE) --no-print-directory settings-readers-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -62,6 +63,12 @@ css-check:
 # 它靠的是上一个用例把全局指针建好了，而用例顺序没有任何保证（待办清单 P39 顺带暴露）。
 test-order-check:
 	@./scripts/check-test-order.sh
+
+# 设置项没有后端读取方（面板上能编辑、值改得动，而后端没有任何地方读它）：
+# 构建绿、用例绿、面板也绿，只有管理员以为它生效——这是最静默的一种装饰位（待办清单 P53）。
+# 确实只给展示或脚本用的键，写进脚本里的 EXEMPT 并留一句理由。
+settings-readers-check:
+	@./scripts/check-setting-readers.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

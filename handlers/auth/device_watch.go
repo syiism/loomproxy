@@ -48,11 +48,11 @@ func settingInt(key string, def int) int {
 	n, err := strconv.Atoi(trimmed)
 	switch {
 	case trimmed == "":
-		db.NoticeReplacedSetting(key, raw, def, "没填或设置行不存在")
+		db.NoticeReplacedSetting(key, raw, strconv.Itoa(def), "没填或设置行不存在")
 	case err != nil:
-		db.NoticeReplacedSetting(key, raw, def, "不是整数")
+		db.NoticeReplacedSetting(key, raw, strconv.Itoa(def), "不是整数")
 	case n <= 0:
-		db.NoticeReplacedSetting(key, raw, def, "填了非正数")
+		db.NoticeReplacedSetting(key, raw, strconv.Itoa(def), "填了非正数")
 	default:
 		return n
 	}

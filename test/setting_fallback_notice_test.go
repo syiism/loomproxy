@@ -75,7 +75,7 @@ func TestSettingFallbackSpeaksOncePerChange(t *testing.T) {
 	before = spoken()
 	wantValue(t, "填 0", noticeDefault)
 	wantSpeak(t, "填 0", before, 1)
-	if line := buf.String(); !strings.Contains(line, `"0"`) || !strings.Contains(line, "实际按 5 走") {
+	if line := buf.String(); !strings.Contains(line, `"0"`) || !strings.Contains(line, `实际按 "5" 走`) {
 		t.Errorf("出声内容没把话说清（要含填的值与实际值）：\n%s", line)
 	}
 

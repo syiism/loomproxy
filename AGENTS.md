@@ -22,7 +22,7 @@
 
 ## 3. 构建、运行与部署
 
-- 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` + 手写 SQL 的保留字/反引号扫描 + 前端未定义类扫描 + 管理端导航完整性 + 集成用例装配顺序 → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
+- 唯一门禁是 `make build`（pnpm 前端 → `go vet` + `gofmt` + 手写 SQL 的保留字/反引号扫描 + 前端未定义类扫描 + 管理端导航完整性 + 集成用例装配顺序 + 设置键必须有后端读取方 → `go test -race` → 调试版与 strip 版两个产物）；前端必须先于 Go 构建。
   **测试段跑的是 `./...` 而不是只跑 `./test/`**：包内单测不被门禁跑到就等于没写——
   携带形态在源包里的向量对拍与解析层用例，过去只有人手动跑 `go test ./sources/...` 才会红（分支侧 S30 的门禁盲区，本轮回骨架收口）。
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
@@ -153,6 +153,11 @@
   只收口错误文案，正文不扫。
 - 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露；**已由 `make vet` 扫**，见 `scripts/check-sql-reserved.sh`），条件里的列名一律用 GORM map 形式让它按方言加引号——**不要在 SQL 里写死反引号**（反引号是 MySQL/SQLite 方言，PostgreSQL 只认双引号，而读设置失败被吞成空串，症状是「设置全没生效」）。
 - 设置项的 `type` 是行为声明不是展示标签（`string`/`bool`/`number`/`json`），`json` 型前后端双侧校验。
+- **配置填了却没生效要说一声，也要有人听**：上限类设置被兜底替换时经 `db.NoticeReplacedSetting` 出一条 ERROR，
+  **同一种替换只喊一次**（读配置在热路径上，每请求一条会泡坏读数——判据同 P36 号池的 `ErrCapacityReached`）；
+  待办清单 P48 拍了"0 该是什么意思"之前，`settingInt` 仍然把非正数当"没配"，只是不再静默。
+  反向的那半句由构建兜：**seed 里每个键必须有后端读取方**（`make vet` 的 `settings-readers-check`），
+  只给展示/脚本用的写进脚本 `EXEMPT` 并留理由——「面板能编辑而后端没人读」是不报错的一种装饰（P53）。
 - **下发位置是部署事实，不做设置项**：书源 JSON 走静态托管 `GET /data/shuyuan/bookSource.json`（免鉴权、原样直出），
   `GET /user/import-config` 只回路径与 `ready`（判据是 `json.Valid`）；绝对地址由前端 `window.location.origin` 拼，
   不信 `X-Forwarded-Host`。旧的 `legado_import_url` 已进 seed 废弃键清单、启动硬删。

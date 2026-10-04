@@ -224,10 +224,27 @@ func Register(c *gin.Context) {
 		db.DB.Where("code = ?", "user").First(&defaultRole)
 	}
 
+	// 默认套餐读设置项（面板「新用户默认套餐」，它还在 `protectedSettingKeys` 里被列为不许删）。
+	// 改前这里硬编码 "free"，于是那个输入框是**一个没人读的装饰位**：管理员填成 vip，注册出来还是 free。
+	// 填了不存在的码就回落到 free，并且**把当时真正生效的那个套餐写进用户那一行**——
+	// 读取侧 `gate.ResolvePlan` 也会把无套餐的人算成 free，但那是"当场解释"，
+	// 留下一行 NULL 等于把这个人将来能不能用系于"free 这一档还在不在"，而那次删除不会有任何提示。
+	// 每一次替换都出声，走的是与 P48 同一个出口（`db.NoticeReplacedSetting`）。
+	planCode := getSettingStr("default_quota_plan", "free")
+	var defaultPlan models.QuotaPlan
+	if db.DB.Where("code = ?", planCode).First(&defaultPlan).Error != nil {
+		db.NoticeReplacedSetting("default_quota_plan", planCode, "free", "套餐码不存在")
+		if db.DB.Where("code = ?", "free").First(&defaultPlan).Error != nil {
+			// 连回落目标都没了：给空套餐（与改前一致，不假装注册失败），但这一档必须出声——
+			// 授权判据按套餐 id 查行，`planID=0` 是**失败关闭**（一个源都用不了），
+			// 静默把人注册成"进得来、什么都不能用"比注册失败更难被发现
+			db.NoticeReplacedSetting("default_quota_plan", "free", "（无套餐）", "回落目标 free 也不存在")
+			defaultPlan = models.QuotaPlan{}
+		}
+	}
 	var defaultPlanID *uint
-	var freePlan models.QuotaPlan
-	if err := db.DB.Where("code = ?", "free").First(&freePlan).Error; err == nil {
-		defaultPlanID = &freePlan.ID
+	if defaultPlan.ID != 0 {
+		defaultPlanID = &defaultPlan.ID
 	}
 
 	user := &models.User{
