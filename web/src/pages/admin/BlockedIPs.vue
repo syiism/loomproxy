@@ -84,7 +84,7 @@
       <div v-else class="table-wrap overflow-x-auto">
         <table class="table-base">
           <thead>
-            <tr><th>登录标识</th><th>尝试</th><th>失败</th><th>不同 IP 数</th><th class="hidden md:table-cell">来源样本</th></tr>
+            <tr><th>登录标识</th><th>尝试</th><th>失败</th><th>不同 IP 数</th><th class="hidden md:table-cell">首次</th><th class="hidden md:table-cell">最近</th><th class="hidden md:table-cell">来源样本</th></tr>
           </thead>
           <tbody>
             <tr v-for="a in accounts" :key="a.principal">
@@ -95,6 +95,10 @@
                 <UiTag v-if="isMultiIp(a)" tone="yellow" :label="'多出口 ' + a.distinct_ips" />
                 <span v-else class="font-mono text-xs">{{ a.distinct_ips }}</span>
               </td>
+              <!-- 跨度是"慢速试"唯一能被看出来形状：一个标识今天试了 8 次、
+                   分散在 3 天里，与 8 次挤在一分钟里，对拍板是两件不同的事（P40① 的输入） -->
+              <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ fmtDate(a.first_seen) }}</td>
+              <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ fmtDate(a.last_seen) }}</td>
               <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ (a.sample_ips || []).join(' ') }}</td>
             </tr>
           </tbody>
@@ -102,6 +106,7 @@
       </div>
       <p class="text-xs text-text-muted mt-2">
         这一列不做任何处置：账号侧要不要独立闸门还没拍（待办清单 P40①），这里只把判定要用的材料摆出来。
+        「首次 / 最近」给的是跨度——次数相同、摊在三天里与挤在一分钟里是两件事，窄屏先收起来（≥768px 才显示）。
         「不同 IP 数」标黄只说"这个标识来自多个出口"，不说"有人在爆破"。
       </p>
     </div>
