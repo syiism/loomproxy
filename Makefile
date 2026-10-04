@@ -49,6 +49,7 @@ vet:
 	@$(MAKE) --no-print-directory test-order-check
 	@$(MAKE) --no-print-directory settings-readers-check
 	@$(MAKE) --no-print-directory judgment-count-check
+	@$(MAKE) --no-print-directory doc-numbers-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -77,6 +78,12 @@ settings-readers-check:
 # 其中一对的差是一行模板被算成了条目——「数字要数出来」反复靠自觉失败，就该由机器数。
 judgment-count-check:
 	@./scripts/check-judgment-count.sh
+
+# 执行报告里那两个自己声称的数（§8「共 N 条」、那句「清单页 …N 行」）必须等于当场数出来的。
+# 触发它的经验是本轮两次凭印象写行数（813/860/890/913 才对上一次）与一个改过两次仍错的条目数——
+# 与 judgment-count-check 同一条判据，只是对象从判据页换成报告。
+doc-numbers-check:
+	@./scripts/check-doc-numbers.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。
