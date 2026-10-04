@@ -2,6 +2,8 @@ package db
 
 import (
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +52,51 @@ func InvalidateSettingCache(key string) {
 		return
 	}
 	settingCache.Delete(key)
+}
+
+// SettingBool 读一个 `type=bool` 的设置项。
+//
+// **为什么要有它**：同一族判据原来有四份写法——`getSettingBool` 去空白转小写、
+// `deviceWatchEnabled` / `auto_block_enabled` / 「设备与密钥」读数三处是**精确 `== "true"`**。
+// 于是库里存 `True`（人或脚本敲的）时，`register_enabled` 读成"开"而另一些读成"关"：
+// 同一个值在两个开关上给出相反结果，而写入端那时只校验 `json` 型（待办清单 P60）。
+// 空串=这一行不存在或值为空，按 `def`；其余一律"去空白 + 小写后是否等于 true"。
+func SettingBool(key string, def bool) bool {
+	raw := strings.TrimSpace(GetSetting(key))
+	if raw == "" {
+		return def
+	}
+	return strings.EqualFold(raw, "true")
+}
+
+// SettingInt 读一个 `type=number` 的设置项，并在值没生效时出声。
+//
+// **为什么要有它**：同一个形状原来有三份写法，而且三份的失败面不一样——
+// `handlers/auth` 那份（P48 修的）出声；`handlers/verify` 那份是手写的逐字符十进制解析，
+// 任何非数字字符（含粘贴进来的空格、负号）与 0 都**静默**回默认，还会在大数上溢出回默认；
+// `middleware/ipblock` 那份是 `strconv.Atoi` 配 `, _`，同样静默。
+// 于是同一个填错的值，在三个开关上是三种不同的"悄悄不按你填的走"（待办清单 P61）。
+//
+// 语义与三份一致（**这是收口**）：空=按默认，非整数=按默认，非正数=按默认；
+// 三种都出一条 ERROR，同一种替换只喊一次。刻意留下的两处行为差异都朝好的方向：
+// 带首尾空白的合法数字以前算"没填对"（同 P48 的 TrimSpace），超长数字串以前在手工解析里溢出成
+// 一个没人认识的数、现在按默认走并出声。0 到底该不该当"没配"是 P48② 那件还没拍的事，
+// 拍的时候只改这一处。合法域的上界仍由调用方管（各键对取值域的理解不同，见各包自己的判法）。
+func SettingInt(key string, def int) int {
+	raw := GetSetting(key)
+	trimmed := strings.TrimSpace(raw) // 粘贴进来的值常带首尾空白，"看着填对了、实际按默认走"也是这条要治的病
+	n, err := strconv.Atoi(trimmed)
+	switch {
+	case trimmed == "":
+		NoticeReplacedSetting(key, raw, strconv.Itoa(def), "没填或设置行不存在")
+	case err != nil:
+		NoticeReplacedSetting(key, raw, strconv.Itoa(def), "不是整数")
+	case n <= 0:
+		NoticeReplacedSetting(key, raw, strconv.Itoa(def), "填了非正数")
+	default:
+		return n
+	}
+	return def
 }
 
 // settingNotices 记录每个设置键上一次出声时的样子（原因 + 填的值），同一种替换只说一次。

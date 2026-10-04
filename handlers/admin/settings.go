@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -55,6 +56,38 @@ type createSettingRequest struct {
 	Description string `json:"description"`
 }
 
+// normalizeSettingValue 按**声明的 type** 校验并归一设置值。
+//
+// 原来只有 `json` 型有这道校验，其余类型是"存什么就是什么"：
+// `bool` 能存进 `1`/`True`/`yes`，而读取侧那时还有两套判据（一处 `ToLower` 比较、几处精确 `== "true"`），
+// 于是同一个值在两个开关上给出相反结果；`number` 能存进 `abc`，要到运行时才被解析器吞掉
+// （待办清单 P60、P48 同族）。坏值留在库里只会等到运行时才炸——所以当场拒。
+//
+// `number` 这里**刻意不做范围判断**：0 与负数都是有意义的合法值
+// （`jwt_expire_hours=-1` 是"永不过期"，限额类的 0 语义还等拍，见 P48②），
+// 校验形态不校验语义，语义留给各键的读取端。
+func normalizeSettingValue(settingType, raw string) (string, error) {
+	switch settingType {
+	case "json":
+		return normalizeJSONValue(raw)
+	case "bool":
+		v := strings.ToLower(strings.TrimSpace(raw))
+		switch v {
+		case "true", "false":
+			return v, nil
+		}
+		return "", fmt.Errorf("bool 型设置只接受 true / false（当前值 %q）；`1`、`yes`、`on` 这类写法不会被读成「开启」", raw)
+	case "number":
+		v := strings.TrimSpace(raw)
+		if _, err := strconv.Atoi(v); err != nil {
+			return "", fmt.Errorf("number 型设置必须是整数（当前值 %q）", raw)
+		}
+		return v, nil
+	default: // string：原样
+		return raw, nil
+	}
+}
+
 // CreateSetting 创建设置项
 func CreateSetting(c *gin.Context) {
 	var req createSettingRequest
@@ -71,14 +104,13 @@ func CreateSetting(c *gin.Context) {
 		auth.Fail(c, http.StatusBadRequest, "type 必须是 string/bool/number/json 之一")
 		return
 	}
-	if settingType == "json" {
-		normalized, err := normalizeJSONValue(req.Value)
-		if err != nil {
-			auth.Fail(c, http.StatusBadRequest, err.Error())
-			return
-		}
-		req.Value = normalized
+	// 值按声明的 type 校验与归一（`json` 在这一条里委托给 `normalizeJSONValue`，判据不变）
+	normalized, err := normalizeSettingValue(settingType, req.Value)
+	if err != nil {
+		auth.Fail(c, http.StatusBadRequest, err.Error())
+		return
 	}
+	req.Value = normalized
 
 	var count int64
 	if err := db.DB.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": req.Key}).Count(&count).Error; err != nil {

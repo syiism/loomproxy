@@ -96,11 +96,9 @@ func RegisterRoutes(r *gin.Engine) {
 }
 
 func getSettingBool(key string, def bool) bool {
-	var setting models.SystemSetting
-	if err := db.DB.Where(map[string]interface{}{"key": key}).First(&setting).Error; err != nil {
-		return def
-	}
-	return strings.ToLower(setting.Value) == "true"
+	// 统一到 `db.SettingBool`：原来这一路自己查库并做小写比较，
+	// 而别处的 bool 判据是精确 `== "true"`——同一个值两种结果（待办清单 P60）
+	return db.SettingBool(key, def)
 }
 
 func getSettingStr(key string, def string) string {

@@ -622,14 +622,12 @@ func UpdateSetting(c *gin.Context) {
 		auth.Fail(c, http.StatusNotFound, "设置项不存在")
 		return
 	}
-	value := req.Value
-	if setting.Type == "json" {
-		normalized, err := normalizeJSONValue(value)
-		if err != nil {
-			auth.Fail(c, http.StatusBadRequest, err.Error())
-			return
-		}
-		value = normalized
+	// 值的形态按声明的 type 校验（`json` 之外补上 `bool`/`number`，与创建走同一条判据；
+	// 待办清单 P60：以前只有 json 会拒坏值，其余是"存什么就是什么"）
+	value, err := normalizeSettingValue(setting.Type, req.Value)
+	if err != nil {
+		auth.Fail(c, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	result := db.DB.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": key}).Update("value", value)

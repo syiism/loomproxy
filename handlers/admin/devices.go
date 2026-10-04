@@ -196,7 +196,7 @@ func ListDeviceActivity(c *gin.Context) {
 		"dir":   dir,
 		// 口径随读数一起下发：面板上「8 个 IP」是不是异常，取决于当时配置的阈值是多少
 		"config": gin.H{
-			"device_watch_enabled": db.GetSetting("device_watch_enabled") == "true",
+			"device_watch_enabled": db.SettingBool("device_watch_enabled", false),
 			"max_active_sessions":  auth.MaxActiveSessions(),
 			"window_days":          daysBetween(windowStart),
 			"suspect_distinct_ips": suspectIPs,

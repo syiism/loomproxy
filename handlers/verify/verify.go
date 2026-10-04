@@ -54,24 +54,6 @@ var builtinScenes = map[string]bool{
 	SceneForgotPassword: true,
 }
 
-func settingInt(key string, def int) int {
-	v := db.GetSetting(key)
-	if v == "" {
-		return def
-	}
-	n := 0
-	for _, ch := range v {
-		if ch < '0' || ch > '9' {
-			return def
-		}
-		n = n*10 + int(ch-'0')
-	}
-	if n <= 0 {
-		return def
-	}
-	return n
-}
-
 // SceneEnabled 场景是否启用了验证码校验
 func SceneEnabled(scene string) bool {
 	for _, s := range strings.Split(db.GetSetting(settingScenes), ",") {
@@ -93,12 +75,16 @@ func EnabledScenes() []string {
 	return scenes
 }
 
-func ttl() time.Duration { return time.Duration(settingInt(settingTTLSec, 600)) * time.Second }
+// 下面四个设置读取全部走 `db.SettingInt`。这里原来有一份自己的实现：手写逐字符十进制解析，
+// 于是任何非数字字符（含粘贴进来的首尾空白）与 0 都**静默**回默认，
+// 而一条超长的数字串会 wrap 出一个没人认识的数（实测 `-8814407034` 被当成秒用）——
+// 填错的人永远看不到任何提示（待办清单 P61）。
+func ttl() time.Duration { return time.Duration(db.SettingInt(settingTTLSec, 600)) * time.Second }
 func interval() time.Duration {
-	return time.Duration(settingInt(settingIntervalSec, 60)) * time.Second
+	return time.Duration(db.SettingInt(settingIntervalSec, 60)) * time.Second
 }
-func dailyLimit() int  { return settingInt(settingDailyLimit, 10) }
-func maxAttempts() int { return settingInt(settingMaxAttempts, 5) }
+func dailyLimit() int  { return db.SettingInt(settingDailyLimit, 10) }
+func maxAttempts() int { return db.SettingInt(settingMaxAttempts, 5) }
 
 // ValidTarget 目标格式校验：当前两个场景均为邮箱（与前端 register/forgot 的正则一致）。
 // 接入短信场景时按 Target 类型分流（手机号正则），此处统一收口。

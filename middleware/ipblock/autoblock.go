@@ -19,7 +19,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -33,15 +32,11 @@ var autoBlockState = struct {
 }{failures: make(map[string][]time.Time)}
 
 func autoBlockConfig() (enabled bool, threshold int, window time.Duration) {
-	enabled = db.GetSetting("auto_block_enabled") == "true"
-	threshold, _ = strconv.Atoi(db.GetSetting("auto_block_threshold"))
-	if threshold <= 0 {
-		threshold = 30
-	}
-	sec, _ := strconv.Atoi(db.GetSetting("auto_block_window_sec"))
-	if sec <= 0 {
-		sec = 60
-	}
+	// 三份「填了却没生效也不说」里的一份（另外两份见 `db.SettingInt` 的注释）：
+	// 原来是 `strconv.Atoi` 配 `, _` 再 `<= 0` 兜默认，值 0、空、`"3O"` 三种全悄悄（待办清单 P61）
+	enabled = db.SettingBool("auto_block_enabled", false)
+	threshold = db.SettingInt("auto_block_threshold", 30)
+	sec := db.SettingInt("auto_block_window_sec", 60)
 	return enabled, threshold, time.Duration(sec) * time.Second
 }
 

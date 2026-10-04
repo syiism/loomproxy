@@ -48,6 +48,7 @@ vet:
 	@$(MAKE) --no-print-directory nav-check
 	@$(MAKE) --no-print-directory test-order-check
 	@$(MAKE) --no-print-directory settings-readers-check
+	@$(MAKE) --no-print-directory judgment-count-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -64,11 +65,18 @@ css-check:
 test-order-check:
 	@./scripts/check-test-order.sh
 
-# 设置项没有后端读取方（面板上能编辑、值改得动，而后端没有任何地方读它）：
-# 构建绿、用例绿、面板也绿，只有管理员以为它生效——这是最静默的一种装饰位（待办清单 P53）。
+# 设置项的两条静默面：① 没有后端读取方（面板上能编辑、值改得动，而后端没人读它）——
+# 构建绿、用例绿、面板也绿，只有管理员以为它生效，这是最静默的一种装饰位（待办清单 P53）；
+# ② 整数设置的读取口只有一处 `db.SettingInt`，出现本地实现即红（待办清单 P61，同形状被修过三次）。
 # 确实只给展示或脚本用的键，写进脚本里的 EXEMPT 并留一句理由。
 settings-readers-check:
 	@./scripts/check-setting-readers.sh
+
+# 判据页顶上那句「N 条：a 已 / b 部分 / c 未」必须等于当场数出来的，且全页只许有一句。
+# 触发它的经验写在那一页自己的《先删后加》段里：同一段曾排过七句各自自称实测的分布，
+# 其中一对的差是一行模板被算成了条目——「数字要数出来」反复靠自觉失败，就该由机器数。
+judgment-count-check:
+	@./scripts/check-judgment-count.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。
