@@ -183,6 +183,8 @@
 - **审计类写入不许吞错**：只为留档而写的表（如 `redemption_logs`）插入失败必须打服务端日志；
   列宽按**用户输入的最坏形态**定，不是按我们自己生成的形态定。SQLite 不检查列宽，这类只在 MySQL 暴露。
 - 前端复用既有组件与 `@layer components` 基样类；`reveal` 动画依赖观察时机（先 `loading=false` 再 `nextTick(revealObserve)`）。
+- **共享件开的插槽要给自己宽度约束**（容器 `min-w-0 max-w-full`、内容自己 `flex-wrap`，**只改一头仍会溢出**）：
+  这类窄屏错构建、用例、`css-check` 全都不报，只能按那个视口量一次（判据与探针做法见 `docs/规范/开发约定.md`，待办清单 P65）。
 - **自定义类写了就得有定义**（`btn-*`/`card`/`table-*`/`label`/`checkbox`…）：Tailwind 对不存在的类静默跳过，
   错类名不红构建、不红用例——**已由 `make vet` 扫**（`scripts/check-css-classes.sh`，P31）。
 - 黑盒测试一律放 `test/`，集成用例禁止 `t.Parallel()`；改动完成后 `make build` 且必须 `git commit`。
