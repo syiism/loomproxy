@@ -235,6 +235,59 @@ func BookSourceReady() bool {
 	return json.Valid(raw)
 }
 
+// MissingDataFile 一条「源声明了、但不在位」的静态字典文件。
+// Reason 只有两种：missing（读不到）与 invalid_json（读到了但不是合法 JSON）——
+// 半截文件与没有文件对下游是同一类故障（导入方拿到的是坏数据），所以合在一条读数里点名、
+// 只用 Reason 区分「要去拷文件」还是「拷坏了」。
+type MissingDataFile struct {
+	Source string `json:"source"`
+	Dir    string `json:"dir"`
+	File   string `json:"file"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// CheckDeclaredDataFiles 启动期核对：各源在 `DataFiles` 声明位登记的文件是否真在 `dataRoot` 下就位。
+// 返回缺位清单（空 = 都在位）；**它不改任何状态、也不阻断启动**，调用方（`app.Run`）逐条打 ERROR。
+//
+// 为什么需要这条（待办清单 P51、分支侧 S39）：字典是**部署产物**，而「二进制 + `.env` + `data/`」
+// 这个部署单元里没有任何一步保证新增源的文件被放进目录——七猫三源的 `data/qm/` 就从 v62 起一直是空的。
+// 缺位的症状不是崩，是**静默降级**：源的发现页查不到栏目、一片空列表，而监控里全是 200。
+// 当时唯一的信号是源自己 `log.Printf` 的一句，而且 `sync.Once` 之后不再重说——
+// 不报错的错最贵，所以这道核对由底座做，且按声明位遍历（新源接进来自动被覆盖，不需要谁记得去加）。
+//
+// 目录取 `SourceMeta.Category`：`/data/<分类>/<文件>.json` 的第一段就是它
+// （fake 源是 `fake`，七猫三形态共用 `qm`）。按数据源码去找会找到一个不存在的目录——
+// **多形态源拆码不拆字典目录**，回落只在 Category 为空时用得上。
+// 判据是「读得到且 `json.Valid`」，与 `BookSourceReady` 同一套（两处各写一遍就会分叉）。
+func CheckDeclaredDataFiles(dataRoot string) []MissingDataFile {
+	type key struct{ dir, name string }
+	seen := map[key]bool{}
+	var missing []MissingDataFile
+	for _, m := range base.DeclaredSources() {
+		dir := m.Category
+		if dir == "" {
+			dir = m.Code
+		}
+		for _, f := range m.DataFiles {
+			k := key{dir, f.Name}
+			if seen[k] {
+				continue // 同一份字典被同族多个源共用时只点名一次
+			}
+			seen[k] = true
+			path := filepath.Join(dataRoot, dir, f.Name+".json")
+			raw, err := os.ReadFile(path)
+			switch {
+			case err != nil:
+				missing = append(missing, MissingDataFile{Source: m.Code, Dir: dir, File: f.Name, Path: path, Reason: "missing"})
+			case !json.Valid(raw):
+				missing = append(missing, MissingDataFile{Source: m.Code, Dir: dir, File: f.Name, Path: path, Reason: "invalid_json"})
+			}
+		}
+	}
+	return missing
+}
+
 func init() {
 	base.Register("data_files", NewDataFilesHandler, 0, map[string]interface{}{
 		"type": "datafiles",

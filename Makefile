@@ -31,8 +31,14 @@ go-build:
 # -timeout 必须显式给：Go 的默认值是 10m，而 race 套件在不同机器上耗时差好几倍
 # （本仓开发机约 4 分钟，另有构建机实测约 11 分钟），超时会把一次正常的门禁报成失败——
 # 症状是全绿的用例跑到一半突然 panic: test timed out，看起来像用例挂了而不是时间不够。
+#
+# 测试段跑 `./...` 而不是只跑 `./test/`（分支侧 S30 登记的门禁盲区，本轮回骨架收口）：
+# **不被门禁跑的断言等于没有断言**。携带形态的源包里本来就有向量对拍与解析层用例
+# （`sources/*/protocol/*_test.go`、`sources/*/form/*_test.go`），过去只有人手动跑那一条命令才会红。
+# 真实事故：变异验证把两个签名常量互换后没还原就提交，`make build` 全绿。
+# 骨架不携带源，这条改动对骨架是零成本超集（没有包内测试的包照样只报 no test files）。
 test:
-	go test ./test/ -race -count=1 -timeout 20m
+	go test ./... -race -count=1 -timeout 20m
 
 vet:
 	go vet ./...

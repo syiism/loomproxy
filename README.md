@@ -144,7 +144,7 @@ deploy/            systemd 单元文件
 
 ```bash
 make web      # 仅构建前端（必须先于 go build，dist 缺失时 embed 会 Fatal）
-make test     # go test ./test/ -race -count=1
+make test     # go test ./... -race -count=1 -timeout 20m（跑全部包：包内单测不被门禁跑到就等于没写）
 make vet      # go vet + gofmt 检查
 make clean    # 清理二进制与 web/dist
 ```

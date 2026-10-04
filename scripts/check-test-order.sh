@@ -31,10 +31,14 @@ for f in sorted(glob.glob('test/*_test.go')):
     for m in FUNC_RE.finditer(src):
         name, body = m.group(1), m.group(2)
         lines = body.split('\n')
-        setup_at = next((i for i, l in enumerate(lines) if SETUP_RE.search(l)), None)
+        # 注释行不参与判定：解释「为什么要先装配」的注释里必然提到 conf.Config / db.DB，
+        # 把它算成违规就是假警报——而假警报的代价是下一个人开始无视这条检查。
+        # （第一版就是这么红的：新用例里那句「装配优先」的注释被当成了引用。）
+        code = [(i, l) for i, l in enumerate(lines) if l.strip() and not l.strip().startswith('//')]
+        setup_at = next((i for i, l in code if SETUP_RE.search(l)), None)
         if setup_at is None:
             continue  # 不装配测试服务器的纯函数测试，没有全局态可依赖
-        hit = next((l for l in lines[:setup_at] if GLOBAL_RE.search(l)), None)
+        hit = next((l for i, l in code if i < setup_at and GLOBAL_RE.search(l)), None)
         if hit is not None:
             bad.append((f, name, lines.index(hit) + 1, hit.strip()))
 

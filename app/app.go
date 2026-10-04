@@ -27,7 +27,7 @@ import (
 	"loomproxy/handlers/admin"
 	"loomproxy/handlers/apikey"
 	"loomproxy/handlers/auth"
-	_ "loomproxy/handlers/catalog"
+	"loomproxy/handlers/catalog"
 	"loomproxy/handlers/quota"
 	"loomproxy/handlers/rank"
 	"loomproxy/handlers/userconfig"
@@ -716,6 +716,15 @@ func Run(ctx context.Context) error {
 	// 读源自有开关、做初始导入、登记自己的号池——都必须在 pool.StartAll 之前完成，
 	// 否则池装载时看不到刚导入的号（面板看得见、取号取不到）
 	base.RunSourceBoots()
+
+	// 静态字典在位性核对（待办清单 P51）：各源在 `DataFiles` 声明位登记的文件是**部署产物**，
+	// 装配单元里没有任何一步保证它们被放进 `DATA_DIR`。缺位的后果不是崩，是发现页静默变空，
+	// 而监控全绿——所以在这里按声明逐条点名，**不阻断启动**（先上代码后补产物是正常顺序）。
+	// 放在 RunSourceBoots 之后：源若在 OnBoot 里自己导入文件（如号池的种子导入），那一刻已经完成。
+	for _, miss := range catalog.CheckDeclaredDataFiles(conf.Config.DataDir) {
+		log.Printf("ERROR: 数据源 %s 声明的静态字典不在位：%s（原因=%s）——该源的发现页/榜单会静默变空，"+
+			"请把产物放进部署目录（待办清单 P51）", miss.Source, miss.Path, miss.Reason)
+	}
 
 	// 号池启动即初始化（由各数据源登记）：提前完成存量号分类与
 	// 首个活跃号转正，启动日志即可确认号池状态；POOL_ENABLED=false 时整体跳过
