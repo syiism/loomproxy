@@ -16,6 +16,7 @@ package auth
 import (
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"loomproxy/db"
@@ -35,12 +36,27 @@ const (
 	defaultSuspectDistinctIPs = 8
 )
 
+// settingInt 读一个上限类设置。判据分成"没填/不是数字/填了非正数"三种是因为它们
+// 对管理员是**三件不同的事**——过去它们合成一条 `n <= 0` 的静默替换，于是"填了 0 却按 5 走"
+// 在现场无处可查（待办清单 P48）。
+//
+// 出声**不等于**改语义：0 到底该表示"一台都不许多出来"还是"不适用"是产品口径，还没拍，
+// 所以这里仍然回默认值，只是把这笔替换写进日志。
 func settingInt(key string, def int) int {
-	n, err := strconv.Atoi(db.GetSetting(key))
-	if err != nil || n <= 0 {
-		return def
+	raw := db.GetSetting(key)
+	trimmed := strings.TrimSpace(raw) // 粘贴进来的值常带首尾空白，"看着填对了、实际按默认走"也是这条要治的病
+	n, err := strconv.Atoi(trimmed)
+	switch {
+	case trimmed == "":
+		db.NoticeReplacedSetting(key, raw, def, "没填或设置行不存在")
+	case err != nil:
+		db.NoticeReplacedSetting(key, raw, def, "不是整数")
+	case n <= 0:
+		db.NoticeReplacedSetting(key, raw, def, "填了非正数")
+	default:
+		return n
 	}
-	return n
+	return def
 }
 
 // deviceWatchEnabled 自动处置的开关。判定用字符串比较而不是布尔解析：

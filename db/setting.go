@@ -1,6 +1,7 @@
 package db
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -49,4 +50,22 @@ func InvalidateSettingCache(key string) {
 		return
 	}
 	settingCache.Delete(key)
+}
+
+// settingNotices 记录每个设置键上一次出声时的样子（原因 + 填的值），同一种替换只说一次。
+// 键的个数就是设置项里被这么读的键的个数，不回收。
+var settingNotices sync.Map // key -> string
+
+// NoticeReplacedSetting 在"设置里填的值没生效、系统按兜底默认走"时说一次话。
+//
+// 合法域的判断留在调用方（各键对取值域的理解不同），这里只管"要出声"这一件事。
+// 去重（同 P36 号池 `ErrCapacityReached` 的判据）是必需的：读设置在热路径上，
+// 每请求一条日志会把真正该看的读数泡坏。
+func NoticeReplacedSetting(key, raw string, effective int, reason string) {
+	sig := reason + "\x00" + raw
+	if v, ok := settingNotices.Load(key); ok && v.(string) == sig {
+		return
+	}
+	settingNotices.Store(key, sig)
+	log.Printf("ERROR: 设置 %s 填的值没生效（%s）：填的是 %q，实际按 %d 走", key, reason, raw, effective)
 }
