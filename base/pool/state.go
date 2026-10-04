@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -145,9 +146,11 @@ type Pool struct {
 	lastBad      map[string]string
 	lastBadCount map[string]int
 	window       errWindow
-	ticker       *time.Ticker
-	stopCh       chan struct{}
-	running      atomic.Bool
+	// ticker 由 Start 创建、Stop 撤销，两者可能真并发（优雅关停撞上启动中的装填），
+	// 所以是原子指针而不是普通字段（待办清单 P80）
+	ticker  atomic.Pointer[time.Ticker]
+	stopCh  chan struct{}
+	running atomic.Bool
 	// capNoted 建号被总上限判住是否已出声——只在状态变化时记一条，见 topUpColdLocked
 	capNoted bool
 }
@@ -180,6 +183,29 @@ func (p *Pool) spreadTarget() int {
 
 func (p *Pool) logf(format string, args ...interface{}) {
 	log.Printf("pool[%s]: "+format, append([]interface{}{p.Name()}, args...)...)
+}
+
+// locked 在持锁状态下跑一段临界区，**用 defer 解锁**。
+// 号池的临界区里会调源写的钩子（Provider.Refresh/Claim/Create），显式 Lock/Unlock 的写法
+// 一旦被 panic 穿过去，锁就永久 held：下一 tick 的 HotCount/Maintain 全部阻塞，
+// 表现为「池从此不再维护、而进程活着、面板数字还在」——比崩溃更难发现（待办清单 P77）。
+func (p *Pool) locked(fn func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fn()
+}
+
+// guardPanic 是后台路径（启动、维护 tick）的兜底，用法就是 defer p.guardPanic("维护")。
+// 这两条路径都调用源写的钩子，而它们不在 gin Recovery 的覆盖范围内：不拦下等于
+// **一个源解析畸形响应 = 整进程重启**，而 Restart=always 会把崩溃循环伪装成「运行中」。
+// 同一原则在本仓已落地两次——源启动钩子逐个 recover（base.RunSourceBoots）、
+// 聚合搜索逐目标 recover（app.callSourceHandler）；号池是第三处（待办清单 P77）。
+// 拦下只跳过本轮：临期号下一 tick 还会再试，与「刷新失败下轮再试」是同一条规矩。
+func (p *Pool) guardPanic(what string) {
+	if r := recover(); r != nil {
+		log.Printf("ERROR: 号池 %s 的%s路径 panic 已拦下（本轮跳过，进程与下一轮照常）：%v\n%s",
+			p.Name(), what, r, debug.Stack())
+	}
 }
 
 // noteBad 判断这条坏消息该不该说：**与上一次同一种失败就只累计不出声**，返回 false。
@@ -224,6 +250,7 @@ func (p *Pool) noteGood(key string) (int, bool) {
 // Start 加载存量号并分类、转正首个活跃号、补齐冷备，然后启动维护协程。
 // 数据库未就绪时跳过（仅告警，不阻断启动——与缓存预热的守卫同类）。
 func (p *Pool) Start() {
+	defer p.guardPanic("启动")
 	if db.DB == nil {
 		p.logf("数据库未连接，跳过号池初始化")
 		return
@@ -238,27 +265,33 @@ func (p *Pool) Start() {
 	}
 	p.initLedger()
 
-	p.mu.Lock()
-	if p.spread() {
-		// 摊薄型没有「转正首个活跃号 + 补冷备」这回事：可用号本来就是全部号，
-		// 走一次燃烧型路径等于在启动时对上游 Claim/探活（方案 §3.4 明令禁止）
-		if _, err := p.acquireSpreadLocked(); err != nil {
-			p.logf("启动后可用号为空: %v", err)
+	p.locked(func() {
+		if p.spread() {
+			// 摊薄型没有「转正首个活跃号 + 补冷备」这回事：可用号本来就是全部号，
+			// 走一次燃烧型路径等于在启动时对上游 Claim/探活（方案 §3.4 明令禁止）
+			if _, err := p.acquireSpreadLocked(); err != nil {
+				p.logf("启动后可用号为空: %v", err)
+			}
+		} else {
+			if _, err := p.promoteLocked(); err != nil {
+				p.logf("转正首个活跃号失败: %v", err)
+			}
+			p.topUpColdLocked()
 		}
-	} else {
-		if _, err := p.promoteLocked(); err != nil {
-			p.logf("转正首个活跃号失败: %v", err)
-		}
-		p.topUpColdLocked()
-	}
-	p.mu.Unlock()
+	})
 	p.logf("init done, hot=%d cold=%d cooldown=%d", p.HotCount(), p.ColdCount(), p.CooldownCount())
 
-	p.ticker = time.NewTicker(p.cfg.Interval)
+	// ticker 是 **Start 写、Stop 读** 的两块门牌，而这两条路径会真的重叠：优雅关停（lifecycle 的 StopAll）
+	// 撞上还在逐行探活装填的启动协程——现网每次部署都有这个窗口（`go pool.StartAll()` 在监听之前，
+	// 而 systemd 的重启间隔只有几秒）。用普通字段读它就会被 `-race` 判竞争（待办清单 P80，
+	// 是 P78 那条用例在整包跑的时候撞出来的），所以指针原子读写，协程内只用自己的局部变量。
+	t := time.NewTicker(p.cfg.Interval)
+	p.ticker.Store(t)
 	go func() {
+		defer t.Stop() // 协程退出时一定收掉定时器，包括「Stop 已经先跑过、这里立刻从 stopCh 返回」那一支
 		for {
 			select {
-			case <-p.ticker.C:
+			case <-t.C:
 				p.Maintain()
 			case <-p.stopCh:
 				return
@@ -271,8 +304,8 @@ func (p *Pool) Stop() {
 	if !p.running.CompareAndSwap(true, false) {
 		return
 	}
-	if p.ticker != nil {
-		p.ticker.Stop()
+	if t := p.ticker.Swap(nil); t != nil {
+		t.Stop()
 	}
 	close(p.stopCh)
 	p.logf("stopped")
@@ -292,37 +325,44 @@ func (p *Pool) initLedger() {
 	if p.spread() {
 		// 本地分类：可用性来自业务上报而不是上游查询。逐行 Refresh 会在启动时打满 N 次签名请求，
 		// 对摊薄型是纯风险无收益（方案 §3.4）
-		now := time.Now()
-		for i := range rows {
-			row := &rows[i]
-			if row.Status == StatusCooldown && row.ExpireAt != nil && row.ExpireAt.After(now) {
-				p.cooldown = append(p.cooldown, row)
-				continue
+		p.locked(func() {
+			now := time.Now()
+			for i := range rows {
+				row := &rows[i]
+				if row.Status == StatusCooldown && row.ExpireAt != nil && row.ExpireAt.After(now) {
+					p.cooldown = append(p.cooldown, row)
+					continue
+				}
+				// 冷却到期与上一轮的 hot/cold/spent 一律归为可用（摊薄型没有周期额度概念）
+				if row.Status != StatusHot {
+					p.setStatus(row, StatusHot)
+				}
+				p.hot = append(p.hot, row)
 			}
-			// 冷却到期与上一轮的 hot/cold/spent 一律归为可用（摊薄型没有周期额度概念）
-			if row.Status != StatusHot {
-				p.setStatus(row, StatusHot)
-			}
-			p.hot = append(p.hot, row)
-		}
-		p.logf("loaded %d usable + %d cooling devices from db（未打上游）", len(p.hot), len(p.cooldown))
+			p.logf("loaded %d usable + %d cooling devices from db（未打上游）", len(p.hot), len(p.cooldown))
+		})
 		return
 	}
-	for i := range rows {
-		row := &rows[i]
-		q, err := p.refresh(row)
-		if err != nil {
-			p.markDead(row)
-			continue
+	// 装填必须与请求路径互斥：`app.Run` 里 `go pool.StartAll()` 排在 `http.Server` 之前，
+	// 而燃烧型要逐行打上游探活——端口已经开着、号池还在半装填时，并发请求的 Acquire
+	// 读到的就是正在被 append 的 p.hot/p.cold（待办清单 P78；-race 实测报在本文件的 cold append 与 promoteLocked 的读之间）
+	p.locked(func() {
+		for i := range rows {
+			row := &rows[i]
+			q, err := p.refresh(row)
+			if err != nil {
+				p.markDead(row)
+				continue
+			}
+			if q.Exhausted() {
+				p.setStatus(row, StatusSpent)
+				continue
+			}
+			p.setStatus(row, StatusCold)
+			p.cold = append(p.cold, row)
 		}
-		if q.Exhausted() {
-			p.setStatus(row, StatusSpent)
-			continue
-		}
-		p.setStatus(row, StatusCold)
-		p.cold = append(p.cold, row)
-	}
-	p.logf("loaded %d cold devices from db", len(p.cold))
+		p.logf("loaded %d cold devices from db", len(p.cold))
+	})
 }
 
 // refresh 拉取真实额度并写回台账（不落库，由调用方 Save）
@@ -467,21 +507,42 @@ func (p *Pool) Report(err error) {
 
 // Maintain 巡检：活跃号续期/退役、冷备补齐、dead 清理、限流扩容评估
 func (p *Pool) Maintain() {
+	defer p.guardPanic("维护")
 	if db.DB == nil {
 		return
 	}
 	if p.spread() {
 		// 只做三件事：放行到期冷却、把可用号补到目标数、清死号。
 		// 续领与错误驱动扩容是燃烧型概念，对摊薄型无意义（所有可用号本来就都在轮询）
-		p.mu.Lock()
-		if _, err := p.acquireSpreadLocked(); err != nil {
-			p.logf("maintain: %v", err) // 全冷却不是异常状态，但必须看得见（别静默降级）
-		}
-		p.mu.Unlock()
+		p.locked(func() {
+			if _, err := p.acquireSpreadLocked(); err != nil {
+				p.logf("maintain: %v", err) // 全冷却不是异常状态，但必须看得见（别静默降级）
+			}
+		})
 		p.purgeDead()
 		return
 	}
-	p.mu.Lock()
+	p.locked(p.maintainBurnLocked)
+
+	p.purgeDead()
+
+	// 错误驱动扩容：疑似上游限流时增加活跃号（上限 MaxHot），
+	// 恢复后不主动缩容——额外活跃号到期自然退役回冷备
+	if rate, n := p.window.reset(); n >= 20 && rate > 0.3 {
+		p.locked(func() {
+			if len(p.hot) < p.cfg.MaxHot {
+				if _, err := p.promoteLocked(); err == nil {
+					p.logf("疑似上游限流（窗口错误率 %.0f%% / %d 次采样），活跃号扩容至 %d",
+						rate*100, n, len(p.hot))
+				}
+			}
+		})
+	}
+}
+
+// maintainBurnLocked 是燃烧型维护的主体（调用方持锁）：临期续领、用尽退役并转正替补、补齐冷备。
+// 单独成一个方法只为给临界区提供 defer 解锁的落点（见 locked 的注释）——判定与机制一点没变。
+func (p *Pool) maintainBurnLocked() {
 	for _, row := range append([]*models.PoolDevice{}, p.hot...) {
 		if remaining(row) > p.cfg.RenewBefore {
 			continue
@@ -524,22 +585,6 @@ func (p *Pool) Maintain() {
 		}
 	}
 	p.topUpColdLocked()
-	p.mu.Unlock()
-
-	p.purgeDead()
-
-	// 错误驱动扩容：疑似上游限流时增加活跃号（上限 MaxHot），
-	// 恢复后不主动缩容——额外活跃号到期自然退役回冷备
-	if rate, n := p.window.reset(); n >= 20 && rate > 0.3 {
-		p.mu.Lock()
-		if len(p.hot) < p.cfg.MaxHot {
-			if _, err := p.promoteLocked(); err == nil {
-				p.logf("疑似上游限流（窗口错误率 %.0f%% / %d 次采样），活跃号扩容至 %d",
-					rate*100, n, len(p.hot))
-			}
-		}
-		p.mu.Unlock()
-	}
 }
 
 // promoteLocked 把一个冷号转为活跃号（领取资源）（调用方持锁）。

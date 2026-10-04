@@ -38,14 +38,22 @@ type fakeProvider struct {
 	claims      map[string]int
 	refreshes   map[string]int // ident → 被探活次数（摊薄型必须恒为 0）
 	poolName    string         // 非空则覆盖池名：一条用例里建多个假池时避免 (pool, ident) 唯一索引撞车
+
+	// 下面三个是**故障注入**，只为待办清单 P77/P78 那两条用例存在：
+	// panic* = 源实现自己炸了（框架该拦下而不是带走进程）；slowRefresh = 放大启动窗口的探活耗时
+	panicRefresh map[string]bool
+	panicClaim   map[string]bool
+	slowRefresh  time.Duration
 }
 
 func newFakeProvider() *fakeProvider {
 	return &fakeProvider{
-		quota:       map[string]pool.Quota{},
-		failRefresh: map[string]bool{},
-		claims:      map[string]int{},
-		refreshes:   map[string]int{},
+		quota:        map[string]pool.Quota{},
+		failRefresh:  map[string]bool{},
+		panicRefresh: map[string]bool{},
+		panicClaim:   map[string]bool{},
+		claims:       map[string]int{},
+		refreshes:    map[string]int{},
 	}
 }
 
@@ -68,6 +76,12 @@ func (f *fakeProvider) Create(_ context.Context) (*pool.Device, error) {
 
 func (f *fakeProvider) Refresh(_ context.Context, dev *pool.Device) (pool.Quota, error) {
 	f.refreshes[dev.Ident]++
+	if f.slowRefresh > 0 {
+		time.Sleep(f.slowRefresh)
+	}
+	if f.panicRefresh[dev.Ident] {
+		panic("模拟源实现 panic（刷新）")
+	}
 	if f.failRefresh[dev.Ident] {
 		return pool.Quota{}, errors.New("模拟上游故障")
 	}
@@ -80,6 +94,12 @@ func (f *fakeProvider) Refresh(_ context.Context, dev *pool.Device) (pool.Quota,
 
 // Claim 领取一次：次数 +1，有效期叠加 claimExtend（框架要求 Provider 的领取是无损叠加的）
 func (f *fakeProvider) Claim(_ context.Context, dev *pool.Device) error {
+	if f.panicClaim == nil {
+		f.panicClaim = map[string]bool{}
+	}
+	if f.panicClaim[dev.Ident] {
+		panic("模拟源实现 panic（领取）")
+	}
 	q := f.quota[dev.Ident]
 	base := time.Now()
 	if !q.ExpiresAt.IsZero() && q.ExpiresAt.After(base) {
