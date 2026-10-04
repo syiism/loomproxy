@@ -19,6 +19,7 @@ import (
 	"loomproxy/handlers/auth"
 	"loomproxy/handlers/catalog"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 func RegisterRoutes(r *gin.Engine) {
@@ -420,6 +421,9 @@ func UpdateUser(c *gin.Context) {
 	if req.Status != nil && *req.Status == 0 {
 		if uid, err := strconv.ParseUint(id, 10, 64); err == nil {
 			db.RevokeOtherSessions(uint(uid), "")
+			// 「阻止继续使用 API」这句话要成立，光吊销会话不够：密钥走的是另一条身份通路，
+			// 而那条通路的缓存命中分支不复查 users.status（待办清单 P47）。
+			utils.InvalidateUserApiKeys(uint(uid))
 		}
 	}
 
@@ -445,6 +449,8 @@ func DeleteUser(c *gin.Context) {
 	// 吊销被删用户的全部会话，防止其持有未过期 JWT 继续调用
 	if uid, err := strconv.ParseUint(id, 10, 64); err == nil {
 		db.RevokeOtherSessions(uint(uid), "")
+		// 同上：密钥那条通路不看会话（待办清单 P47）
+		utils.InvalidateUserApiKeys(uint(uid))
 	}
 	auth.Ok(c, gin.H{"message": "已删除"})
 }

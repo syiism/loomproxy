@@ -1,6 +1,8 @@
-// Package apikey 用户自助 API 密钥管理（/apikey，JWT 会话保护）。
+// Package apikey 用户自助 API 密钥管理（/apikey，仅会话——密钥本身不能用来铸造或撤销别的密钥）。
 // 密钥用于网关数据源接口的程序化访问：请求归属创建者（计费/配额/监控按用户统计），
-// 不适用于面板会话类接口（/auth/*、/admin/* 仍仅 JWT）。明文仅创建时返回一次。
+// 不适用于面板会话类接口（/auth/*、/admin/* 仍仅 JWT）。
+// **列表原样返回明文**（`models.ApiKey` 的 `json:"key"`，2026-09-29 的小用户量取舍，待办清单 P10 判定维持）——
+// 「明文只在创建时返回一次」是旧注释的说法，与本包的 List 和 `test/apikey_test.go` 第 3 步都不符，本轮按代码改掉。
 package apikey
 
 import (

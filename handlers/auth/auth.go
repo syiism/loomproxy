@@ -561,6 +561,9 @@ func UpdateMe(c *gin.Context) {
 	// 用户名即登录凭证：变更后吊销该用户全部会话（含当前），强制使用新用户名重新登录
 	if usernameChanged {
 		db.RevokeOtherSessions(user.ID, "")
+		// 密钥的归属缓存里存的是**用户名**（监控明细与计费归属都读它），
+		// 不清就会在 TTL 内继续把调用记成旧名——账是对的（随 user_id），读数不是（待办清单 P47 同族）
+		utils.InvalidateUserApiKeys(user.ID)
 	}
 
 	// 重新加载最新数据（含角色）后返回
