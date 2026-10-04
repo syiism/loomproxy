@@ -98,6 +98,10 @@
 - **当日用量的起算点只有一处定义**（`gate.UsageSince`，待办清单 P41）：取「北京时间零点」与「该用户的管理员刷新时刻」
   （`users.quota_reset_at`，NULL=从未刷新）里较晚的那个，判定与面板读数共用它。管理员刷额度走
   `POST /admin/users/:id/refresh-quota`（只认会话）：**不删流水、不改限额**，放开的是「再一天的量」，零点后水印自然失效。
+- **套餐名/角色名可被本人设显示别名**（待办清单 P43）：`user_display_aliases` 按 `(user_id, kind, target_id)` 存，
+  默认名那两张全局表（带 `uniqueIndex`）一概不动；显示规则只有 `models.DisplayAlias` 一处——
+  本人界面（`/auth/me`、dashboard、兑换提示）看 `display_name`，管理员与运营看 `name` 并另给一栏 `alias`，
+  **管理员的读数不被被观察者修饰**。写入口 `PUT /auth/display-alias` 只认会话，资格 = 绑定了非免费套餐。
 - **扣减按内容去重**：同接口同内容在 `BILLING_DEDUPE_SEC`（默认 300 秒，0=关）窗口内只扣一次——
   「按请求计费」遇到客户端超时重试就是重复扣费（P25）。标识取不到时照扣，不去重。
 - **授权与限额是同一行**（待办清单 P34）：`quota_limits(scope=source, target=数据源码)` 存在即该套餐可用该源，

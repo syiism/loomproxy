@@ -131,7 +131,7 @@ func CreateUser(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
 		return
 	}
-	auth.Ok(c, user.Public())
+	auth.Ok(c, user.Public(db.DisplayAliasesFor(user.ID)))
 }
 
 type updateUserPlanRequest struct {

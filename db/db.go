@@ -121,6 +121,7 @@ func Init() error {
 		&models.ApiKey{},
 		&models.QuotaCost{},
 		&models.QuotaUsageLog{},
+		&models.UserDisplayAlias{},
 		&models.PoolDevice{},
 		&models.UserQuotaOverride{},
 		&models.UserSourceConfig{},

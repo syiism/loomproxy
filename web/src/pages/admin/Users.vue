@@ -41,7 +41,7 @@
               <UiTag v-for="r in (u.roles || [])" :key="r.code" :tone="roleTone(r.code)" :label="r.name || r.code" />
             </div>
             <div class="flex items-center gap-1.5"><span class="text-text-muted">套餐：</span>
-              <UiTag v-if="u.plan" tone="blue" :label="u.plan.name || u.plan.code" /><span v-else class="text-text-muted">免费版</span>
+              <UiTag v-if="u.plan" tone="blue" :label="u.plan.name || u.plan.code" /><span v-if="u.plan && u.plan.alias" class="text-xs text-text-muted ml-1">（本人别名：{{ u.plan.alias }}）</span><span v-else-if="!u.plan" class="text-text-muted">免费版</span>
             </div>
             <div><span class="text-text-muted">最近登录：</span>{{ fmtDate(u.last_login_at) }}</div>
           </div>
@@ -85,6 +85,7 @@
               </td>
               <td class="whitespace-nowrap">
                 <UiTag v-if="u.plan" tone="blue" :label="u.plan.name || u.plan.code" />
+                <span v-if="u.plan && u.plan.alias" class="text-xs text-text-muted">（本人别名：{{ u.plan.alias }}）</span>
                 <span v-else class="text-text-muted">免费版</span>
               </td>
               <td class="whitespace-nowrap">
@@ -211,7 +212,7 @@
     <UiModal v-model:open="quotaOpen" :title="'额度覆盖 — ' + (quotaUser && quotaUser.username)" wide @confirm="quotaOpen = false">
       <div v-if="quotaUser" class="overflow-x-auto">
         <div class="text-sm text-text-muted mb-4">
-          套餐：{{ quotaUser.plan_name || '免费版' }}（{{ quotaUser.plan_code || '—' }}）
+          套餐：{{ quotaUser.plan_name || '免费版' }}（{{ quotaUser.plan_code || '—' }}）<span v-if="quotaUser.plan_alias" class="ml-1">— 本人别名：{{ quotaUser.plan_alias }}</span>
           <span class="ml-2 text-xs">覆盖值在计划额度上增减（可为负），留空或 0 表示不调整；
             标「无权限」的行是该套餐没授权的源（授权=限额行，P34），改它不会让用户能用上这个源</span>
           <router-link to="/admin/quotas" class="ml-2 text-xs text-text-muted hover:text-text transition-colors">计划额度本身在「额度 · 套餐」页改 ↗</router-link>

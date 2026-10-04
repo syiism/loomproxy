@@ -69,7 +69,17 @@ func (u *User) KeepsContentData() bool {
 	return *u.ContentConsent
 }
 
-func (u *User) Public() map[string]interface{} {
+// Public 组装面向端点的用户视图。
+//
+// aliases 是本人的显示别名（`db.DisplayAliasesFor` / `DisplayAliasesForUsers` 读出来传进来），
+// 键格式见 `DisplayAliasKey`。**签名收这个参数是刻意的**：别名规则只写在 `displayPair` 一处，
+// 而少传一个参数就编译不过——否则总有某个端点会忘记带上，用户看到「一半界面改了、一半没改」。
+//
+// 每个 plan/role 同时下发三个值，谁看谁负责：
+//   - `name`：默认名（全局那份事实，管理员视图以它为准）
+//   - `alias`：本人起的别名，没有就是空串（管理员视图把它作为**第二栏**显示，不替换默认名）
+//   - `display_name`：别名优先、否则默认名（本人界面只看这一个）
+func (u *User) Public(aliases map[string]string) map[string]interface{} {
 	seen := make(map[uint]bool)
 	var roles []map[string]interface{}
 	for _, r := range u.Roles {
@@ -77,10 +87,13 @@ func (u *User) Public() map[string]interface{} {
 			continue
 		}
 		seen[r.ID] = true
+		alias, display := displayPair(aliases, DisplayKindRole, r.ID, r.Name)
 		roles = append(roles, map[string]interface{}{
-			"id":   r.ID,
-			"code": r.Code,
-			"name": r.Name,
+			"id":           r.ID,
+			"code":         r.Code,
+			"name":         r.Name,
+			"alias":        alias,
+			"display_name": display,
 		})
 	}
 	result := map[string]interface{}{
@@ -101,12 +114,33 @@ func (u *User) Public() map[string]interface{} {
 		"created_at":      u.CreatedAt,
 	}
 	if u.Plan != nil {
+		alias, display := displayPair(aliases, DisplayKindPlan, u.Plan.ID, u.Plan.Name)
 		result["plan"] = map[string]interface{}{
-			"code": u.Plan.Code,
-			"name": u.Plan.Name,
+			// id 必须下发：设别名要按 (kind, target_id) 定位，缺 id 本人界面无从下手
+			"id":           u.Plan.ID,
+			"code":         u.Plan.Code,
+			"name":         u.Plan.Name,
+			"alias":        alias,
+			"display_name": display,
 		}
 	}
 	return result
+}
+
+// DisplayAlias 显示名 = 别名优先、否则默认名。**规则只有这一处**（`Public()` 与 dashboard 都走它），
+// 否则「个人中心改了别名、首页没改」就是这样长出来的。
+func DisplayAlias(aliases map[string]string, kind string, targetID uint, fallback string) string {
+	if a := aliases[DisplayAliasKey(kind, targetID)]; a != "" {
+		return a
+	}
+	return fallback
+}
+
+// displayPair 别名 → (原始别名, 显示名)。原始别名空串表示没改过，管理员视图要的就是这个空串
+// （它据此决定「要不要挂第二栏」，所以不能在这里替它回退成默认名）。
+func displayPair(aliases map[string]string, kind string, targetID uint, fallback string) (string, string) {
+	alias := aliases[DisplayAliasKey(kind, targetID)]
+	return alias, DisplayAlias(aliases, kind, targetID, fallback)
 }
 
 func (u *User) HasRole(code string) bool {

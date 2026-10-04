@@ -389,6 +389,8 @@ func GetUserQuota(c *gin.Context) {
 	}
 
 	// 覆盖值 0 视为无效（不回显）
+	aliases := db.DisplayAliasesFor(user.ID)
+
 	var overrides []models.UserQuotaOverride
 	db.DB.Where("user_id = ?", user.ID).Find(&overrides)
 	overrideMap := make(map[string]int64)
@@ -471,7 +473,9 @@ func GetUserQuota(c *gin.Context) {
 		// 刷新过的用户就会读成「今天还没用」而不是「今天 13:40 之后没用」
 		"quota_reset_at": user.QuotaResetAt,
 		"usage_since":    gate.UsageSince(&user),
-		"items":          items,
+		// 别名作为**第二栏**下发，plan_name 仍是默认名：管理员的读数不被被观察者修饰（P43）
+		"plan_alias": aliases[models.DisplayAliasKey(models.DisplayKindPlan, ptrOrZero(planID))],
+		"items":      items,
 	})
 }
 

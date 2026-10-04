@@ -85,6 +85,8 @@ func RegisterRoutes(r *gin.Engine) {
 		auth.GET("/me", AuthRequired(), Me)
 		auth.PATCH("/me", AuthRequired(), UpdateMe)
 		auth.POST("/privacy", AuthRequired(), UpdatePrivacyConsent)
+		// 显示别名（套餐名/角色名）：只认会话，与 /auth/privacy 同一组理由
+		auth.PUT("/display-alias", AuthRequired(), UpdateDisplayAlias)
 		auth.POST("/password", AuthRequired(), ChangePassword)
 		auth.POST("/logout", AuthRequired(), Logout)
 		auth.GET("/sessions", AuthRequired(), ListSessions)
@@ -267,7 +269,7 @@ func Register(c *gin.Context) {
 	ok(c, gin.H{
 		"token":      token,
 		"expires_at": expiresAtJSON(expiresAt),
-		"user":       user.Public(),
+		"user":       user.Public(db.DisplayAliasesFor(user.ID)),
 	})
 }
 
@@ -416,7 +418,7 @@ func Login(c *gin.Context) {
 	ok(c, gin.H{
 		"token":      token,
 		"expires_at": expiresAtJSON(expiresAt),
-		"user":       user.Public(),
+		"user":       user.Public(db.DisplayAliasesFor(user.ID)),
 	})
 }
 
@@ -428,7 +430,7 @@ func Me(c *gin.Context) {
 		fail(c, http.StatusNotFound, "用户不存在")
 		return
 	}
-	ok(c, user.Public())
+	ok(c, user.Public(db.DisplayAliasesFor(user.ID)))
 }
 
 // usernameChangeCooldown 用户名修改冷却期：每 30 天限改一次
@@ -549,7 +551,7 @@ func UpdateMe(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "数据库错误")
 		return
 	}
-	ok(c, user.Public())
+	ok(c, user.Public(db.DisplayAliasesFor(user.ID)))
 }
 
 type privacyConsentRequest struct {
@@ -907,7 +909,7 @@ func ForgotPassword(c *gin.Context) {
 	ok(c, gin.H{
 		"token":      token,
 		"expires_at": expiresAtJSON(expiresAt),
-		"user":       user.Public(),
+		"user":       user.Public(db.DisplayAliasesFor(user.ID)),
 	})
 }
 

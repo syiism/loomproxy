@@ -260,7 +260,7 @@ func Dashboard(c *gin.Context) {
 		Groups:         groupViews,
 		UngroupedCount: ungrouped,
 		IsAdmin:        isAdmin,
-		PlanName:       plan.Name,
+		PlanName:       models.DisplayAlias(db.DisplayAliasesFor(user.ID), models.DisplayKindPlan, plan.ID, plan.Name),
 		PlanCode:       plan.Code,
 		PlanExpireAt:   user.PlanExpireAt,
 	}

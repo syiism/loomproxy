@@ -10,12 +10,12 @@
           <div class="flex justify-between items-center"><span class="text-text-muted">用户名</span><span class="font-mono">{{ me.username }}</span></div>
           <div class="flex justify-between items-center"><span class="text-text-muted">角色</span>
             <span class="flex gap-1.5">
-              <UiTag v-for="r in (me.roles || [])" :key="r.code" :tone="roleTone(r.code)" :label="r.name || r.code" />
+              <UiTag v-for="r in (me.roles || [])" :key="r.code" :tone="roleTone(r.code)" :label="r.display_name || r.name || r.code" />
               <span v-if="!(me.roles || []).length" class="text-text-muted">—</span>
             </span>
           </div>
           <div class="flex justify-between items-center"><span class="text-text-muted">套餐</span>
-            <UiTag v-if="me.plan" tone="blue" :label="me.plan.name || me.plan.code" />
+            <UiTag v-if="me.plan" tone="blue" :label="me.plan.display_name || me.plan.name || me.plan.code" />
             <span v-else class="text-text-muted">免费版</span>
           </div>
           <div v-if="me.plan_expire_at" class="flex justify-between items-center"><span class="text-text-muted">套餐到期</span>
@@ -64,6 +64,25 @@
           </button>
           <span v-if="privacySavedAt" class="text-xs text-text-muted">已保存</span>
         </div>
+      </section>
+
+      <!-- 显示别名（待办清单 P43）：只改「你看到的称呼」。默认名在 quota_plans/roles 两张全局表里，
+           这里一概不动；管理员视图同时显示默认名与你的别名，所以别名不会把你的真实档位藏起来。 -->
+      <section v-if="canAlias" class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">显示名称</h2>
+        <p class="text-sm text-text-muted leading-relaxed mb-4">
+          给你的套餐或角色起一个只影响<strong>你自己界面</strong>的称呼。
+          管理员看到的仍是默认名（并标注你的别名），公开排行榜与其它用户都不受影响。
+        </p>
+        <div class="space-y-3">
+          <div v-for="t in aliasTargets" :key="t.kind + ':' + t.id" class="flex flex-col sm:flex-row sm:items-center gap-2">
+            <span class="text-sm text-text-muted sm:w-16 shrink-0">{{ t.kind === 'plan' ? '套餐名' : '角色名' }}</span>
+            <input v-model="t.draft" class="input flex-1" maxlength="32" :placeholder="'默认：' + t.name">
+            <button type="button" class="btn-ghost btn-sm whitespace-nowrap" :disabled="savingAlias" @click="saveAlias(t)">保存</button>
+            <button v-if="t.alias" type="button" class="btn-ghost btn-sm whitespace-nowrap" :disabled="savingAlias" @click="clearAlias(t)">清除</button>
+          </div>
+        </div>
+        <p class="text-xs text-text-muted mt-3">最长 32 个字符；清除后回到默认名。换套餐时上一个套餐的称呼不会跟过来。</p>
       </section>
 
       <!-- 右列：修改密码 + API 密钥 -->
@@ -220,6 +239,45 @@ const profileForm = ref({ username: '', nickname: '', email: '', token_expire_ho
 // 老会话缓存里没这个键时读成 undefined，`!== false` 按默认档（同意）走
 const privacyForm = ref({ content_consent: true })
 const savingPrivacy = ref(false)
+// 显示别名（待办清单 P43）：资格判据与后端一致——绑定了非免费套餐才能改
+const savingAlias = ref(false)
+const aliasTargets = ref([])
+const canAlias = computed(() => !!me.value.plan && me.value.plan.code !== 'free')
+// targets 从 me 的 plan/roles 派生：别名按 (kind, target_id) 存，换套餐后上一份不会被带进来
+const buildAliasTargets = () => {
+  const out = []
+  if (me.value.plan && me.value.plan.code !== 'free') {
+    out.push({ kind: 'plan', id: me.value.plan.id, name: me.value.plan.name,
+      alias: me.value.plan.alias || '', draft: me.value.plan.alias || '' })
+  }
+  for (const r of (me.value.roles || [])) {
+    out.push({ kind: 'role', id: r.id, name: r.name, alias: r.alias || '', draft: r.alias || '' })
+  }
+  aliasTargets.value = out
+}
+const refreshMe = async () => {
+  me.value = await authApi.me()
+  session.user = me.value
+  buildAliasTargets()
+}
+const saveAlias = async (t) => {
+  if (savingAlias.value) return
+  savingAlias.value = true
+  try {
+    await authApi.updateDisplayAlias(t.kind, t.id, t.draft.trim())
+    await refreshMe()
+    toast('显示名称已保存', 'success')
+  } catch (e) { toast(e.message, 'error') } finally { savingAlias.value = false }
+}
+const clearAlias = async (t) => {
+  if (savingAlias.value) return
+  savingAlias.value = true
+  try {
+    await authApi.updateDisplayAlias(t.kind, t.id, '')
+    await refreshMe()
+    toast('已回到默认名称', 'success')
+  } catch (e) { toast(e.message, 'error') } finally { savingAlias.value = false }
+}
 const privacySavedAt = ref('')
 const pwdForm = ref({ old_password: '', new_password: '' })
 const savingProfile = ref(false)
@@ -286,6 +344,7 @@ onMounted(() => { revealObserve() })
 const load = async () => {
   try {
     me.value = session.user || {}
+    buildAliasTargets()
     profileForm.value = { username: me.value.username || '', nickname: me.value.nickname || '', email: me.value.email || '', token_expire_hours: me.value.token_expire_hours || 0 }
     privacyForm.value.content_consent = me.value.content_consent !== false
   } catch (e) { /* 401 已由客户端处理 */ }

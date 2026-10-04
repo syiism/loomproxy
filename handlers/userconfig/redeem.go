@@ -101,6 +101,7 @@ func Redeem(c *gin.Context) {
 	code := strings.ToUpper(strings.TrimSpace(req.Code))
 
 	var planName string
+	var planID uint // 兑换到的那份套餐：显示别名按 (kind, target_id) 存，提示里要用它取别名
 	var expireAt *time.Time
 	failReason := ""
 
@@ -175,6 +176,7 @@ func Redeem(c *gin.Context) {
 			return errors.New(failReason)
 		}
 		planName = plan.Name
+		planID = rc.PlanID
 		expireAt = newExpire
 		return nil
 	})
@@ -197,9 +199,12 @@ func Redeem(c *gin.Context) {
 	}
 	// 兑换后套餐已变更：失效 /datasources 缓存视图，用户立即看到新套餐的数据源
 	catalog.InvalidateDatasourcesCache()
+	// 兑换提示是**本人界面**，所以走同一处显示规则（别名优先，见 models.DisplayAlias / 待办清单 P43）：
+	// 用户给这个套餐起过别名就该看到别名，看到默认名会变成「我明明改过、怎么还叫这个」。
+	// 管理员侧的卡密批次列表（handlers/admin/redeem.go）保持默认名——那是运营事实，不受别名影响。
 	auth.Ok(c, gin.H{
 		"message":   "兑换成功",
-		"plan_name": planName,
+		"plan_name": models.DisplayAlias(db.DisplayAliasesFor(userID), models.DisplayKindPlan, planID, planName),
 		"expire_at": expireAt,
 	})
 }

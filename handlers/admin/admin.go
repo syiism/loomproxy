@@ -155,9 +155,12 @@ func ListUsers(c *gin.Context) {
 		q = q.Unscoped()
 	}
 	if keyword != "" {
-		escaped := strings.NewReplacer(`%`, `\%`, `_`, `\_`).Replace(keyword)
-		like := "%" + escaped + "%"
-		q = q.Where("username LIKE ? OR email LIKE ? OR nickname LIKE ?", like, like, like)
+		// 必须带 ESCAPE 子句：**SQLite 的 LIKE 默认没有转义字符**（MySQL 靠字符串字面量里的反斜杠
+		// 恰好生效，所以这个坑在开发库上才会露出来）。不写 ESCAPE 时 `\_` 是两个字面字符，
+		// 搜「al_1」返回 0 行；完全不转义则 `_` 当单字符通配，搜「al_1」连「alX1」也算中。
+		// 转义函数用包里现成的 escapeLike（monitor.go 一直是这么用的，这两处是漏用而不是另一套写法）。
+		like := "%" + escapeLike(keyword) + "%"
+		q = q.Where("username LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\'", like, like, like)
 	}
 
 	var total int64
@@ -170,9 +173,15 @@ func ListUsers(c *gin.Context) {
 	q.Preload("Roles").Preload("Plan").Order("id DESC").
 		Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
 
+	// 别名一次取整页：逐个用户查就是 N+1，而这一页可能有几十行
+	ids := make([]uint, 0, len(users))
+	for i := range users {
+		ids = append(ids, users[i].ID)
+	}
+	aliasMap := db.DisplayAliasesForUsers(ids)
 	list := make([]map[string]interface{}, 0, len(users))
 	for i := range users {
-		m := users[i].Public()
+		m := users[i].Public(aliasMap[users[i].ID])
 		if users[i].DeletedAt.Valid {
 			m["deleted_at"] = users[i].DeletedAt.Time
 		}
@@ -199,7 +208,7 @@ func GetUser(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
 		return
 	}
-	auth.Ok(c, user.Public())
+	auth.Ok(c, user.Public(db.DisplayAliasesFor(user.ID)))
 }
 
 type updateUserRequest struct {
