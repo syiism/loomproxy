@@ -98,7 +98,7 @@
   播种只在套餐新建那一次铺默认档，新源由 `attachSourceToBuiltinPlans` 补授权——按行无限回填会复活管理员删掉的授权。
 - 限额优先级：用户数据源级覆盖（**追加语义**）> 套餐限额 > 不限；限流为套餐级 > 全局，窗口计数与固定间隔双口径并存。
 - **同意位关闭时内容维度不捕获**（待办清单 P37）：`users.content_consent`（NULL=默认同意），
-  个人中心 `PATCH /auth/privacy` 只认会话；关闭后 `monitor` 在写明细前抹掉七个内容字段（**含标识**，
+  个人中心 `POST /auth/privacy` 只认会话；关闭后 `monitor` 在写明细前抹掉七个内容字段（**含标识**，
   否则名称回填会补回来）并置 `content_withheld`，让「用户选择不留」与「采集在漏」在覆盖率表上分得开。
 - **聚合搜索**（待办清单 P38）：`GET /{source}/search?sources=a,b` 在 handler 内扇出到多个源，
   那条路不经过中间件链，所以逐源重走访问与额度判定（用抽出来的 `gate.SourceAccessVerdict` /

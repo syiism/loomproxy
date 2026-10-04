@@ -36,10 +36,10 @@ func privacyUser(t *testing.T, srv *httptest.Server) (string, string) {
 
 func setPrivacyConsent(t *testing.T, srv *httptest.Server, token string, consent bool) map[string]interface{} {
 	t.Helper()
-	status, env := doJSON(t, srv, http.MethodPatch, "/auth/privacy",
+	status, env := doJSON(t, srv, http.MethodPost, "/auth/privacy",
 		map[string]interface{}{"content_consent": consent}, authHeader(token))
 	if status != http.StatusOK || env.Code != 0 {
-		t.Fatalf("PATCH /auth/privacy(%v) 失败: status=%d code=%d msg=%s", consent, status, env.Code, env.Msg)
+		t.Fatalf("POST /auth/privacy(%v) 失败: status=%d code=%d msg=%s", consent, status, env.Code, env.Msg)
 	}
 	return env.dataMap(t)
 }
@@ -261,7 +261,7 @@ func TestPrivacyEndpointIsSessionOnly(t *testing.T) {
 		{"X-API-Key", map[string]string{"X-API-Key": key}, ""},
 		{"?api_key=", nil, "?api_key=" + key},
 	} {
-		status, raw := doRaw(t, srv, http.MethodPatch, "/auth/privacy"+f.query,
+		status, raw := doRaw(t, srv, http.MethodPost, "/auth/privacy"+f.query,
 			map[string]interface{}{"content_consent": false}, f.headers)
 		if status == http.StatusOK {
 			t.Errorf("用 %s 竟然改成了同意位——密钥泄露时攻击者能让受害者的阅读记录重新开始被采集，而会话列表看不见（body=%s）",
@@ -276,7 +276,7 @@ func TestPrivacyEndpointIsSessionOnly(t *testing.T) {
 	setPrivacyConsent(t, srv, token, false)
 
 	// 缺字段不算「不改」：必须报 400，不能让一次畸形请求静默当成同意
-	status, env := doJSON(t, srv, http.MethodPatch, "/auth/privacy", map[string]interface{}{}, authHeader(token))
+	status, env := doJSON(t, srv, http.MethodPost, "/auth/privacy", map[string]interface{}{}, authHeader(token))
 	if status == http.StatusOK || env.Code == 0 {
 		t.Errorf("缺 content_consent 竟然通过：status=%d code=%d msg=%s", status, env.Code, env.Msg)
 	}

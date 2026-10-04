@@ -83,7 +83,7 @@ func RegisterRoutes(r *gin.Engine) {
 		auth.POST("/forgot-password", ForgotPassword)
 		auth.GET("/me", AuthRequired(), Me)
 		auth.PATCH("/me", AuthRequired(), UpdateMe)
-		auth.PATCH("/privacy", AuthRequired(), UpdatePrivacyConsent)
+		auth.POST("/privacy", AuthRequired(), UpdatePrivacyConsent)
 		auth.POST("/password", AuthRequired(), ChangePassword)
 		auth.POST("/logout", AuthRequired(), Logout)
 		auth.GET("/sessions", AuthRequired(), ListSessions)
@@ -444,7 +444,7 @@ type updateMeRequest struct {
 }
 
 // UpdateMe 修改当前用户资料（用户名 / 昵称 / 邮箱 / token 时长）
-// 隐私同意位**不在这里**改——它有专用端点 PATCH /auth/privacy（见 UpdatePrivacyConsent），
+// 隐私同意位**不在这里**改——它有专用端点 POST /auth/privacy（见 UpdatePrivacyConsent），
 // 一份事实只留一个写入口。
 // 用户名每 30 天限改一次（从未修改过不受限），且不可与其他用户重复
 func UpdateMe(c *gin.Context) {

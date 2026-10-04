@@ -12,7 +12,7 @@ export const authApi = {
   updateMe: (payload) => request('/auth/me', { method: 'PATCH', body: payload }),
   // 阅读数据留存同意位（隐私协议）：唯一写入口，只认会话
   updatePrivacy: (contentConsent) =>
-    request('/auth/privacy', { method: 'PATCH', body: { content_consent: contentConsent } }),
+    request('/auth/privacy', { method: 'POST', body: { content_consent: contentConsent } }),
   changePassword: (oldPassword, newPassword) =>
     request('/auth/password', { method: 'POST', body: { old_password: oldPassword, new_password: newPassword } }),
   logout: () => request('/auth/logout', { method: 'POST' }),

@@ -42,7 +42,7 @@
         </form>
       </section>
 
-      <!-- 隐私协议：阅读数据留存的同意位。唯一写入口 PATCH /auth/privacy（只认会话） -->
+      <!-- 隐私协议：阅读数据留存的同意位。唯一写入口 POST /auth/privacy（只认会话） -->
       <section class="reveal">
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">阅读数据留存</h2>
         <p class="text-sm text-text-muted leading-relaxed mb-4">
