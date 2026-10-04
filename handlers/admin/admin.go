@@ -139,12 +139,33 @@ func Stats(c *gin.Context) {
 	})
 }
 
-// ListUsers 用户列表（分页 + 搜索；with_deleted=1 时包含软删除用户，响应带 deleted_at）
+// manyApiKeysThreshold 「密钥数偏多」的档位（现网每人上限 10 把，5 把就算异常聚集）
+const manyApiKeysThreshold = 5
+
+// expireWithinDays 解析「N 天内到期」的天数：非法值回默认 7，越界钳到 1~365。
+// 不返回错误是刻意的：一个手打的 expire_days=9999 不该让整页打不开。
+func expireWithinDays(raw string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n <= 0 {
+		return 7
+	}
+	if n > 365 {
+		return 365
+	}
+	return n
+}
+
+// ListUsers 用户列表：关键词 + 九个筛选条件（待办清单 P46）+ 分页。
+//
+// 两条硬约束写在代码里而不是只写在条目里：
+//  1. 筛选值**一律走占位符**，白名单外的枚举值回落到"不筛"而不是 400——
+//     列表页因为一个拼错的 query 打不开，比静默用默认更糟（这个函数刚在生产上因 ESCAPE 拼接炸过一次）；
+//  2. 时间类判断的 NULL 语义显式写在条件里：`plan_expire_at IS NULL` 是**永久**，不是"已过期"，
+//     `last_login_at IS NULL` 是**从未登录**，`content_consent IS NULL` 是**未表态=同意**（P37 的默认档）。
+//     这三条都是 NULL 有业务含义的地方，漏一条就是一个静默的错读数。
 func ListUsers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	keyword := strings.TrimSpace(c.Query("keyword"))
-	withDeleted := c.Query("with_deleted") == "1" || c.Query("with_deleted") == "true"
 	if page < 1 {
 		page = 1
 	}
@@ -153,13 +174,109 @@ func ListUsers(c *gin.Context) {
 	}
 
 	q := db.DB.Model(&models.User{})
-	if withDeleted {
-		q = q.Unscoped()
-	}
-	if keyword != "" {
-		// 转义与 ESCAPE 子句都由 escapeLike / likeESCAPE 负责，理由写在那两处（P43 判据）
+
+	// 关键词：转义与 ESCAPE 子句都由 escapeLike / likeESCAPE 负责（P43 判据）
+	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
 		like := "%" + escapeLike(keyword) + "%"
 		q = q.Where(likeESCAPE("username")+" OR "+likeESCAPE("email")+" OR "+likeESCAPE("nickname"), like, like, like)
+	}
+
+	// 账号状态三态。原 `with_deleted=1` 是把「正常 + 已删除」混成一锅，想单看已删除反而办不到
+	switch c.Query("status") {
+	case "deleted":
+		q = q.Unscoped().Where("users.deleted_at IS NOT NULL")
+	case "disabled":
+		q = q.Where("users.status = ?", 0)
+	case "normal":
+		q = q.Where("users.status = ?", 1)
+		// 默认：不筛状态（软删的行由 GORM 的默认作用域挡掉）
+	}
+
+	// 套餐：等值筛选；unavailable=绑着的套餐已被软删（现网 0 例，这一档是为将来留的，
+	// 因为套餐软删后这批人会从下拉的等值筛选里凭空消失）
+	switch planArg := c.Query("plan"); planArg {
+	case "":
+	case "unavailable":
+		q = q.Where("users.plan_id IS NOT NULL AND users.plan_id NOT IN (SELECT id FROM quota_plans WHERE deleted_at IS NULL)")
+	default:
+		if id, err := strconv.Atoi(planArg); err == nil && id > 0 {
+			q = q.Where("users.plan_id = ?", id)
+		}
+	}
+
+	// 角色（单角色模型，等值即可；非法 code 不筛而不是报错）
+	if code := c.Query("role"); code != "" {
+		// roles 带软删：不写 deleted_at IS NULL 的话，一个已删角色仍会把它的老用户筛出来
+		q = q.Where("EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id"+
+			" AND r.deleted_at IS NULL WHERE ur.user_id = users.id AND r.code = ?)", code)
+	}
+
+	// 到期：NULL=永久。"即将到期"的天数来自 expire_days，缺省 7，越界钳到 1~365
+	switch exp := c.Query("expire"); exp {
+	case "":
+	case "permanent":
+		q = q.Where("users.plan_expire_at IS NULL")
+	case "expiring":
+		days := expireWithinDays(c.Query("expire_days"))
+		now := time.Now()
+		q = q.Where("users.plan_expire_at IS NOT NULL AND users.plan_expire_at > ? AND users.plan_expire_at <= ?",
+			now, now.AddDate(0, 0, days))
+	case "active":
+		q = q.Where("users.plan_expire_at IS NOT NULL AND users.plan_expire_at > ?", time.Now())
+	case "expired":
+		q = q.Where("users.plan_expire_at IS NOT NULL AND users.plan_expire_at <= ?", time.Now())
+	}
+
+	// 活跃度：never 是真实形态（现网 32 个账号从未登录），不是脏数据
+	switch act := c.Query("activity"); act {
+	case "":
+	case "never":
+		q = q.Where("users.last_login_at IS NULL")
+	case "7d", "30d", "90d":
+		days, _ := strconv.Atoi(strings.TrimSuffix(act, "d"))
+		q = q.Where("users.last_login_at IS NOT NULL AND users.last_login_at >= ?",
+			time.Now().AddDate(0, 0, -days))
+	case "stale":
+		q = q.Where("users.last_login_at IS NOT NULL AND users.last_login_at < ?",
+			time.Now().AddDate(0, 0, -90))
+	}
+
+	// 留存同意位（P37）：NULL=未表态=同意，与 true 是同义但**是两种来源**，要能分开看
+	switch con := c.Query("consent"); con {
+	case "":
+	case "unset":
+		q = q.Where("users.content_consent IS NULL")
+	case "on":
+		q = q.Where("users.content_consent = ?", true)
+	case "off":
+		q = q.Where("users.content_consent = ?", false)
+	}
+
+	// 被手工刷过单日额度（P41）：不做这一条，"单日额度对某些人已不构成约束"就只在 journal 里查得到
+	switch qr := c.Query("quota_reset"); qr {
+	case "":
+	case "any":
+		q = q.Where("users.quota_reset_at IS NOT NULL")
+	case "recent":
+		// 窗口与「设备与密钥」页同一个起点（auth.WatchWindowStart），两处别说两种"最近"
+		q = q.Where("users.quota_reset_at >= ?", auth.WatchWindowStart())
+	}
+
+	// 密钥数分档：借号排查的常见形态是"一把 key 给一群人"或"一堆 key 各给一人"
+	switch k := c.Query("keys"); k {
+	case "":
+	case "none":
+		q = q.Where("NOT EXISTS (SELECT 1 FROM api_keys ak WHERE ak.user_id = users.id)")
+	case "any":
+		q = q.Where("EXISTS (SELECT 1 FROM api_keys ak WHERE ak.user_id = users.id)")
+	case "many":
+		q = q.Where("(SELECT COUNT(*) FROM api_keys ak WHERE ak.user_id = users.id) >= ?", manyApiKeysThreshold)
+	}
+
+	// 活跃会话超上限（与「设备与密钥」页的 active_sessions 同一个口径：db.ActiveSessionCond）
+	if c.Query("over_cap") == "1" {
+		sub, args := db.UserIDsWithSessionsOver(auth.WatchWindowStart(), auth.MaxActiveSessions())
+		q = q.Where(sub, args...)
 	}
 
 	var total int64
@@ -192,6 +309,9 @@ func ListUsers(c *gin.Context) {
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
+		// 「偏多」这条档位随读数下发：面板的选项文案如果自己也写一个 5，
+		// 改常量那天文案就开始骗人（同一个函数里现成有 `manyApiKeysThreshold` 这一个真相）
+		"filters_meta": gin.H{"many_api_keys": manyApiKeysThreshold},
 	})
 }
 

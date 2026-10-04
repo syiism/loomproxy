@@ -34,8 +34,19 @@ export const adminApi = {
   // 统计
   stats: () => request('/admin/stats'),
   // 用户
-  listUsers: ({ page = 1, pageSize = 20, keyword = '', withDeleted = false } = {}) =>
-    request('/admin/users', { query: { page, page_size: pageSize, keyword: keyword || undefined, with_deleted: withDeleted ? 1 : undefined } }),
+  // 用户：筛选条件全走 query（待办清单 P46）。空值由 client.js 的 buildQuery 统一丢掉，
+  // 「不发送」才是「不筛」——后端对非法枚举值也是忽略，但那是兜底，不是这条通路
+  listUsers: ({
+    page = 1, pageSize = 20, keyword = '', status = '', plan = '', role = '',
+    expire = '', expireDays = '', activity = '', consent = '', quotaReset = '', keys = '', overCap = false,
+  } = {}) =>
+    request('/admin/users', { query: {
+      page, page_size: pageSize, keyword, status, plan, role, expire, activity, consent,
+      quota_reset: quotaReset, keys,
+      // 天数只在「即将到期」这一档有意义，切走就别把它留在 URL 里
+      expire_days: expire === 'expiring' ? expireDays : '',
+      over_cap: overCap ? 1 : '',
+    } }),
   getUser: (id) => request('/admin/users/' + id),
   createUser: (payload) => request('/admin/users', { method: 'POST', body: payload }),
   updateUser: (id, payload) => request('/admin/users/' + id, { method: 'PATCH', body: payload }),
@@ -53,9 +64,9 @@ export const adminApi = {
   addBlockedIP: (payload) => request('/admin/blocked-ips', { method: 'POST', body: payload }),
   removeBlockedIP: (id) => request('/admin/blocked-ips/' + id, { method: 'DELETE' }),
   // 登录防爆破的限频状态（进程内存，不落库）：读快照 + 定向解锁
-  // 多设备与密钥分布读数（待办清单 P44）
-  listDeviceActivity: ({ page = 1, pageSize = 20, keyword = '' } = {}) =>
-    request('/admin/devices', { query: { page, page_size: pageSize, keyword: keyword || undefined } }),
+  // 多设备与密钥分布读数（待办清单 P44）；sort/dir 见 P45，非法值后端回默认而不是 400
+  listDeviceActivity: ({ page = 1, pageSize = 20, keyword = '', sort = '', dir = '' } = {}) =>
+    request('/admin/devices', { query: { page, page_size: pageSize, keyword, sort, dir } }),
   listSecurityAttempts: () => request('/admin/security/attempts'),
   resetSecurityAttempts: (payload) => request('/admin/security/attempts/reset', { method: 'POST', body: payload }),
   // 角色

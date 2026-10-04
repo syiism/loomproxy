@@ -6,19 +6,50 @@
       </template>
     </PageHeader>
 
-    <!-- 站点级计数在「管理后台」那四张看板；这一页只报筛选结果有多宽。
-         同一份数字在两页各写一遍就会各自漂移（P28·D1 的分工：总览=站点级、列表=筛选级）。 -->
+    <!-- 筛选级计数：这一页只报「这次筛选有多宽」，站点级数字在「管理后台」那四张看板 -->
     <div class="reveal font-mono text-xs text-text-muted mb-4">
-      当前列表命中 {{ total }} 条（含筛选与「显示已删除」）
+      当前列表命中 {{ total }} 条<span v-if="filterCount">（{{ filterCount }} 个筛选条件）</span><span v-else>（未筛选）</span>
     </div>
 
-    <div class="reveal flex flex-col sm:flex-row gap-3 mb-6">
-      <input v-model="keyword" placeholder="搜索用户名 / 邮箱 / 昵称" class="input flex-1" @keydown.enter="doSearch">
-      <button @click="doSearch" class="btn-ghost whitespace-nowrap">搜索</button>
-      <label class="flex items-center gap-1.5 text-sm text-text-muted cursor-pointer whitespace-nowrap select-none">
-        <input type="checkbox" v-model="withDeleted" @change="doSearch" class="w-4 h-4 rounded border-border text-text focus:ring-text">显示已删除
-      </label>
+    <div class="reveal flex flex-col sm:flex-row gap-3 mb-3">
+      <input v-model="keyword" placeholder="搜索用户名 / 邮箱 / 昵称" class="input flex-1" @keydown.enter="apply">
+      <button @click="apply" class="btn-ghost whitespace-nowrap">搜索</button>
+      <button @click="resetFilters" class="btn-ghost whitespace-nowrap" :disabled="!hasAnyFilter">清空筛选</button>
     </div>
+
+    <!-- 九个筛选条件收在折叠块里（P30 的窄屏纪律：收起态给读数摘要，不是藏信息）。
+         条件是即时生效的：下拉改完还要再点一次「搜索」，那是把「没生效」做成常态。 -->
+    <UiCollapse title="筛选条件" :summary="filterSummary" storage-key="admin-users-filters">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <UiField v-for="f in STATIC_FILTERS" :key="f.key" :label="f.label" :hint="f.hint">
+          <select v-model="filters[f.key]" class="input" @change="apply">
+            <option v-for="o in f.options" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+        </UiField>
+        <UiField label="套餐" hint="按当前在册的套餐列；「已下架」那一档捞的是绑着看不见套餐的人">
+          <select v-model="filters.plan" class="input" @change="apply">
+            <option value="">全部</option>
+            <option v-for="p in allPlans" :key="p.id" :value="String(p.id)">{{ p.name }}（{{ p.code }}）</option>
+            <option value="unavailable">已下架的套餐</option>
+          </select>
+        </UiField>
+        <UiField label="角色">
+          <select v-model="filters.role" class="input" @change="apply">
+            <option value="">全部</option>
+            <option v-for="r in allRoles" :key="r.code" :value="r.code">{{ r.name }}（{{ r.code }}）</option>
+          </select>
+        </UiField>
+        <UiField v-if="filters.expire === 'expiring'" label="到期窗口（天）" hint="默认 7，超出 1–365 会被夹住">
+          <input v-model="filters.expireDays" type="number" min="1" max="365" class="input" @change="apply">
+        </UiField>
+        <UiField label="会话数超上限">
+          <label class="flex items-center gap-1.5 text-sm cursor-pointer select-none pt-1.5">
+            <input type="checkbox" v-model="filters.overCap" @change="apply" class="w-4 h-4 rounded border-border text-text focus:ring-text">
+            只看活跃会话超过上限的人
+          </label>
+        </UiField>
+      </div>
+    </UiCollapse>
 
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
@@ -283,6 +314,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../../components/PageHeader.vue'
 import UiModal from '../../components/UiModal.vue'
 import UiTag from '../../components/UiTag.vue'
@@ -290,8 +322,12 @@ import UiField from '../../components/UiField.vue'
 import UiSpinner from '../../components/UiSpinner.vue'
 import UiEmpty from '../../components/UiEmpty.vue'
 import UiPagination from '../../components/UiPagination.vue'
+import UiCollapse from '../../components/UiCollapse.vue'
 import { adminApi } from '../../api/index.js'
 import { fmtDate, roleTone, statusTone, toast, revealObserve } from '../../utils.js'
+
+const route = useRoute()
+const router = useRouter()
 
 const loading = ref(true)
 const error = ref('')
@@ -299,8 +335,7 @@ const list = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-const keyword = ref('')
-const withDeleted = ref(false)
+const keyword = ref(typeof route.query.keyword === 'string' ? route.query.keyword : '')
 const submitting = ref(false)
 const allRoles = ref([])
 const allPlans = ref([])
@@ -323,17 +358,143 @@ const quotaItems = ref([])
 const editingQuota = ref(null)
 const quotaEditForm = ref({ limit: 0 })
 
-const doSearch = () => { page.value = 1; load() }
+// 静态筛选项的选项表。文案只在这里写一遍：折叠块的收起态摘要复用同一份 label，
+// 摘要另抄一份就会长成第二份事实来源（P28 那两条看板各说一套的同一件事）。
+const manyApiKeys = ref(0) // 「偏多」的档位由 /admin/users 的 filters_meta 下发，面板不自己写数字
+const STATIC_FILTERS = computed(() => [
+  { key: 'status', label: '账号状态', options: [
+    { value: '', label: '全部' }, { value: 'normal', label: '启用' },
+    { value: 'disabled', label: '禁用' }, { value: 'deleted', label: '已删除' },
+  ] },
+  { key: 'expire', label: '套餐到期', options: [
+    { value: '', label: '全部' }, { value: 'permanent', label: '永久（未设到期）' },
+    { value: 'expiring', label: '即将到期' }, { value: 'active', label: '在有效期内' },
+    { value: 'expired', label: '已过期' },
+  ] },
+  { key: 'activity', label: '活跃度', hint: '「从未登录」单独一档，不并进「不活跃」', options: [
+    { value: '', label: '全部' }, { value: 'never', label: '从未登录' },
+    { value: '7d', label: '7 日内登录过' }, { value: '30d', label: '30 日内登录过' },
+    { value: '90d', label: '90 日内登录过' }, { value: 'stale', label: '90 天以上未登录' },
+  ] },
+  { key: 'consent', label: '阅读数据留存', hint: '未表态 = 从未点过开关，默认按同意处理', options: [
+    { value: '', label: '全部' }, { value: 'unset', label: '未表态' },
+    { value: 'on', label: '明确同意' }, { value: 'off', label: '明确关闭' },
+  ] },
+  { key: 'quotaReset', label: '单日额度刷新', hint: '刷过之后「当日限额」对这个人当天不再构成约束', options: [
+    { value: '', label: '全部' }, { value: 'any', label: '刷新过（不限时间）' },
+    { value: 'recent', label: '统计窗口内刷新过' },
+  ] },
+  { key: 'keys', label: 'API 密钥数', options: [
+    { value: '', label: '全部' }, { value: 'none', label: '没有密钥' },
+    { value: 'any', label: '至少一把' },
+    { value: 'many', label: manyApiKeys.value ? '≥ ' + manyApiKeys.value + ' 把（批量发 key 的形态）' : '偏多（档位随读数下发）' },
+  ] },
+])
+
+// query 参数名与后端一致，页面字段名是 camelCase——两张表对起来只在这一个地方翻
+const QUERY_KEYS = {
+  status: 'status', plan: 'plan', role: 'role', expire: 'expire', expireDays: 'expire_days',
+  activity: 'activity', consent: 'consent', quotaReset: 'quota_reset', keys: 'keys',
+}
+
+const emptyFilters = () => ({
+  status: '', plan: '', role: '', expire: '', expireDays: '',
+  activity: '', consent: '', quotaReset: '', keys: '', overCap: false,
+})
+
+// 初始值直接读 URL：这一页要能被「复制链接给同事」分享，而首屏 load() 在 setup 末尾就跑，
+// 等 onMounted 再回填会先拉一次未筛选的列表
+const filtersFromUrl = () => {
+  const f = emptyFilters()
+  for (const [k, qk] of Object.entries(QUERY_KEYS)) {
+    const v = route.query[qk]
+    if (typeof v === 'string' && v) f[k] = v
+  }
+  f.overCap = route.query.over_cap === '1'
+  return f
+}
+const filters = ref(filtersFromUrl())
+if (typeof route.query.page === 'string' && /^\d+$/.test(route.query.page)) {
+  page.value = Math.max(1, parseInt(route.query.page, 10) || 1)
+}
+
+const queryOf = () => {
+  const q = {}
+  const kw = keyword.value.trim()
+  if (kw) q.keyword = kw
+  for (const [k, qk] of Object.entries(QUERY_KEYS)) {
+    const v = filters.value[k]
+    // 到期窗口是「即将到期」的修饰参数，切走这一档就不留在 URL 里
+    if (v && !(k === 'expireDays' && filters.value.expire !== 'expiring')) q[qk] = v
+  }
+  if (filters.value.overCap) q.over_cap = '1'
+  if (page.value > 1) q.page = String(page.value)
+  return q
+}
+
+// 同一份 query 重复 replace 会被 vue-router 判成「冗余导航」而 reject；这一页每次 load 都同步一次，
+// 首屏尤其容易原样不动——不让它变成控制台里的一条红
+const syncUrl = () => { router.replace({ query: queryOf() }).catch(() => {}) }
+
+const filterCount = computed(() => {
+  let n = 0
+  if (keyword.value.trim()) n++
+  for (const f of STATIC_FILTERS.value) if (filters.value[f.key]) n++
+  if (filters.value.plan) n++
+  if (filters.value.role) n++
+  if (filters.value.overCap) n++
+  return n
+})
+const hasAnyFilter = computed(() => filterCount.value > 0)
+
+const filterSummary = computed(() => {
+  const parts = []
+  const kw = keyword.value.trim()
+  if (kw) parts.push('关键词 ' + kw)
+  for (const f of STATIC_FILTERS.value) {
+    const v = filters.value[f.key]
+    if (!v) continue
+    const hit = f.options.find(o => o.value === v)
+    parts.push(f.label + ' ' + (hit ? hit.label : v))
+  }
+  if (filters.value.plan) {
+    const p = allPlans.value.find(x => String(x.id) === filters.value.plan)
+    parts.push('套餐 ' + (p ? p.name : '已下架的套餐'))
+  }
+  if (filters.value.role) {
+    const r = allRoles.value.find(x => x.code === filters.value.role)
+    parts.push('角色 ' + (r ? (r.name || r.code) : filters.value.role))
+  }
+  if (filters.value.overCap) parts.push('会话数超上限')
+  return parts.length ? parts.join(' · ') : '未筛选（全部用户）'
+})
+
+const apply = () => { page.value = 1; load() }
 const goPage = (p) => { page.value = p; load() }
+const resetFilters = () => {
+  keyword.value = ''
+  filters.value = emptyFilters()
+  page.value = 1
+  load()
+}
 
 const load = async () => {
   loading.value = true
   error.value = ''
+  syncUrl()
   try {
-    const data = await adminApi.listUsers({ page: page.value, keyword: keyword.value.trim(), withDeleted: withDeleted.value })
+    const f = filters.value
+    const data = await adminApi.listUsers({
+      page: page.value, keyword: keyword.value.trim(),
+      status: f.status, plan: f.plan, role: f.role,
+      expire: f.expire, expireDays: f.expireDays, activity: f.activity,
+      consent: f.consent, quotaReset: f.quotaReset, keys: f.keys, overCap: f.overCap,
+    })
     list.value = data.list || []
     total.value = data.total || 0
     pageSize.value = data.page_size || 20
+    const meta = (data.filters_meta || {})
+    if (meta.many_api_keys) manyApiKeys.value = meta.many_api_keys
   } catch (e) {
     error.value = e.message
   }
@@ -554,6 +715,10 @@ const clearQuota = async (item) => {
   } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
 }
 
-onMounted(() => { revealObserve() })
+onMounted(() => {
+  revealObserve()
+  // 筛选下拉要一屏就能选：套餐/角色清单不能在点开新建弹窗时才拉
+  ensureMeta()
+})
 load()
 </script>

@@ -134,3 +134,51 @@ func ListActiveSessions(userID uint) []models.AuthSession {
 		Order("last_active_at DESC").Find(&sessions)
 	return sessions
 }
+
+// SessionWindowCond 统计窗口内**建立**的全部会话，含已吊销与已过期。
+// 「设备与密钥」页的设备数 / IP 数 / 已吊销数按这条算：一次被吊销的登录照样留下它来自哪台设备哪个 IP，
+// 那正是借号要看的痕迹——把它们一起筛掉，页面就只剩「现在在线的人」，而这页要抓的是「曾经换过人」。
+func SessionWindowCond(windowStart time.Time) (string, []interface{}) {
+	return "created_at >= ?", []interface{}{windowStart}
+}
+
+// ActiveSessionCond 窗口内的「活跃会话」= 在窗口内建立 + 未吊销 + 未过期。
+// **读侧两处必须共用它**：管理端「设备与密钥」页的 active_sessions，与用户管理里「会话数超上限」的筛选
+// ——两边口径不一致时，筛出来的人和页面上排出来的人会对不上，而那正是这页存在的意义。
+func ActiveSessionCond(windowStart time.Time) (string, []interface{}) {
+	cond, args := SessionWindowCond(windowStart)
+	return cond + " AND revoked_at IS NULL AND expires_at > ?", append(args, time.Now())
+}
+
+// ActiveSessionCounts 按 ActiveSessionCond 一次算出多个用户的活跃会话数。
+// 刻意不在 Go 里数（`revoked_at == nil && expires_at > now`）：那等于把同一条定义写两遍，
+// 而写两遍的定义迟早只改其中一遍——上一版就是这么把 revoked_recent 静默做成恒 0 的。
+func ActiveSessionCounts(userIDs []uint, windowStart time.Time) map[uint]int64 {
+	out := make(map[uint]int64, len(userIDs))
+	if len(userIDs) == 0 {
+		return out
+	}
+	cond, args := ActiveSessionCond(windowStart)
+	var rows []struct {
+		UserID uint
+		N      int64
+	}
+	if err := DB.Model(&models.AuthSession{}).
+		Select("user_id, COUNT(*) AS n").
+		Where("user_id IN ? AND "+cond, append([]interface{}{userIDs}, args...)...).
+		Group("user_id").Scan(&rows).Error; err != nil {
+		return out
+	}
+	for _, r := range rows {
+		out[r.UserID] = r.N
+	}
+	return out
+}
+
+// UserIDsWithSessionsOver 用子查询把「窗口内活跃会话数 > cap」的账号取出来。谓词左侧是
+// **users.id**——用户表没有 user_id 这一列，写成裸 user_id 的症状是筛选直接 500。
+func UserIDsWithSessionsOver(windowStart time.Time, cap int) (string, []interface{}) {
+	cond, args := ActiveSessionCond(windowStart)
+	return "users.id IN (SELECT user_id FROM auth_sessions WHERE " + cond +
+		" GROUP BY user_id HAVING COUNT(*) > ?)", append(args, cap)
+}

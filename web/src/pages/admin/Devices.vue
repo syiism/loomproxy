@@ -18,9 +18,21 @@
       </p>
     </div>
 
-    <div class="reveal flex flex-col sm:flex-row gap-3 mb-6">
+    <div class="reveal flex flex-col sm:flex-row gap-3 mb-4">
       <input v-model="keyword" placeholder="搜索用户名 / 邮箱 / 昵称" class="input flex-1" @keydown.enter="doSearch">
       <button @click="doSearch" class="btn-ghost whitespace-nowrap">搜索</button>
+    </div>
+
+    <!-- 窄屏可排序：桌面端点表头，移动端那些列本身被裁掉了（P30），表头点不到，
+         所以并排给一个下拉——排序这件事在两种屏幕上都得做得到。 -->
+    <div class="reveal flex flex-wrap items-center gap-2 mb-4 text-xs text-text-muted">
+      <span>排序</span>
+      <select v-model="sort" class="input input-sm sm:hidden" @change="applySort">
+        <option v-for="c in SORTS" :key="c.key" :value="c.key">{{ c.label }}</option>
+      </select>
+      <span class="hidden sm:inline font-mono">{{ currentSortLabel }} · {{ dir === 'desc' ? '从大到小' : '从小到大' }}（点表头可切换）</span>
+      <button @click="toggleDir" class="btn-ghost btn-sm whitespace-nowrap">{{ dir === 'desc' ? '降序 ▼' : '升序 ▲' }}</button>
+      <button v-if="sort !== defaultSort || dir !== 'desc'" @click="resetSort" class="btn-ghost btn-sm whitespace-nowrap">回默认排序</button>
     </div>
 
     <UiSpinner v-if="loading" />
@@ -31,12 +43,14 @@
         <table class="table-base">
           <thead>
             <tr>
-              <th>用户</th><th>套餐</th><th>活跃会话</th>
-              <th class="hidden md:table-cell">登录设备</th>
-              <th class="hidden md:table-cell">登录 IP</th>
-              <th>调用 IP</th>
-              <th class="hidden md:table-cell">密钥</th>
-              <th class="hidden md:table-cell">近期移出</th>
+              <th>用户</th><th>套餐</th>
+              <th><UiSortHead label="活跃会话" :active="sort === 'sessions'" :dir="dir" @pick="pickSort('sessions')" /></th>
+              <th class="hidden md:table-cell"><UiSortHead label="登录设备" :active="sort === 'devices'" :dir="dir" @pick="pickSort('devices')" /></th>
+              <th class="hidden md:table-cell"><UiSortHead label="登录 IP" :active="sort === 'login_ips'" :dir="dir" @pick="pickSort('login_ips')" /></th>
+              <th><UiSortHead label="调用 IP" :active="sort === 'call_ips'" :dir="dir" @pick="pickSort('call_ips')" /></th>
+              <th class="hidden md:table-cell"><UiSortHead label="密钥" :active="sort === 'keys'" :dir="dir" @pick="pickSort('keys')" /></th>
+              <th class="hidden md:table-cell"><UiSortHead label="近期移出" :active="sort === 'revoked'" :dir="dir" @pick="pickSort('revoked')" /></th>
+              <th class="hidden lg:table-cell"><UiSortHead label="最近登录" :active="sort === 'last_login'" :dir="dir" @pick="pickSort('last_login')" /></th>
               <th>标记</th>
             </tr>
           </thead>
@@ -54,6 +68,7 @@
               <td class="font-mono text-xs">{{ d.call_ips }}</td>
               <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ d.api_keys }}</td>
               <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ d.revoked_recent }}</td>
+              <td class="hidden lg:table-cell font-mono text-xs text-text-muted whitespace-nowrap">{{ fmtDate(d.last_login_at) }}</td>
               <td>
                 <UiTag v-if="d.suspect" tone="yellow" label="IP 分散" />
                 <UiTag v-else-if="overCap(d)" tone="red" :label="'超上限 ' + (cfg ? cfg.max_active_sessions : '')" />
@@ -74,14 +89,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import PageHeader from '../../components/PageHeader.vue'
 import UiSpinner from '../../components/UiSpinner.vue'
 import UiTag from '../../components/UiTag.vue'
 import UiEmpty from '../../components/UiEmpty.vue'
 import UiPagination from '../../components/UiPagination.vue'
+import UiSortHead from '../../components/UiSortHead.vue'
 import { adminApi } from '../../api/index.js'
-import { toast, revealObserve } from '../../utils.js'
+import { fmtDate, toast, revealObserve } from '../../utils.js'
 
 const loading = ref(true)
 const error = ref('')
@@ -92,16 +108,38 @@ const page = ref(1)
 const pageSize = 20
 const keyword = ref('')
 
+// 排序键与后端 deviceSortAllowed 一一对应（键名不许自己起：非法值后端回默认，
+// 面板就会「点了表头但没反应」——那是最容易被当成「这页坏了」的错）
+const defaultSort = 'sessions'
+const SORTS = [
+  { key: 'sessions', label: '活跃会话' },
+  { key: 'devices', label: '登录设备' },
+  { key: 'login_ips', label: '登录 IP' },
+  { key: 'call_ips', label: '调用 IP' },
+  { key: 'keys', label: '密钥' },
+  { key: 'revoked', label: '近期移出' },
+  { key: 'last_login', label: '最近登录' },
+]
+const sort = ref(defaultSort)
+const dir = ref('desc')
+const currentSortLabel = computed(() => (SORTS.find(c => c.key === sort.value) || {}).label || sort.value)
+
 const overCap = (d) => !!cfg.value && d.active_sessions > cfg.value.max_active_sessions
 
 const load = async () => {
   loading.value = true
   error.value = ''
   try {
-    const data = await adminApi.listDeviceActivity({ page: page.value, keyword: keyword.value.trim() })
+    const data = await adminApi.listDeviceActivity({
+      page: page.value, keyword: keyword.value.trim(), sort: sort.value, dir: dir.value,
+    })
     list.value = data.list || []
     cfg.value = data.config || null
     total.value = data.total || 0
+    // 后端把生效的 sort/dir 回显出来（非法值会被它兜掉），面板跟着它而不是跟着本地值，
+    // 否则「我点了、它没理我」这一类就只在读数上看不出来
+    sort.value = data.sort || sort.value
+    dir.value = data.dir || dir.value
   } catch (e) {
     error.value = e.message
     toast(e.message, 'error')
@@ -109,6 +147,15 @@ const load = async () => {
   loading.value = false
   nextTick(revealObserve)
 }
+
+const applySort = () => { page.value = 1; load() }
+const pickSort = (key) => {
+  if (sort.value === key) dir.value = dir.value === 'desc' ? 'asc' : 'desc'
+  else { sort.value = key; dir.value = 'desc' }
+  applySort()
+}
+const toggleDir = () => { dir.value = dir.value === 'desc' ? 'asc' : 'desc'; applySort() }
+const resetSort = () => { sort.value = defaultSort; dir.value = 'desc'; applySort() }
 
 const doSearch = () => { page.value = 1; load() }
 const goPage = (p) => { page.value = p; load() }
