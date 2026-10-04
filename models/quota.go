@@ -96,9 +96,13 @@ func (PlatformSourceConfig) TableName() string {
 type QuotaCost struct {
 	ID uint `gorm:"primaryKey" json:"id"`
 	// GroupCode 历史字段名：组概念移除后统一存数据源码
-	GroupCode  string    `gorm:"size:32;uniqueIndex:idx_gp_iface;not null" json:"group_code"`
-	Interface  string    `gorm:"size:64;uniqueIndex:idx_gp_iface;not null" json:"interface"`
-	Cost       int64     `gorm:"default:1" json:"cost"`
+	GroupCode string `gorm:"size:32;uniqueIndex:idx_gp_iface;not null" json:"group_code"`
+	Interface string `gorm:"size:64;uniqueIndex:idx_gp_iface;not null" json:"interface"`
+	// Cost 带 gorm default 标签的整型字段有个坑：**值为零时 GORM 会省略该列，让 DB 默认值生效**。
+	// 原来这里是 default:1，于是 `Create(&QuotaCost{Cost: 0})`（播种免费动作、面板填 0）
+	// 全部静默变成 1 点——「写了 0 拿到 1」，生产上 recommend 一类行 cost 混合就是这么来的。
+	// 默认档定成 0（新接口默认不计费，要不要收费由人或播种显式写 1），语义与代码里的默认一致。
+	Cost       int64     `gorm:"default:0" json:"cost"`
 	Status     int       `gorm:"default:1" json:"status"`
 	Interval   int64     `gorm:"default:0" json:"interval"`    // 速率限制间隔(秒)：0=不限，>0=每隔N秒允许1次请求（不可突发）
 	LimitCount int64     `gorm:"default:0" json:"limit_count"` // 窗口计数限流：窗口内最多 N 次（允许突发），0=不限；与 Interval 同时配置时本字段优先

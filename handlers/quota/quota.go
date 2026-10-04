@@ -154,11 +154,8 @@ func Dashboard(c *gin.Context) {
 				cost2 := models.QuotaCost{
 					GroupCode: ds.Name,
 					Interface: h,
-					Cost:      1,
+					Cost:      db.DefaultInterfaceCost(h), // 与播种同一份默认值，不在这里各写一遍
 					Status:    1,
-				}
-				if h == "recommend" || h == "front" || h == "landing" {
-					cost2.Cost = 0
 				}
 				if err2 := db.DB.Create(&cost2).Error; err2 == nil {
 					ifaces[i] = InterfaceCost{
@@ -173,7 +170,7 @@ func Dashboard(c *gin.Context) {
 				} else {
 					ifaces[i] = InterfaceCost{
 						Name:    h,
-						Cost:    1,
+						Cost:    db.DefaultInterfaceCost(h),
 						Enabled: true,
 					}
 				}

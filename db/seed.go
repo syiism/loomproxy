@@ -430,20 +430,33 @@ func migrateGroupCostRows(db *gorm.DB) error {
 	return nil
 }
 
+// DefaultInterfaceCost 新接口的默认单价：**只有正文计费**，其余动作（search/detail/chapter/explore/
+// recommend/front/landing…）一律 0 = 放行不计费。
+// 播种（db/seed.go）与面板「接口消耗」列表自动补行（handlers/quota）共用它——
+// 两处各写一遍默认值，早晚有一处漂回旧口径（这条默认值刚从 1 改成 0 就是这么错的）。
+func DefaultInterfaceCost(iface string) int64 {
+	if iface == "content" {
+		return 1
+	}
+	return 0
+}
+
 func seedQuotaCosts(db *gorm.DB) error {
 	if sourceSeedProvider == nil {
 		return nil
 	}
-	// 按各源声明的动作集播种（recommend 沿用历史语义：cost=0 不计费）
+	// 按各源声明的动作集播种。**默认只有 content 计费**：
+	// 正文是「一次请求换一整章上游内容」，而 search/detail/chapter/explore 都是导航与元数据——
+	// 按请求给它们计费，用户翻一次目录就吃掉几十点额度，而网关侧大多还有上游缓存（成本对不上读数）。
+	// recommend 的 cost=0 是历史语义，现在与其余非正文动作一致。
+	// 注意这只影响**新播种出来的行**：已有行不改（下面的 count==0 判据），
+	// 生产要调口径走面板「接口消耗」或直接改库 + 等 CACHE_TTL 过期（成本缓存在 Redis 里，重启不清）。
 	for _, src := range sourceSeedProvider() {
 		for _, iface := range src.Actions {
 			var count int64
 			db.Model(&models.QuotaCost{}).Where("group_code = ? AND interface = ?", src.Name, iface).Count(&count)
 			if count == 0 {
-				cost := int64(1)
-				if iface == "recommend" {
-					cost = 0
-				}
+				cost := DefaultInterfaceCost(iface)
 				if err := db.Create(&models.QuotaCost{
 					GroupCode: src.Name,
 					Interface: iface,

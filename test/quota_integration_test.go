@@ -128,6 +128,27 @@ func TestBillingDisabledInterface(t *testing.T) {
 
 // TestBillingDeductsOnSuccess 上游成功（HTTP 200）后扣减并写 quota_usage_logs。
 // 假上游经平台默认 baseUrl 注入（SSRF 可信豁免），fake_a search 对 {} 响应归一化为空书单（data.books 缺失 → 空列表）。
+
+// setSearchCost 显式给 fake_a/search 配单价。
+// 播种的默认口径已改成「只有 content 计费」（见 TestSeededCostsOnlyContentIsBillable），
+// 而这几条计费用例验的是机制——「配了价会扣、扣完会 429、密钥调用按归属用户扣」。
+// 让它们依赖某个动作的默认单价，下次调口径就会集体变红，而机制其实没坏。
+func setSearchCost(t *testing.T, cost int64) {
+	t.Helper()
+	q := map[string]interface{}{"group_code": "fake_a", "interface": "search"}
+	var n int64
+	db.DB.Model(&models.QuotaCost{}).Where(q).Count(&n)
+	if n == 0 {
+		if err := db.DB.Create(&models.QuotaCost{GroupCode: "fake_a", Interface: "search", Cost: cost, Status: 1}).Error; err != nil {
+			t.Fatalf("写入 fake_a/search 单价失败: %v", err)
+		}
+	} else if err := db.DB.Model(&models.QuotaCost{}).Where(q).
+		Updates(map[string]interface{}{"cost": cost, "status": 1, "interval": 0, "limit_count": 0, "window_sec": 0}).Error; err != nil {
+		t.Fatalf("改 fake_a/search 单价失败: %v", err)
+	}
+	delCostCache("fake_a", "search")
+}
+
 func TestBillingDeductsOnSuccess(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -138,6 +159,7 @@ func TestBillingDeductsOnSuccess(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	setAUpstream(t, upstream.URL)
 
+	setSearchCost(t, 1)
 	token := registerUser(t, srv, "q_user4", "q_user4@example.com", "pass1234")
 	uid := userIDByName(t, "q_user4")
 
@@ -168,6 +190,7 @@ func TestBillingQuotaExhausted(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	setAUpstream(t, upstream.URL)
 
+	setSearchCost(t, 1)
 	// free 套餐 fake_a 当日限额改为 1
 	if err := db.DB.Model(&models.QuotaLimit{}).
 		Where("plan_id = ? AND scope = ? AND target = ?", planIDByCode(t, "free"), "source", "fake_a").
@@ -573,5 +596,34 @@ func TestLimiterIdleReclaimPreservesLowRate(t *testing.T) {
 	// 超过 2×周期（安全余量）后仍应回收，否则低速率配置的 key 永不释放
 	if expired, _ := gate.LimiterIdleExpiredForTest(3600, 0, 2*time.Hour+time.Minute); !expired {
 		t.Fatal("低速率配置闲置超过 2×interval 后应可回收")
+	}
+}
+
+// TestSeededCostsOnlyContentIsBillable 播种的默认单价口径：**只有正文计费，其余动作全 0**。
+// 这条钉的不是数值而是方向——曾经每个动作默认 1 点，用户翻一次目录就吃掉几十点额度，
+// 而网关侧那些动作多数还有上游缓存（成本与读数对不上）。
+// 新接入的源由 seed 铺出同样的形状；已有行不受影响（seed 只补缺失的 (源, 接口) 行）。
+func TestSeededCostsOnlyContentIsBillable(t *testing.T) {
+	newTestServer(t)
+	for _, src := range []string{"fake_a", "fake_b", "fake_c"} {
+		for _, iface := range []string{"search", "detail", "chapter", "explore"} {
+			var c models.QuotaCost
+			if err := db.DB.Where("group_code = ? AND interface = ?", src, iface).First(&c).Error; err != nil {
+				t.Fatalf("%s/%s 没有播种出接口消耗行: %v", src, iface, err)
+			}
+			if c.Cost != 0 {
+				t.Errorf("%s/%s 默认 cost = %d, want 0（导航与元数据动作不该按请求扣额度；若非零，先看 models.QuotaCost.Cost 的 gorm default 标签有没有吞掉零值）", src, iface, c.Cost)
+			}
+		}
+		var c models.QuotaCost
+		if err := db.DB.Where("group_code = ? AND interface = ?", src, "content").First(&c).Error; err != nil {
+			t.Fatalf("%s/content 没有播种出接口消耗行: %v", src, err)
+		}
+		if c.Cost != 1 {
+			t.Errorf("%s/content 默认 cost = %d, want 1（正文是唯一计费用的动作）", src, c.Cost)
+		}
+		if c.Status != 1 {
+			t.Errorf("%s/content status = %d, want 1（cost=0 与 status=0 是两件事：后者对全员 403）", src, c.Status)
+		}
 	}
 }

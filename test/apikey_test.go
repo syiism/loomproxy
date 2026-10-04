@@ -50,6 +50,8 @@ func TestApiKeyLifecycle(t *testing.T) {
 	}
 
 	// 2. 密钥调网关：应通过鉴权并归属用户（计费落账）
+	// 显式配 search 单价：默认口径已是「只有 content 计费」，这条要验的是归属计费而不是默认值
+	setSearchCost(t, 1)
 	status, raw := doRaw(t, srv, http.MethodGet, "/fake_a/search"+buildQuery(map[string]string{
 		"query": "测试",
 	}), nil, map[string]string{"X-API-Key": plain})

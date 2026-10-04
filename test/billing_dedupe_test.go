@@ -18,7 +18,9 @@ import (
 	"loomproxy/models"
 )
 
-// setContentCost 给 fake_a/content 配一个非零单价（默认播种是免费，扣减分支根本进不去）
+// setContentCost 显式配 fake_a/content 的单价并清掉速率字段。
+// 播种出来的 content 本来就是 1（见 TestSeededCostsOnlyContentIsBillable），这里重配是为了让本文件
+// 的三个用例各自拿到确定的 cost，不去依赖「seed 恰好给了 1」这条别的用例也在验的事实。
 func setContentCost(t *testing.T) {
 	t.Helper()
 	var n int64
