@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync/atomic"
 	"time"
+
+	"gorm.io/gorm"
 
 	"loomproxy/base"
 	"loomproxy/conf"
@@ -71,6 +74,15 @@ func persistCallLogs(calls []base.RecentCall) {
 // 累加到 api_call_stats 永久归档（明细会过期，累计次数保留）。
 // 保留期 <=0（默认永久）时整段 no-op——既不聚合也不删除，归档表保持为空、明细表即全量。
 // 导出供集成测试按配置驱动清理语义。
+//
+// **累加与删除必须在同一个事务里**（待办清单 P55）：这两步以前各写各的，于是只要
+// 「归档已写入、明细没删掉」（删除报错、进程在两步之间崩），下一轮就会把同一批行**再加一遍**——
+// 而面板的「历史累计」= 归档 + 现存明细，那一刻起就永久性虚高，没有任何地方说它虚高。
+// 现在删除失败会整体回滚：归档不涨、明细还在，下一轮重跑等价于重来一次。
+//
+// 这里刻意**不**用「先 Pluck id 再按 id 删」：那要往语句里塞几万个 id（现网明细三万行），
+// 而 `created_at < cutoff` 这个谓词在同一事务里是稳定的（新写入的行时间只会更新），
+// 谓词删除更短也不会跨语句漂移。
 func PurgeExpiredCallLogs() {
 	retention := monitorRetention()
 	if retention <= 0 {
@@ -86,37 +98,43 @@ func PurgeExpiredCallLogs() {
 		LatencySum int64
 		MaxLatency int64
 	}
-	var aggs []aggRow
-	if err := db.DB.Model(&models.ApiCallLog{}).
+	err := db.DB.Transaction(func(tx *gorm.DB) error {
+		var aggs []aggRow
 		// 成功 = 2xx 且非带内失败（P22）。IS NOT TRUE 对 NULL 也成立：旧行没有这一列的值，
 		// 仍按纯 HTTP 口径计成功，不会因为列后加而被读成失败
-		Select("source, action, COUNT(*) AS total, "+
-			"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success, "+
-			"COALESCE(SUM(latency_ms), 0) AS latency_sum, COALESCE(MAX(latency_ms), 0) AS max_latency").
-		Where("created_at < ?", cutoff).
-		Group("source, action").
-		Scan(&aggs).Error; err != nil {
-		log.Printf("ERROR: aggregate expired api call logs failed: %v", err)
-	}
-	for _, a := range aggs {
-		var st models.ApiCallStat
-		db.DB.Where("source = ? AND action = ?", a.Source, a.Action).First(&st)
-		st.Source = a.Source
-		st.Action = a.Action
-		st.Total += a.Total
-		st.Success += a.Success
-		st.Failed += a.Total - a.Success
-		st.TotalLatencyMs += a.LatencySum
-		if a.MaxLatency > st.MaxLatencyMs {
-			st.MaxLatencyMs = a.MaxLatency
+		if err := tx.Model(&models.ApiCallLog{}).
+			Select("source, action, COUNT(*) AS total, "+
+				"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success, "+
+				"COALESCE(SUM(latency_ms), 0) AS latency_sum, COALESCE(MAX(latency_ms), 0) AS max_latency").
+			Where("created_at < ?", cutoff).
+			Group("source, action").
+			Scan(&aggs).Error; err != nil {
+			return err
 		}
-		if err := db.DB.Save(&st).Error; err != nil {
-			log.Printf("ERROR: archive api call stat %s/%s failed: %v", a.Source, a.Action, err)
+		for _, a := range aggs {
+			var st models.ApiCallStat
+			// 查不到就用零值行（下面 Save 会插入）；这里的报错不单独判——同一事务里后面任何一步失败都整体回滚
+			if err := tx.Where("source = ? AND action = ?", a.Source, a.Action).First(&st).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			st.Source = a.Source
+			st.Action = a.Action
+			st.Total += a.Total
+			st.Success += a.Success
+			st.Failed += a.Total - a.Success
+			st.TotalLatencyMs += a.LatencySum
+			if a.MaxLatency > st.MaxLatencyMs {
+				st.MaxLatencyMs = a.MaxLatency
+			}
+			if err := tx.Save(&st).Error; err != nil {
+				return err
+			}
 		}
-	}
-
-	if err := db.DB.Where("created_at < ?", cutoff).Delete(&models.ApiCallLog{}).Error; err != nil {
-		log.Printf("ERROR: purge old api call logs failed: %v", err)
+		return tx.Where("created_at < ?", cutoff).Delete(&models.ApiCallLog{}).Error
+	})
+	if err != nil {
+		// 整体回滚，等下一轮重跑；这条日志就是说"这一轮没清掉、数字没被污染"的地方
+		log.Printf("ERROR: 监控明细清理失败（归档与删除同事务，已整体回滚，未产生重复归档）: %v", err)
 	}
 }
 

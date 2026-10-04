@@ -80,3 +80,68 @@ func TestCallLogPurgedWithRetention(t *testing.T) {
 		t.Errorf("归档计数 = total %d / success %d / failed %d，期望 2/1/1", st.Total, st.Success, st.Failed)
 	}
 }
+
+// 归档与删除的原子性（待办清单 P55）。
+//
+// 修前的形状：先逐行 Save 归档、再单独 DELETE。只要那次删除失败（或进程在两步之间崩），
+// 归档里已经多了这批数、明细却还在——而面板的「历史累计」= 归档 + 现存明细，
+// 于是这个数字从那一刻起**永久性虚高**，且再跑一轮还会再虚高一次。
+// 这条用例用 sqlite 的 BEFORE DELETE 触发器把删除钉死，验的是"整体回滚"这四个字。
+func TestCallLogPurgeRollsBackWhenDeleteFails(t *testing.T) {
+	newTestServer(t)
+	restore := conf.Config.MonitorRetentionDays
+	defer func() { conf.Config.MonitorRetentionDays = restore }()
+	conf.Config.MonitorRetentionDays = 7
+
+	now := time.Now()
+	insertCallLog(t, "fake_c", "search", 200, now.AddDate(0, 0, -12))
+	insertCallLog(t, "fake_c", "search", 500, now.AddDate(0, 0, -11))
+	insertCallLog(t, "fake_c", "detail", 200, now)
+
+	// 让 DELETE 语句失败（触发器里那行 SELECT RAISE 就是报错本身）
+	if err := db.DB.Exec(`CREATE TRIGGER block_purge_before_delete BEFORE DELETE ON api_call_logs
+		BEGIN SELECT RAISE(ABORT, 'boom: 用例故意挡住删除'); END`).Error; err != nil {
+		t.Fatalf("建挡删除的触发器失败: %v", err)
+	}
+	defer func() {
+		if err := db.DB.Exec(`DROP TRIGGER IF EXISTS block_purge_before_delete`).Error; err != nil {
+			t.Errorf("撤掉触发器失败: %v", err)
+		}
+	}()
+
+	app.PurgeExpiredCallLogs()
+
+	var archived int64
+	db.DB.Model(&models.ApiCallStat{}).Where("source = ?", "fake_c").
+		Select("COALESCE(SUM(total),0)").Scan(&archived)
+	if archived != 0 {
+		t.Errorf("删除失败时归档却涨了 %d 行——归档与删除没在一个事务里，这正是「永久性虚高」的入口", archived)
+	}
+	var kept int64
+	db.DB.Model(&models.ApiCallLog{}).Count(&kept)
+	if kept != 3 {
+		t.Errorf("回滚后明细应还是 3 条，实为 %d", kept)
+	}
+
+	// 撤掉障碍后重跑：数字必须**只算一次**
+	if err := db.DB.Exec(`DROP TRIGGER block_purge_before_delete`).Error; err != nil {
+		t.Fatalf("撤触发器失败: %v", err)
+	}
+	app.PurgeExpiredCallLogs()
+	var st models.ApiCallStat
+	if err := db.DB.Where("source = ? AND action = ?", "fake_c", "search").First(&st).Error; err != nil {
+		t.Fatalf("重跑后应归档成功: %v", err)
+	}
+	if st.Total != 2 || st.Success != 1 || st.Failed != 1 {
+		t.Errorf("重跑后的归档 = %d/%d/%d, want 2/1/1（虚高会表现成 4/2/2）", st.Total, st.Success, st.Failed)
+	}
+	// 再跑一轮（此时已无过期行）：数字不动，才算幂等
+	app.PurgeExpiredCallLogs()
+	var st2 models.ApiCallStat
+	if err := db.DB.Where("source = ? AND action = ?", "fake_c", "search").First(&st2).Error; err != nil {
+		t.Fatalf("再查归档失败: %v", err)
+	}
+	if st2.Total != 2 {
+		t.Errorf("多跑一轮后归档变成 %d, want 仍为 2", st2.Total)
+	}
+}
