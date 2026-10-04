@@ -2,7 +2,8 @@
   <div>
     <PageHeader title="排行榜" subtitle="站内搜索热词与在读书目排名，取自接口调用明细的内容维度（只统计窗口内的真实调用）。">
       <template #actions>
-        <div class="flex items-center gap-2">
+        <!-- 三个 w-auto 的下拉并排是 398px，比 390 视口还宽：窄屏必须允许换行（待办清单 P65） -->
+        <div class="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
           <select v-model="media" class="input font-mono text-sm w-auto" @change="load">
             <option value="">全部媒介</option>
             <option v-for="o in medias" :key="o.value" :value="o.value">{{ o.label }}</option>
