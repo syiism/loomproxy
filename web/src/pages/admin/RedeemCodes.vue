@@ -55,7 +55,31 @@
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
     <UiEmpty v-else-if="list.length === 0" title="暂无卡密" text="使用上方表单生成第一批卡密。" />
     <template v-else>
-      <div class="table-wrap reveal overflow-x-auto">
+      <!-- 窄屏回退（待办清单 P33）：10 列里管理员在手机上要的只有四件事——
+           哪张卡、什么状态、给谁的、要不要作废；ID 与批次降成第二行小字。
+           卡密原文照旧显示（这一页本来就是只走 /admin 的，改成掩码会让"复制"这一步没法做）。 -->
+      <div class="sm:hidden space-y-3">
+        <div v-for="r in list" :key="r.id" class="card reveal">
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="font-mono text-sm break-all">{{ r.code }}</div>
+            <UiTag :tone="statusTone(r.status)" :label="statusLabel(r.status)" />
+          </div>
+          <div class="text-sm"><span class="text-text-muted">套餐：</span>{{ r.plan_name }}
+            · <span class="text-text-muted">天数：</span>{{ r.duration_days === 0 ? '永久' : r.duration_days }}</div>
+          <div v-if="r.used_by_name" class="text-sm mt-1"><span class="text-text-muted">兑换人：</span>{{ r.used_by_name }}</div>
+          <div class="mt-1 text-xs text-text-muted font-mono">#{{ r.id }} · {{ r.batch_no }} · {{ fmtDate(r.created_at) }}</div>
+          <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border">
+            <label v-if="r.status === 1" class="flex items-center gap-1.5 text-xs text-text-muted select-none mr-auto">
+              <input type="checkbox" class="w-4 h-4 rounded border-border text-text focus:ring-text" :checked="selected.has(r.id)" @change="toggleSelect(r.id)">
+              选中（批量删除）
+            </label>
+            <button class="btn-ghost btn-sm" @click="copyCode(r.code)">复制</button>
+            <button v-if="r.status === 1" class="btn-danger btn-sm" @click="onRevoke(r)">作废</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap reveal overflow-x-auto hidden sm:block">
         <table class="table-base">
           <thead>
             <tr><th><input type="checkbox" :checked="allUnusedSelected" @change="toggleSelectAll"></th><th>ID</th><th>卡密</th><th>套餐</th><th>天数</th><th>状态</th><th>批次</th><th>兑换用户</th><th>创建时间</th><th>操作</th></tr>

@@ -68,9 +68,26 @@
             内容维度覆盖率（窗口内已落库明细，按 源×接口）——哪一格常年不满，先看同行的失败与带内失败：
             失败请求（含带内失败）天然五维全空，是「缺格子的合理成因」，剩下的缺口才是采集在漏
           </div>
-          <table class="table-base">
+          <!-- 窄屏（待办清单 P33）：这张表 9 列全是百分比，横滚一次只能比一格，读不出「哪一格常年不满」。
+               所以这里不裁列（裁掉的正是要看的维度），改成一行一组的紧凑卡片：源/接口 + 明细数打头，
+               七格按两列排。 -->
+          <div class="sm:hidden space-y-3">
+            <div v-for="(r, i) in coverage" :key="'c' + i" class="border border-border rounded-lg p-3">
+              <div class="flex items-baseline justify-between gap-2 mb-2">
+                <div class="font-mono text-xs">{{ r.source }} <span class="text-text-muted">/ {{ r.action }}</span></div>
+                <div class="text-xs text-text-muted font-mono">{{ r.rows }} 条</div>
+              </div>
+              <div class="grid grid-cols-2 gap-x-3 gap-y-1">
+                <div v-for="m in pctCells(r)" :key="m.k" class="flex items-baseline justify-between gap-1.5 text-xs">
+                  <span class="text-text-muted">{{ m.label }}</span>
+                  <span class="font-mono" :style="m.bad ? 'color:#b1263a' : ''">{{ m.text }}<template v-if="m.bad"> ·低</template></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <table class="table-base hidden sm:table">
             <thead>
-              <tr><th>数据源 / 接口</th><th>明细</th><th>书名</th><th>书目标识</th><th>章节名</th><th>媒介</th><th>失败</th><th>带内失败</th><th>未捕获</th></tr>
+              <tr><th>数据源 / 接口</th><th>明细</th><th v-for="c in COVERAGE_PCT_COLS" :key="c.k">{{ c.label }}</th></tr>
             </thead>
             <tbody>
               <tr v-for="(r, i) in coverage" :key="i">
@@ -149,19 +166,19 @@
       <div class="table-wrap reveal overflow-x-auto mb-8">
         <table class="table-base">
           <thead>
-            <tr><th>数据源</th><th>接口</th><th>总调用</th><th>历史累计</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th><th>最大耗时</th><th>最近调用</th></tr>
+            <tr><th>数据源</th><th>接口</th><th>总调用</th><th class="hidden md:table-cell">历史累计</th><th class="hidden md:table-cell">成功</th><th>失败</th><th>成功率</th><th>平均耗时</th><th class="hidden md:table-cell">最大耗时</th><th>最近调用</th></tr>
           </thead>
           <tbody>
             <tr v-for="r in items" :key="r.source + '/' + r.action">
               <td><UiTag tone="blue" :label="r.source" /></td>
               <td class="font-mono text-xs">{{ r.action }}</td>
               <td class="font-mono text-xs">{{ r.total }}</td>
-              <td class="font-mono text-xs text-text-muted">{{ r.lifetime }}</td>
-              <td class="font-mono text-xs">{{ r.success }}</td>
+              <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.lifetime }}</td>
+              <td class="hidden md:table-cell font-mono text-xs">{{ r.success }}</td>
               <td class="font-mono text-xs" :style="r.failed > 0 ? 'color:#9F2F2D' : ''">{{ r.failed }}</td>
               <td class="font-mono text-xs" :style="{ color: rateColor(r.success_rate) }">{{ r.success_rate.toFixed(1) }}%</td>
               <td class="font-mono text-xs">{{ r.avg_latency_ms }}ms</td>
-              <td class="font-mono text-xs text-text-muted">{{ r.max_latency_ms }}ms</td>
+              <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.max_latency_ms }}ms</td>
               <td class="font-mono text-xs text-text-muted">{{ fmtDate(r.last_called_at) }}</td>
             </tr>
           </tbody>
@@ -169,7 +186,37 @@
       </div>
 
       <div class="font-serif text-lg font-medium tracking-tight mb-3 reveal">最近调用</div>
-      <div class="table-wrap reveal overflow-x-auto mb-8">
+      <!-- 窄屏回退（待办清单 P33）：一次调用一张卡，卡上只留分诊要看的那几件——
+           谁、什么时候、哪个源的哪个接口、成没成、以及内容维度里**有值的那些**。
+           桌面端那张表一字未改（下面 `hidden sm:block` 起），这里不是裁列而是换一种排版。
+           两份排版是刻意并排写的而不是抽组件：它们共用的只有 `fmtDate/statusColor/mediaTone` 这些
+           本文件里的判法，抽出去要么把判法搬进组件（第二事实来源），要么 props 传一屏函数——都不值。 -->
+      <div class="sm:hidden space-y-3 mb-8">
+        <div v-for="(r, i) in recent" :key="'k' + i" class="card reveal">
+          <div class="flex items-baseline justify-between gap-2">
+            <div class="font-mono text-xs text-text-muted">{{ fmtDate(r.time) }}</div>
+            <div class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></div>
+          </div>
+          <div class="mt-1.5 flex items-center gap-1.5 flex-wrap text-sm">
+            <span v-if="r.username" class="font-medium">{{ r.username }}</span>
+            <span v-else class="text-text-muted">匿名</span>
+            <span v-if="r.ip" class="font-mono text-xs text-text-muted">{{ r.ip }}</span>
+          </div>
+          <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+            <UiTag tone="blue" :label="r.source" />
+            <span class="font-mono text-xs">{{ r.action }}</span>
+            <span class="font-mono text-xs text-text-muted ml-auto">{{ r.latency_ms }}ms</span>
+          </div>
+          <div class="mt-2 space-y-1 text-sm">
+            <div v-if="r.keyword"><span class="text-text-muted">搜索词：</span>{{ r.keyword }}</div>
+            <div v-if="r.book_name"><span class="text-text-muted">书名：</span>{{ r.book_name }}</div>
+            <div v-if="r.chapter_title"><span class="text-text-muted">章节：</span>{{ r.chapter_title }}</div>
+            <div v-if="r.media" class="flex items-center gap-1.5"><span class="text-text-muted">媒介：</span><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></div>
+            <div v-if="r.result_count !== undefined && r.result_count !== null"><span class="text-text-muted">结果：</span><span class="font-mono" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap reveal overflow-x-auto mb-8 hidden sm:block">
         <table class="table-base">
           <thead>
             <tr><th>时间</th><th>调用者</th><th class="hidden md:table-cell">IP</th><th>数据源</th><th>接口</th><th>状态</th><th class="hidden md:table-cell">耗时</th><th>搜索词</th><th>书名</th><th class="hidden md:table-cell">章节</th><th class="hidden md:table-cell">媒介</th><th class="hidden md:table-cell">结果</th></tr>
@@ -215,7 +262,37 @@
       历史是否可查取决于运维有没有清理明细（筛不到不等于当时没发生过）。
     </div>
     <div v-if="history.length" class="text-xs text-text-muted mb-3 reveal">内存缓冲淘汰后批量落库的历史记录（保留期由环境变量 MONITOR_RETENTION_DAYS 决定，默认永久）。搜索词与书名属用户阅读内容，仅管理员可见。</div>
-    <div class="table-wrap reveal overflow-x-auto">
+      <!-- 窄屏回退（待办清单 P33）：一次调用一张卡，卡上只留分诊要看的那几件——
+           谁、什么时候、哪个源的哪个接口、成没成、以及内容维度里**有值的那些**。
+           桌面端那张表一字未改（下面 `hidden sm:block` 起），这里不是裁列而是换一种排版。
+           两份排版是刻意并排写的而不是抽组件：它们共用的只有 `fmtDate/statusColor/mediaTone` 这些
+           本文件里的判法，抽出去要么把判法搬进组件（第二事实来源），要么 props 传一屏函数——都不值。 -->
+    <div class="sm:hidden space-y-3 mb-3">
+        <div v-for="(r, i) in history" :key="'k' + i" class="card reveal">
+          <div class="flex items-baseline justify-between gap-2">
+            <div class="font-mono text-xs text-text-muted">{{ fmtDate(r.time) }}</div>
+            <div class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></div>
+          </div>
+          <div class="mt-1.5 flex items-center gap-1.5 flex-wrap text-sm">
+            <span v-if="r.username" class="font-medium">{{ r.username }}</span>
+            <span v-else class="text-text-muted">匿名</span>
+            <span v-if="r.ip" class="font-mono text-xs text-text-muted">{{ r.ip }}</span>
+          </div>
+          <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+            <UiTag tone="blue" :label="r.source" />
+            <span class="font-mono text-xs">{{ r.action }}</span>
+            <span class="font-mono text-xs text-text-muted ml-auto">{{ r.latency_ms }}ms</span>
+          </div>
+          <div class="mt-2 space-y-1 text-sm">
+            <div v-if="r.keyword"><span class="text-text-muted">搜索词：</span>{{ r.keyword }}</div>
+            <div v-if="r.book_name"><span class="text-text-muted">书名：</span>{{ r.book_name }}</div>
+            <div v-if="r.chapter_title"><span class="text-text-muted">章节：</span>{{ r.chapter_title }}</div>
+            <div v-if="r.media" class="flex items-center gap-1.5"><span class="text-text-muted">媒介：</span><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></div>
+            <div v-if="r.result_count !== undefined && r.result_count !== null"><span class="text-text-muted">结果：</span><span class="font-mono" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</span></div>
+          </div>
+        </div>
+      </div>
+    <div class="table-wrap reveal overflow-x-auto hidden sm:block">
       <table class="table-base">
         <thead>
           <tr><th class="hidden md:table-cell">ID</th><th>时间</th><th>调用者</th><th class="hidden md:table-cell">IP</th><th>数据源</th><th>接口</th><th>状态</th><th class="hidden md:table-cell">耗时</th><th>搜索词</th><th>书名</th><th class="hidden md:table-cell">章节</th><th class="hidden md:table-cell">媒介</th><th class="hidden md:table-cell">结果</th></tr>
@@ -306,17 +383,28 @@ const coverage = ref([])
 // 覆盖率只是一格体检，统计失败时整页还能看——所以后端把它拆成 coverage_error 单独下发
 const coverageError = ref(false)
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0)
-const pctCells = (r) => ([
-  { k: 'book', text: pct(r.has_book_name, r.rows) + '%', bad: r.expect_book && pct(r.has_book_name, r.rows) < 90 },
-  { k: 'ident', text: pct(r.has_book_ident, r.rows) + '%', bad: r.expect_book && pct(r.has_book_ident, r.rows) < 90 },
-  { k: 'chapter', text: pct(r.has_chapter_title, r.rows) + '%', bad: r.action === 'chapter' && pct(r.has_chapter_title, r.rows) < 90 },
-  { k: 'media', text: pct(r.has_media, r.rows) + '%', bad: pct(r.has_media, r.rows) < 90 },
-  { k: 'failed', text: String(r.failed), bad: false },
-  { k: 'inband', text: String(r.in_band_failed || 0), bad: (r.in_band_failed || 0) > 0 },
+// 覆盖率那 7 格的**唯一定义**：`text`/`bad` 各管一格算法，`label` 同处给表头与窄屏卡片用。
+// 原来表头写死一串中文、卡片再写一遍，就是「两处写同一份值」那条坑的形状。
+const COVERAGE_PCT_COLS = [
+  { k: 'book', label: '书名',
+    text: (r) => pct(r.has_book_name, r.rows) + '%',
+    bad: (r) => r.expect_book && pct(r.has_book_name, r.rows) < 90 },
+  { k: 'ident', label: '书目标识',
+    text: (r) => pct(r.has_book_ident, r.rows) + '%',
+    bad: (r) => r.expect_book && pct(r.has_book_ident, r.rows) < 90 },
+  { k: 'chapter', label: '章节名',
+    text: (r) => pct(r.has_chapter_title, r.rows) + '%',
+    bad: (r) => r.action === 'chapter' && pct(r.has_chapter_title, r.rows) < 90 },
+  { k: 'media', label: '媒介',
+    text: (r) => pct(r.has_media, r.rows) + '%',
+    bad: (r) => pct(r.has_media, r.rows) < 90 },
+  { k: 'failed', label: '失败', text: (r) => String(r.failed), bad: () => false },
+  { k: 'inband', label: '带内失败', text: (r) => String(r.in_band_failed || 0), bad: (r) => (r.in_band_failed || 0) > 0 },
   // 未捕获 = 用户自己关掉了留存（待办清单 P37）。它不进上面的分母，所以标不红都不是缺陷，
   // 给出来只是为了让「分母怎么变小了」在这一页就有答案
-  { k: 'withheld', text: String(r.withheld || 0), bad: false },
-])
+  { k: 'withheld', label: '未捕获', text: (r) => String(r.withheld || 0), bad: () => false },
+]
+const pctCells = (r) => COVERAGE_PCT_COLS.map((c) => ({ k: c.k, label: c.label, text: c.text(r), bad: c.bad(r) }))
 
 // subjectSummary：折叠块收起态的那一行读数。**只报数，不报形容词**——
 // 摘要说「最低 47%（xmly/content 书名）」，管理员才知道要不要展开；说「有数据」等于没摘要。

@@ -31,7 +31,25 @@
         </div>
       </div>
 
-      <div class="table-wrap border-t border-border !rounded-none !border-0">
+      <!-- 窄屏回退（待办清单 P33）：这 6 列在手机上要横滚将近两屏，而在这页真正要回答的是
+           "哪台不对劲"——标识 + 状态 + 额度 + 有效期四格就够，凭证字段名与备注降成第三行。
+           刻意不套 .card：外层 section 已是卡片，卡片套卡片会把正文宽度再吃掉一层。 -->
+      <div v-if="p.devices && p.devices.length" class="sm:hidden divide-y divide-border border-t border-border">
+        <div v-for="d in p.devices" :key="d.ident" class="px-5 py-3">
+          <div class="flex items-start justify-between gap-2">
+            <div class="font-mono text-xs break-all">{{ d.ident }}</div>
+            <UiTag :tone="statusTones[d.status] || 'gray'" :label="statusLabels[d.status] || d.status" />
+          </div>
+          <div class="mt-1.5 text-xs text-text-muted font-mono">
+            {{ d.used_quota }} / {{ d.total_quota }} · {{ expiryText(d) }}
+          </div>
+          <div v-if="credFields(d).length" class="mt-1 text-xs text-text-muted font-mono">{{ credFields(d).join(' · ') }}</div>
+          <div v-if="d.note" class="mt-1 text-xs text-text-muted">{{ d.note }}</div>
+        </div>
+      </div>
+      <div v-else class="sm:hidden px-5 py-3 text-sm text-text-muted border-t border-border">暂无号记录</div>
+
+      <div class="table-wrap border-t border-border !rounded-none !border-0 hidden sm:block">
         <table class="table-base">
           <thead>
             <tr><th>标识</th><th>凭证字段</th><th>状态</th><th>周期额度</th><th>有效期至</th><th>备注</th></tr>
