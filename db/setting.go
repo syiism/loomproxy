@@ -83,6 +83,25 @@ func SettingBool(key string, def bool) bool {
 // 一个没人认识的数、现在按默认走并出声。0 到底该不该当"没配"是 P48② 那件还没拍的事，
 // 拍的时候只改这一处。合法域的上界仍由调用方管（各键对取值域的理解不同，见各包自己的判法）。
 func SettingInt(key string, def int) int {
+	return settingIntFloor(key, def, 1, "填了非正数")
+}
+
+// SettingIntNonNeg 与 `SettingInt` 唯一的差别：**0 是合法值**，按 0 走且不出声。
+//
+// 存在的理由是"0 有业务含义"的键确实存在，不是假想：携带形态里 uxx 的广告冷却标定用 0 当
+// **哨兵**（库里那一行是 0 表示"还没有边界证据"，判据写的就是 `hi == 0`），
+// 冷却本身也可以被管理员设成 0，意思是"不设冷却、立刻可试"。
+// 拿 `SettingInt` 读它们的症状是"我明明填了 0，它却每次等三小时"（分支侧 S50）。
+//
+// **别把它当"想允许 0 就走这条"的万能口**：P48② 那一问（上限类设置里的 0 是什么意思）还没拍，
+// 拍完之后这两条的分界应当只剩一处说法。负数两种都不收——它不是任何一种已定义的口径。
+func SettingIntNonNeg(key string, def int) int {
+	return settingIntFloor(key, def, 0, "填了负数")
+}
+
+// settingIntFloor 是上面两条的共同实现：floor 是**含端点的合法下界**，越界时用它给的措辞出声。
+// 写成一个实现而不是两份并排，是因为这一整轮的病因就是"同一个判据抄了三遍、每遍漏掉不同的面"。
+func settingIntFloor(key string, def int, floor int, reason string) int {
 	raw := GetSetting(key)
 	trimmed := strings.TrimSpace(raw) // 粘贴进来的值常带首尾空白，"看着填对了、实际按默认走"也是这条要治的病
 	n, err := strconv.Atoi(trimmed)
@@ -91,8 +110,8 @@ func SettingInt(key string, def int) int {
 		NoticeReplacedSetting(key, raw, strconv.Itoa(def), "没填或设置行不存在")
 	case err != nil:
 		NoticeReplacedSetting(key, raw, strconv.Itoa(def), "不是整数")
-	case n <= 0:
-		NoticeReplacedSetting(key, raw, strconv.Itoa(def), "填了非正数")
+	case n < floor:
+		NoticeReplacedSetting(key, raw, strconv.Itoa(def), reason)
 	default:
 		return n
 	}
