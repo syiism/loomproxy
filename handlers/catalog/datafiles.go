@@ -60,6 +60,47 @@ func NewDataFilesHandler(_ *base.APIConfig) base.Handler {
 	return h
 }
 
+// safeDataSegment 判定一个来自 URL 路径的段能不能当目录名或文件名用。
+// 三条都必要，各挡一种实测/可达的形态：
+//
+//	· `.` 与 `..`：免鉴权的 `GET /data/../<文件>.json` 会把 DATA_DIR **父目录**里的 .json 原样直出
+//	  （本轮探针实测：`/data/../probe_secret.json` 返回了文件内容，见待办清单 P74）；
+//	  `buildFileList("..")` 还会把父目录的 .json **文件名列出来**——穿越不需要读成功也会漏名字。
+//	· 含 `/` 或 `\`：gin 会把路径参数**反转义**，`%2e%2e%2f` 解出来就是带斜杠的一段（本例里它匹配不到路由，
+//	  但这是路由形状给的运气，不是校验；换一种段数就未必）。
+//	· 以 `.` 开头：`<文件>.json` 这个拼接形状意味着 `.hidden` 会变成 `.hidden.json`，
+//	  而 DATA_DIR 里没有任何合法名字长这样（合法名字都来自源的 `DataFiles` 声明）。
+func safeDataSegment(seg string) bool {
+	if seg == "" || seg == "." || seg == ".." {
+		return false
+	}
+	if strings.ContainsAny(seg, "/\\") {
+		return false
+	}
+	return !strings.HasPrefix(seg, ".")
+}
+
+// staysInside 判定 target 是否落在 base 之内。**这是第二道地板而不是重复劳动**：
+// filepath.Join 会顺手清理 `..`，所以只靠调用方"段里没有 .."这一条，
+// 将来任何人改一次段校验就会把整条免鉴权路径重新打开；有了这道判定，改坏的代价从"能读父目录"
+// 变成"读不到、返回错误"。判据：路径穿越的守卫要同时站在**入口**（拒绝非法段）与
+// **落盘点**（算出来的绝对路径还在根里）两处。
+func staysInside(base, target string) bool {
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absBase, absTarget)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func (h *DataFilesHandler) dataDir(source string) string {
 	return filepath.Join(h.dataRoot, source)
 }
@@ -102,6 +143,10 @@ func (h *DataFilesHandler) fileInfo(path string) FileInfo {
 
 func (h *DataFilesHandler) listFiles(source string) []FileInfo {
 	d := h.dataDir(source)
+	// 同一道地板：列目录也会漏文件名，`..` 能把父目录的 .json 名单念出来
+	if !staysInside(h.dataRoot, d) {
+		return []FileInfo{}
+	}
 	info, err := os.Stat(d)
 	if err != nil || !info.IsDir() {
 		return []FileInfo{}
@@ -120,6 +165,10 @@ func (h *DataFilesHandler) listFiles(source string) []FileInfo {
 
 func (h *DataFilesHandler) readFileRaw(source, name string) ([]byte, error) {
 	path := filepath.Join(h.dataDir(source), name)
+	// 地板：算出来的路径必须还在 DATA_DIR 里。段的校验在入口已经做过一次，这里是不信任那一次的第二次判定
+	if !staysInside(h.dataRoot, path) {
+		return nil, os.ErrPermission
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -131,6 +180,14 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 	var result interface{}
 
 	parts, _ := params["_datafile_parts"].([]string)
+
+	// 免鉴权的静态托管路径，每一个段都当成不可信输入处理：先验段，再谈读什么。
+	for _, seg := range parts {
+		if !safeDataSegment(strings.TrimSuffix(seg, ".json")) {
+			result = ErrorResponse{Error: "非法的字典路径"}
+			return result, nil
+		}
+	}
 
 	if len(parts) >= 1 {
 		source := parts[0]
