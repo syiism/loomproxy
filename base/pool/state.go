@@ -139,10 +139,15 @@ type Pool struct {
 	cold     []*models.PoolDevice
 	hotRR    int                  // 活跃号轮询游标（多活跃号时）
 	cooldown []*models.PoolDevice // 冷却中的号（只 spread 型会填）
-	window   errWindow
-	ticker   *time.Ticker
-	stopCh   chan struct{}
-	running  atomic.Bool
+
+	// 周期性重试的失败只说一次（noteBad / noteGood），键是"路径 + 号身份"。
+	// 只在持 p.mu 的维护路径里读写，所以不另加锁。
+	lastBad      map[string]string
+	lastBadCount map[string]int
+	window       errWindow
+	ticker       *time.Ticker
+	stopCh       chan struct{}
+	running      atomic.Bool
 	// capNoted 建号被总上限判住是否已出声——只在状态变化时记一条，见 topUpColdLocked
 	capNoted bool
 }
@@ -175,6 +180,45 @@ func (p *Pool) spreadTarget() int {
 
 func (p *Pool) logf(format string, args ...interface{}) {
 	log.Printf("pool[%s]: "+format, append([]interface{}{p.Name()}, args...)...)
+}
+
+// noteBad 判断这条坏消息该不该说：**与上一次同一种失败就只累计不出声**，返回 false。
+//
+// 维护协程每一 tick 都会重试临期号，所以"持续性、但不是故障"的状态（上游当天收益到顶、正在维护、
+// 网络一时不通）如果每轮都喊一条，就成了每 60 秒一条的噪音——那正是待办清单 P36 为
+// `ErrCapacityReached` 单独处理过的形状（生产 v62 上线后 qm_device 每 60 秒一条 error，
+// 把「这个池有问题」的读数泡坏）。当时只补了一处；这一族真正的形状是
+// **“任何周期性重试的失败都会每轮喊一次”**，所以这道守卫放在维护循环的三个出口上。
+// 键含身份（哪台号、哪条路径），值取错误文案：文案变了就算状态变化，要说。
+func (p *Pool) noteBad(key, msg string) bool {
+	if p.lastBad == nil {
+		p.lastBad = map[string]string{}
+	}
+	if p.lastBadCount == nil {
+		p.lastBadCount = map[string]int{}
+	}
+	same := p.lastBad[key] == msg
+	p.lastBad[key] = msg
+	if same {
+		p.lastBadCount[key]++
+		return false
+	}
+	p.lastBadCount[key] = 1
+	return true
+}
+
+// noteGood 在这条路径从坏转好时返回 (此前累计失败次数, true)；本来一直好则返回 (0, false)。
+// 恢复那一句必须带累计数：只说"好了"会让人以为刚才只错了一次。
+// **只在成功分支调用**——在失败分支里调它会把状态清掉，下一轮就冒出假的"已恢复"。
+func (p *Pool) noteGood(key string) (int, bool) {
+	prev, ok := p.lastBad[key]
+	if !ok || prev == "" {
+		return 0, false
+	}
+	n := p.lastBadCount[key]
+	delete(p.lastBad, key)
+	delete(p.lastBadCount, key)
+	return n, true
 }
 
 // Start 加载存量号并分类、转正首个活跃号、补齐冷备，然后启动维护协程。
@@ -444,13 +488,26 @@ func (p *Pool) Maintain() {
 		}
 		q, err := p.refresh(row)
 		if err != nil {
-			p.logf("refresh hot device %s failed: %v", row.Ident, err)
+			// 台账刷新失败下轮再试；同一种错连续出现只说第一句（noteBad/noteGood 的分工写在各自注释里）
+			if p.noteBad("refresh "+row.Ident, err.Error()) {
+				p.logf("refresh hot device %s failed: %v（同一种失败此后只累计次数，恢复时再说一次）", row.Ident, err)
+			}
 			continue // 下轮再试
+		}
+		if n, ok := p.noteGood("refresh " + row.Ident); ok && n > 0 {
+			p.logf("refresh hot device %s 台账已恢复（此前连续失败 %d 次）", row.Ident, n)
 		}
 		if !q.Exhausted() {
 			if err := p.claim(row); err != nil {
-				p.logf("renew claim for %s failed: %v", row.Ident, err)
+				// 续领失败里有相当一部分是**业务上的正常状态**（如某源金币当天到顶，
+				// Provider 明说"今日收益已到顶"）——那不是故障，每 60 秒喊一条只会把读数泡坏
+				if p.noteBad("renew-claim "+row.Ident, err.Error()) {
+					p.logf("renew claim for %s failed: %v（同一种失败此后只累计次数，恢复时再说一次）", row.Ident, err)
+				}
 			} else {
+				if n, ok := p.noteGood("renew-claim " + row.Ident); ok && n > 0 {
+					p.logf("renew claim for %s 已恢复（此前连续失败 %d 次）", row.Ident, n)
+				}
 				p.logf("renewed hot device %s (valid %.0f min)", row.Ident, remaining(row).Minutes())
 			}
 			continue
@@ -459,7 +516,11 @@ func (p *Pool) Maintain() {
 		p.removeLocked(&p.hot, row)
 		p.setStatus(row, StatusSpent)
 		if _, err := p.promoteLocked(); err != nil {
-			p.logf("promote replacement failed: %v", err)
+			if p.noteBad("promote", err.Error()) {
+				p.logf("promote replacement failed: %v（同一种失败此后只累计次数，恢复时再说一次）", err)
+			}
+		} else if n, ok := p.noteGood("promote"); ok && n > 0 {
+			p.logf("promote replacement 已恢复（此前连续失败 %d 次）", n)
 		}
 	}
 	p.topUpColdLocked()
