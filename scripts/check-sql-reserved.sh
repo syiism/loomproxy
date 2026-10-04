@@ -11,13 +11,14 @@
 # 两个位置，取「至少一处报错」的词。所以 TEXT / DATE / TIME / TIMESTAMP 不在表里
 # （它们是 unreserved keyword，实测能当别名），而 MAX / MIN / COUNT 也不在（函数名，可当别名）。
 #
-# 四条检查，都只在**含 SQL 关键字的行**上跑，避免误伤普通 Go 代码：
+# 五条检查，都只在**含 SQL 关键字的行**上跑，避免误伤普通 Go 代码：
 #   1) `AS <ident>` 命中保留字
 #   2) `) <ident>`  派生表别名命中保留字
 #   3) `<ident>`    反引号引用的标识符——反引号是 MySQL/SQLite 方言，PostgreSQL 只认双引号
 #   4) `ESCAPE \'`  —— LIKE 的转义符写成反斜杠：MySQL/MariaDB 会在字符串字面量里把它当引号转义（1064），
 #      PostgreSQL 标准模式留两个反斜杠（不是单字符），SQLite 明说「ESCAPE expression must be a single character」。
 #      **不存在一种反斜杠写法三家同时成立**，所以只能换字符（本仓用 `likeESCAPE()` 统一生成 `ESCAPE \'!\'`）
+#   5) Go 里的 `.Offset(` 没有配套的 `.Limit(` —— MySQL 要求 OFFSET 必须与 LIMIT 同现（裸 `OFFSET 4` 报 1064，sqlite 与 PostgreSQL 都接受）；本仓用例跑 sqlite，所以只能静态扫
 #
 # 用法：make vet 会自动跑；单独跑 ./scripts/check-sql-reserved.sh；
 # 变异验证时可指定文件：./scripts/check-sql-reserved.sh /tmp/fixture.go [文件…]（不给参数即扫全仓 .go）
@@ -58,6 +59,11 @@ while IFS= read -r f; do
       if (raw ~ /dialect-allow/) next      # 明知故犯的对照组用例，见 test/dialect_quoting_test.go
       sub(/\/\/.*/, "", raw)              # 行注释不参与
       low = tolower(raw)
+      # 5) 裸 OFFSET：MySQL 语法不接受（sqlite/PG 接受），且用例跑 sqlite 测不出来
+      if (raw ~ /\.Offset\(/ && raw !~ /\.Limit\(/) {
+        printf "%s:%d: OFFSET —— MySQL 要求 OFFSET 必须与 LIMIT 同现（sqlite/PG 接受裸 OFFSET，本仓用例测不出），改为取回后在 Go 里切片或显式 .Limit()\n", FILENAME, FNR
+        found = 1
+      }
       # 4) LIKE ESCAPE 写成反斜杠：跨方言必炸（MySQL 把 '\\' 当引号转义、SQLite 要求单个字符）。
       #    这条排在 mark 闸门**之前**——含 ESCAPE 的行往往没有 select/from 之类关键字，排在后面等于永不触发
       if (low ~ /escape[ \t]*.[\\]/) {

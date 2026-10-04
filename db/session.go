@@ -84,13 +84,20 @@ func RevokeExcessSessions(userID uint, keepSessionID string, maxKeep int) int64 
 	if err := DB.Where("session_id = ? AND user_id = ?", keepSessionID, userID).First(&keep).Error; err != nil {
 		return 0
 	}
-	// 保留 maxKeep-1 个「比当前会话更早活跃」的，加当前会话凑成 maxKeep 个
-	var stale []models.AuthSession
+	// 保留 maxKeep-1 个「比当前会话更早活跃」的，加当前会话凑成 maxKeep 个。
+	// **一次取回、在 Go 里切片**，不用 SQL 的 OFFSET：MySQL 要求 `OFFSET` 必须跟 `LIMIT` 同现
+	// （裸 `... ORDER BY x OFFSET 4` 直接 1064，sqlite 与 PostgreSQL 却接受），
+	// 而一个用户的活跃会话本来就是个位数，取回全部不比分页贵。
+	var candidates []models.AuthSession
 	if err := DB.Where("user_id = ? AND revoked_at IS NULL AND expires_at > ? AND id <> ? AND last_active_at <= ?",
 		userID, time.Now(), keep.ID, keep.LastActiveAt).
-		Order("last_active_at DESC").Offset(maxKeep - 1).Find(&stale).Error; err != nil {
+		Order("last_active_at DESC").Find(&candidates).Error; err != nil {
 		return 0
 	}
+	if len(candidates) <= maxKeep-1 {
+		return 0
+	}
+	stale := candidates[maxKeep-1:]
 	if len(stale) == 0 {
 		return 0
 	}
