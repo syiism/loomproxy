@@ -52,6 +52,7 @@ vet:
 	@$(MAKE) --no-print-directory doc-numbers-check
 	@$(MAKE) --no-print-directory tz-check
 	@$(MAKE) --no-print-directory param-assert-check
+	@$(MAKE) --no-print-directory deploy-atomic-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -97,6 +98,11 @@ tz-check:
 # 注意这条**扫 sources/\*\***（两棵树的代码都要干净），与 tz-check 的豁免方向不同。
 param-assert-check:
 	@./scripts/check-param-number-assert.sh
+
+# 部署脚本不许逐字节写「正在被执行的那条路径」：半截二进制会被 Restart=always 立刻 exec
+# （现网 14 天三次同款崩溃循环，其中两次没有任何应用日志）——见待办清单 P79
+deploy-atomic-check:
+	@./scripts/check-deploy-atomic-install.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

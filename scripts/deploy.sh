@@ -49,6 +49,25 @@ if [ "$MODE" = systemd ] && [ "$(id -u)" -ne 0 ]; then
 	command -v sudo >/dev/null && SUDO="sudo" || die "systemd 模式需要 root 或 sudo"
 fi
 
+# place <源文件> <目标路径>：落地一个「可能被正在运行的服务执行」的文件，
+# **只用同一目录内的 rename，绝不逐字节写活路径**。
+# install/cp 直接写目标时，写完之前的任何一刻 systemd 都可能把半截文件拿来 exec——
+# `Restart=always` 会把随之而来的崩溃循环伪装成「运行中」。现网三次都是这个形状：
+# 09-28 23:42 连炸 118 次（203/EXEC）、10-01 10:58 与 10-04 01:10 各一轮 SIGSEGV 且**没有任何应用日志**。
+# 同目录 rename 是原子的：活路径要么旧版本、要么新版本，不存在半截那一格。
+# 落地后复算 md5——这是 AGENTS §3 换装三查第 2 条要求的事，脚本自己做到，不靠人记住。
+place() {
+	local src=$1 dst=$2 tmp md5_src md5_dst
+	[ -f "$src" ] || die "待安装的文件不存在：$src"
+	md5_src=$(md5sum "$src" | cut -d' ' -f1)
+	tmp="$dst.part.$$"
+	$SUDO install -m 0755 "$src" "$tmp" || die "临时文件落地失败：$tmp"
+	$SUDO mv -f "$tmp" "$dst" || die "rename 到活路径失败：$dst"
+	md5_dst=$($SUDO md5sum "$dst" | cut -d' ' -f1)
+	[ "$md5_src" = "$md5_dst" ] || die "安装后 md5 不一致（源 $md5_src / 目标 $md5_dst）——不重启"
+	log "已落地 $(basename "$dst")（md5 $md5_dst）"
+}
+
 # 冒烟端口：环境变量 > 部署目录 .env > 默认
 detect_port() {
 	if [ -n "${PORT:-}" ]; then echo "$PORT"; return; fi
@@ -89,12 +108,12 @@ fi
 # ===== 3. 安装 =====
 log "安装新版本到 $DEPLOY_DIR"
 if [ "$MODE" = systemd ]; then
-	$SUDO install -m 0755 "$REPO_ROOT/$BIN.new" "$DEPLOY_DIR/$BIN"
+	place "$REPO_ROOT/$BIN.new" "$DEPLOY_DIR/$BIN"
 	[ -f "$REPO_ROOT/favicon.svg" ] && $SUDO cp -f "$REPO_ROOT/favicon.svg" "$DEPLOY_DIR/favicon.svg" || true
 	[ -d "$DEPLOY_DIR/data" ] || $SUDO mkdir -p "$DEPLOY_DIR/data"
 	rm -f "$REPO_ROOT/$BIN.new"
 else
-	mv "$REPO_ROOT/$BIN.new" "$DEPLOY_DIR/$BIN"
+	place "$REPO_ROOT/$BIN.new" "$DEPLOY_DIR/$BIN"
 fi
 
 # ===== 4. 重启 =====
@@ -132,7 +151,7 @@ fi
 # ===== 6. 失败回滚 =====
 log "⚠️ 冒烟未通过，尝试回滚..."
 if [ -n "$LATEST_BACKUP" ] && [ -f "$LATEST_BACKUP" ]; then
-	$SUDO cp "$LATEST_BACKUP" "$DEPLOY_DIR/$BIN"
+	place "$LATEST_BACKUP" "$DEPLOY_DIR/$BIN"
 	restart_service
 	if smoke; then
 		die "新版本冒烟失败，已回滚到 $(basename "$LATEST_BACKUP") 并恢复服务"
