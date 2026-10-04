@@ -85,10 +85,14 @@ func NewCacheWithRedis(maxSize int, ttl time.Duration) (*Cache, error) {
 	}
 
 	rdb := redis.NewClient(&redis.Options{
-		Addr:         fmt.Sprintf("%s:%d", conf.Config.RedisHost, conf.Config.RedisPort),
-		Password:     conf.Config.RedisPassword,
-		DB:           conf.Config.RedisDB,
-		ReadTimeout:  time.Duration(conf.Config.CacheTTL) * time.Second,
+		Addr:     fmt.Sprintf("%s:%d", conf.Config.RedisHost, conf.Config.RedisPort),
+		Password: conf.Config.RedisPassword,
+		DB:       conf.Config.RedisDB,
+		// ReadTimeout 以前取的是 `CACHE_TTL` 的秒数——一个**缓存存活期**的运营口径被当成了
+		// **socket 读超时**用：现网 CACHE_TTL=300，于是 Redis 卡住时每个走缓存的请求要挂满 5 分钟
+		// 才失败（库里默认是 3s）。两个口径没有半点关系，所以这里给它自己的值，与 Write/Dial 同量级。
+		// （待办清单 P82；`CACHE_TTL` 现在只管一件事：键的存活时间。）
+		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 3 * time.Second,
 		DialTimeout:  3 * time.Second,
 	})

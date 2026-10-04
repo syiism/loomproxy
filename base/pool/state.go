@@ -28,12 +28,14 @@ type Config struct {
 	CooldownDefault time.Duration // spread 型里 Reauthorize 的兜底冷却时长（0 → 10 分钟）
 	RenewBefore     time.Duration // 热号到期前多久续领
 	Interval        time.Duration // 维护协程巡检间隔
+	HookTimeout     time.Duration // 一次源钩子调用（Create/Refresh/Claim）的超时上限（0 → 30 秒）
 }
 
 // DefaultConfig 从 POOL_* 环境变量取参；conf 尚未加载时回退内置默认值
 // （冷备 2 / 热号上限 3 / dead 保留 10 / 到期前 5 分钟续领 / 每分钟巡检）
 func DefaultConfig() Config {
-	c := Config{ColdSpares: 2, MaxHot: 3, MaxDead: 10, RenewBefore: 5 * time.Minute, Interval: time.Minute}
+	c := Config{ColdSpares: 2, MaxHot: 3, MaxDead: 10, RenewBefore: 5 * time.Minute, Interval: time.Minute,
+		HookTimeout: defaultHookTimeout}
 	if conf.Config == nil {
 		return c
 	}
@@ -51,6 +53,9 @@ func DefaultConfig() Config {
 	}
 	if n := conf.Config.PoolMaintainSec; n > 0 {
 		c.Interval = time.Duration(n) * time.Second
+	}
+	if n := conf.Config.PoolHookTimeoutSec; n > 0 {
+		c.HookTimeout = time.Duration(n) * time.Second
 	}
 	return c
 }
@@ -91,6 +96,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Interval == 0 {
 		c.Interval = d.Interval
+	}
+	if c.HookTimeout == 0 {
+		c.HookTimeout = d.HookTimeout
 	}
 	// 水位不得超过名额——这是 deadRetention 那条规则（「先留得下可用号，再谈留档」）的另一半：
 	// 燃烧型的名义目标是 1 个活跃 + ColdSpares 个冷备，而 MaxDevices 把 cold+hot+dead 全算进去，
@@ -365,9 +373,35 @@ func (p *Pool) initLedger() {
 	})
 }
 
+// defaultHookTimeout 是一次源钩子调用的超时上限默认值。
+// 框架在这里能保证的只有「传下去一个带截止的 ctx」：Provider 若自己另起 context 打上游，
+// 拦不住它——而维护与装填是**持着 p.mu 调钩子**的，一个不读 ctx 的源能卡住整个池的请求路径。
+// 所以这条是给守规矩的源兜底，契约（必须把 ctx 传给网络调用）写在 Provider 的声明处。
+const defaultHookTimeout = 30 * time.Second
+
+// hookCtx 给一次源钩子调用套上截止。超时到了不额外喊一条日志：调用返回的 err 走的是
+// 既有的失败出口（noteBad + 一条 ERROR），"超了多久" 从 err 里就看得见（context.DeadlineExceeded）。
+func (p *Pool) hookCtx() (context.Context, context.CancelFunc) {
+	d := p.cfg.HookTimeout
+	if d <= 0 {
+		d = defaultHookTimeout
+	}
+	return context.WithTimeout(context.Background(), d)
+}
+
+// callCreate 建新号一次（同样带截止）。超时有一条要写明的代价：上游可能已经真的建出了那个号，
+// 而我们没拿到返回值——它就成了对方侧的一个孤儿，我们不重试也不去猜。以前没有超时，
+// 那种情况下是**整个池卡在 Create 里不动**（还持着 p.mu），两害相权取前者。
+func (p *Pool) callCreate() (*Device, error) {
+	ctx, cancel := p.hookCtx()
+	defer cancel()
+	return p.provider.Create(ctx)
+}
+
 // refresh 拉取真实额度并写回台账（不落库，由调用方 Save）
 func (p *Pool) refresh(row *models.PoolDevice) (Quota, error) {
-	ctx := context.Background()
+	ctx, cancel := p.hookCtx()
+	defer cancel()
 	q, err := p.provider.Refresh(ctx, deviceOf(row))
 	if err != nil {
 		return Quota{}, err
@@ -387,7 +421,8 @@ func (p *Pool) refresh(row *models.PoolDevice) (Quota, error) {
 
 // claim 为号领取一次资源，并刷新台账
 func (p *Pool) claim(row *models.PoolDevice) error {
-	ctx := context.Background()
+	ctx, cancel := p.hookCtx()
+	defer cancel()
 	if err := p.provider.Claim(ctx, deviceOf(row)); err != nil {
 		return err
 	}
@@ -643,7 +678,7 @@ func (p *Pool) createColdLocked() (*models.PoolDevice, error) {
 				ErrCapacityReached, p.Name(), p.cfg.MaxDevices, n, p.countDead(), p.deadRetention())
 		}
 	}
-	dev, err := p.provider.Create(context.Background())
+	dev, err := p.callCreate()
 	if err != nil {
 		return nil, err
 	}

@@ -98,6 +98,7 @@ type ConfMgr struct {
 	PoolMaxDead int
 	// 热号到期前多少秒续领（领取叠加无损耗）
 	PoolRenewBeforeSec int
+	PoolHookTimeoutSec int
 	// 维护协程巡检间隔（秒）
 	PoolMaintainSec int
 
@@ -269,6 +270,7 @@ func Load() {
 		PoolMaxHot:         envInt("POOL_MAX_HOT", 3),
 		PoolMaxDead:        envInt("POOL_MAX_DEAD", 10),
 		PoolRenewBeforeSec: envInt("POOL_RENEW_BEFORE_SEC", 300),
+		PoolHookTimeoutSec: envInt("POOL_HOOK_TIMEOUT_SEC", 30),
 		PoolMaintainSec:    envInt("POOL_MAINTAIN_SEC", 60),
 
 		RetiredSources: envList("RETIRED_SOURCES", ""),
