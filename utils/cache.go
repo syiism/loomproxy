@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -33,6 +36,31 @@ type Cache struct {
 	redis    redis.UniversalClient
 	redisDB  int
 	useRedis bool
+
+	// 接口缓存的 Redis 那一段坏掉时，原来**一个字都不说**：`Set` 连返回的错误都没接，
+	// `Get` 把「连不上」和「没命中」回成同一个 (nil,false)（判据同 P56 那条「返回值两种含义」）。
+	// 症状是"缓存好像没在工作"却查不出为什么——所以这里只加两件东西：计数 + 状态翻转时出声。
+	rSet, rGet, rDel redisState
+}
+
+// redisState 一段 Redis 调用的健康状态：累计失败次数，且**只在坏↔好翻转时出声**。
+// 判据取自 P36/P48 那一条：热路径上每次失败都喊，会把真正该看的读数泡坏。
+type redisState struct {
+	fails atomic.Int64
+	bad   atomic.Bool
+}
+
+func (s *redisState) fail(kind string, err error) {
+	n := s.fails.Add(1)
+	if s.bad.CompareAndSwap(false, true) {
+		log.Printf("ERROR: 接口缓存的 Redis %s失败（累计第 %d 次，此后同一种只计数不出声）：%v", kind, n, err)
+	}
+}
+
+func (s *redisState) ok(kind string) {
+	if s.bad.CompareAndSwap(true, false) {
+		log.Printf("接口缓存的 Redis %s已恢复（此前累计失败 %d 次）", kind, s.fails.Load())
+	}
 }
 
 func NewCache(maxSize int, ttl time.Duration) *Cache {
@@ -81,11 +109,17 @@ func NewCacheWithRedis(maxSize int, ttl time.Duration) (*Cache, error) {
 func (c *Cache) Get(key string) (interface{}, bool) {
 	if c.useRedis {
 		val, err := c.redis.Get(context.Background(), key).Result()
-		if err == nil {
-			var result interface{}
-			if json.Unmarshal([]byte(val), &result) == nil {
-				return result, true
+		if err != nil {
+			// redis.Nil 是**正常未命中**，不许多出声；其余（连不上、超时、被拒）才是故障
+			if !errors.Is(err, redis.Nil) {
+				c.rGet.fail("读取", err)
 			}
+			return nil, false
+		}
+		c.rGet.ok("读取")
+		var result interface{}
+		if json.Unmarshal([]byte(val), &result) == nil {
+			return result, true
 		}
 		return nil, false
 	}
@@ -112,7 +146,11 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 func (c *Cache) Set(key string, value interface{}) {
 	if c.useRedis {
 		data, _ := json.Marshal(value)
-		c.redis.Set(context.Background(), key, data, c.ttl)
+		if err := c.redis.Set(context.Background(), key, data, c.ttl).Err(); err != nil {
+			c.rSet.fail("写入", err)
+			return
+		}
+		c.rSet.ok("写入")
 		return
 	}
 
@@ -146,7 +184,13 @@ func (c *Cache) Set(key string, value interface{}) {
 
 func (c *Cache) Del(key string) {
 	if c.useRedis {
-		c.redis.Del(context.Background(), key)
+		// 这一处比 Set 失败更要紧：Del 是**失效**通路。悄悄失败等于"撤销返回成功、缓存照样命中"
+		// （`utils/apikey.go` 的注释里警告过的就是这种形状），所以它单独计一份状态。
+		if err := c.redis.Del(context.Background(), key).Err(); err != nil {
+			c.rDel.fail("失效", err)
+			return
+		}
+		c.rDel.ok("失效")
 		return
 	}
 	c.mu.Lock()
