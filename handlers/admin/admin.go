@@ -118,9 +118,7 @@ func Stats(c *gin.Context) {
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
 		Where("roles.code = ?", "vip").Count(&vipCount)
 
-	loc := time.FixedZone("CST", 8*3600)
-	now := time.Now().In(loc)
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	startOfDay := utils.DayStart(1)
 	db.DB.Model(&models.User{}).Where("created_at >= ?", startOfDay).Count(&todayNew)
 
 	skipped, keys, windowSec := gate.DedupeStats()

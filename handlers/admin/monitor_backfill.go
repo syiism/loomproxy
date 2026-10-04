@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -13,6 +12,7 @@ import (
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // 回填一次的规模上限：明细表可能有几十万行，逐行反查+更新不能把请求线程占死。
@@ -53,8 +53,7 @@ func RunSubjectBackfill(days int) (BackfillSummary, error) {
 		summary.Days = BackfillDefaultDays
 		days = BackfillDefaultDays
 	}
-	from := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.Local).
-		AddDate(0, 0, -(days - 1))
+	from := utils.DayStart(days)
 
 	type row struct {
 		ID           uint

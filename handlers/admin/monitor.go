@@ -13,6 +13,7 @@ import (
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 type monitorRow struct {
@@ -179,7 +180,11 @@ const trendDays = 7
 
 // GetMonitorTrend 近 trendDays 天调用趋势：按天 × 数据源聚合 api_call_logs 明细。
 // 口径说明：api_call_stats 永久归档不带时间维度，按天趋势只能来自尚未清理的明细；
-// 日期分桶用服务器本地时区（与明细 created_at 口径一致）。
+// 日标序列（`days`）按**平台时区**算（`utils.DayStart`，与额度同一个日界），
+// 而**分桶**由库侧的 `date(created_at)` 判——生产 MySQL（`loc=Local`）与平台时区一致，
+// sqlite 会把带 +08 的串按 UTC 归一日界（实测：北京 10-05 04:40 存成 `2026-10-05T04:40:00+08:00`，
+// `date()` 得 `2026-10-04`），所以开发/测试库里北京 00:00–08:00 这段量会挂到前一天的柱子上。
+// 这一条登记在待办清单 P72，本轮只把口径写明，不改分桶方式。
 func GetMonitorTrend(c *gin.Context) {
 	// 日期函数按方言分流（postgres 没有 date(col) 函数，用 ::date 转换）
 	dateExpr := "date(created_at)"
@@ -187,9 +192,8 @@ func GetMonitorTrend(c *gin.Context) {
 		dateExpr = "created_at::date"
 	}
 
-	// 含今天在内的最近 trendDays 天，从最早一天零点起算（本地时区）
-	now := time.Now()
-	firstDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, -(trendDays - 1))
+	// 含今天在内的最近 trendDays 天，从最早一天零点起算（**平台时区**，与额度那一侧同一个日界）
+	firstDay := utils.DayStart(trendDays)
 
 	type row struct {
 		Day     string `json:"day"`

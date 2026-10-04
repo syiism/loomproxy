@@ -50,6 +50,7 @@ vet:
 	@$(MAKE) --no-print-directory settings-readers-check
 	@$(MAKE) --no-print-directory judgment-count-check
 	@$(MAKE) --no-print-directory doc-numbers-check
+	@$(MAKE) --no-print-directory tz-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -84,6 +85,11 @@ judgment-count-check:
 # 与 judgment-count-check 同一条判据，只是对象从判据页换成报告。
 doc-numbers-check:
 	@./scripts/check-doc-numbers.sh
+
+# 平台时区与日界只有一处定义（待办清单 P71）：出现 FixedZone / time.Local / 旧的 TZShanghai 调用即红。
+# 触发它的经验是本轮第十四遍数出来的七种写法——现网三种口径恰好重合，所以它不会自己报错。
+tz-check:
+	@./scripts/check-tz-single-source.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

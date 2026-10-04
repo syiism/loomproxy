@@ -16,6 +16,7 @@ import (
 	"loomproxy/base"
 	"loomproxy/db"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // ErrUnknownDim 维度键不在白名单内
@@ -99,10 +100,11 @@ func NormalizeDays(days int) int {
 	return days
 }
 
-// WindowStart 窗口起点：本地时区当日零点往前推 days-1 天
+// WindowStart 窗口起点：平台时区当日零点往前推 days-1 天。
+// 以前这里跟着**进程时区**算，而额度那一侧写死 +8——同一块面板上两个「今天」不是同一个日界；
+// 现在两边都走 utils.DayStart（待办清单 P71）。
 func WindowStart(days int) time.Time {
-	now := time.Now()
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, -(days - 1))
+	return utils.DayStart(days)
 }
 
 // ValidDim 维度键是否受支持

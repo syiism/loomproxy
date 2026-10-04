@@ -12,6 +12,7 @@ import (
 	"loomproxy/gate"
 	"loomproxy/handlers/auth"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 type InterfaceCost struct {
@@ -62,13 +63,9 @@ type DashboardResponse struct {
 }
 
 func nextResetTime() string {
-	loc := time.FixedZone("CST", 8*3600)
-	now := time.Now().In(loc)
-	next := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	if now.Hour() > 0 || now.Minute() > 0 || now.Second() > 0 {
-		next = next.Add(24 * time.Hour)
-	}
-	return next.Format("2006/1/2 15:04:05")
+	// 下一个平台时区零点：日界的算法在 utils.DayStart 那一处，这里取「今天零点 + 一天」。
+	// （写成 DayStart(2) 是错的——那个函数是**往前**推，得到的是昨天零点；用例把这条钉着。）
+	return utils.DayStart(1).Add(24 * time.Hour).Format("2006/1/2 15:04:05")
 }
 
 func RegisterRoutes(r *gin.Engine) {

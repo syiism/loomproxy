@@ -1,6 +1,7 @@
 package gate
 
-// 用量统计：口径一律「当日」= 北京时间零点起，**但管理员刷新过额度的用户从刷新时刻起算**
+// 用量统计：口径一律「当日」= 平台时区零点起（`TZ_OFFSET_HOURS`，默认 8），
+// **但管理员刷新过额度的用户从刷新时刻起算**
 // （起算点只有 UsageSince 一处定义）；数据取自 quota_usage_logs 流水表（group_code 列存数据源码）。
 
 import (
@@ -9,13 +10,13 @@ import (
 
 	"loomproxy/db"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
-// StartOfDay 北京时区当日零点（与 dashboard 的重置时间口径一致）
+// StartOfDay 当日零点——**只是转调 `utils.DayStart(1)`**：时区与日界的算法都在那一处，
+// 这里保留是因为它是额度口径的门面（`UsageSince` 用它，判定与读数都用它）。
 func StartOfDay() time.Time {
-	loc := time.FixedZone("CST", 8*3600)
-	now := time.Now().In(loc)
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	return utils.DayStart(1)
 }
 
 // UsageSince 这名用户的「当日用量」从哪一刻起算——**唯一的定义处**。

@@ -19,6 +19,7 @@ import (
 
 	"loomproxy/db"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // 内置场景。新增场景：加常量 + 在 targetValidated 中补充目标格式校验 + 业务侧接入 Check/Consume。
@@ -133,13 +134,6 @@ func maybeSweep() {
 	}
 }
 
-// beijingDayStart 与额度计费同口径：北京时间零点重置
-func beijingDayStart() time.Time {
-	loc := time.FixedZone("CST", 8*3600)
-	now := time.Now().In(loc)
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-}
-
 // Issue 生成并发送验证码。返回过期时间。发送失败不入库。
 func Issue(ip, scene, target string) (time.Time, error) {
 	if !builtinScenes[scene] {
@@ -154,7 +148,7 @@ func Issue(ip, scene, target string) (time.Time, error) {
 	}
 
 	now := time.Now()
-	dayStart := beijingDayStart()
+	dayStart := utils.DayStart(1)
 
 	// 限频三重：同目标冷却 / 同目标每日 / 同 IP 每日（按行统计，量小直查库）
 	var latest models.VerificationCode
