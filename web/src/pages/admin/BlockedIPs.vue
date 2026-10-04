@@ -68,6 +68,43 @@
         </table>
       </div>
     </div>
+
+    <!-- 账号侧登录尝试（待办清单 P40① 要的那份材料）：**只读观察，一行处置都不做**。
+         它存在的意义是把「一个账号被多少个不同出口试过」说出来——上面那道按 IP 的闸看不见这个形状
+         （现网 14 天：536 次失败来自 222 个 IP，单 IP 最多 14 次，全部低于阈值）。
+         刻意不写"疑似攻击"：一个用户连错三次与一个脚本各错一次，在这一列里长得一样，判定是人做的。 -->
+    <div class="mt-10">
+      <div class="flex items-baseline justify-between gap-3 mb-2">
+        <h2 class="text-sm font-semibold text-text">账号侧登录尝试（只读观察）</h2>
+        <button @click="loadAttempts" class="text-xs text-pale-blue-fg hover:opacity-70 transition-opacity" :disabled="attemptsLoading">刷新</button>
+      </div>
+      <p v-if="accounts.length === 0" class="text-sm text-text-muted">
+        当前没有登录尝试的记录。读数只反映这个进程（重启即清零），保留窗口是一小时。
+      </p>
+      <div v-else class="table-wrap overflow-x-auto">
+        <table class="table-base">
+          <thead>
+            <tr><th>登录标识</th><th>尝试</th><th>失败</th><th>不同 IP 数</th><th class="hidden md:table-cell">来源样本</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="a in accounts" :key="a.principal">
+              <td class="font-mono text-sm">{{ a.principal }}</td>
+              <td class="font-mono text-xs">{{ a.attempts }}</td>
+              <td class="font-mono text-xs">{{ a.fails }}</td>
+              <td>
+                <UiTag v-if="isMultiIp(a)" tone="yellow" :label="'多出口 ' + a.distinct_ips" />
+                <span v-else class="font-mono text-xs">{{ a.distinct_ips }}</span>
+              </td>
+              <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ (a.sample_ips || []).join(' ') }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-xs text-text-muted mt-2">
+        这一列不做任何处置：账号侧要不要独立闸门还没拍（待办清单 P40①），这里只把判定要用的材料摆出来。
+        「不同 IP 数」标黄只说"这个标识来自多个出口"，不说"有人在爆破"。
+      </p>
+    </div>
   </div>
 </template>
 
@@ -89,6 +126,16 @@ const form = ref({ ip: '', note: '' })
 const attempts = ref([])
 const attemptsLoading = ref(false)
 const attemptsError = ref('')
+// 账号侧观察与上面那份同一次请求带回（同一端点、同一个刷新按钮），但它**没有操作列**：只读
+const accounts = ref([])
+// 标黄阈值由后端下发（它复用「设备与密钥」那一页同一条 `suspect_distinct_ips` 定义）。
+// 这里不写死数字：改了设置而面板文案还指着旧数，就是自己长出第二份事实（待办清单 P46 的判据）。
+// 取不到时不标黄而不是猜一个默认值——宁可不标，也不标错。
+const accountsMeta = ref({})
+const isMultiIp = (a) => {
+  const n = Number(accountsMeta.value?.multi_ip_yellow)
+  return Number.isFinite(n) && n > 0 && Number(a.distinct_ips) >= n
+}
 
 // 锁定到期时间只到分钟：面板上要的是「还要等多久」，不是秒
 const fmtClock = (iso) => {
@@ -103,6 +150,8 @@ const loadAttempts = async () => {
   try {
     const data = await adminApi.listSecurityAttempts()
     attempts.value = (data && data.items) || []
+    accounts.value = (data && data.accounts) || []
+    accountsMeta.value = (data && data.accounts_meta) || {}
   } catch (e) {
     attemptsError.value = e.message
   }

@@ -83,6 +83,10 @@
   管理面可读可清：`GET /admin/security/attempts`（快照，锁定项排前）与 `POST /admin/security/attempts/reset`
   （按 IP 清锁与连击）——重启进程也会全清，所以这条端点的价值是把「为救一个 NAT 出口而重启」换成定向操作（待办清单 P40）。
   已知边界：不按账号、且自动拉黑只看数据面 403/429，**登录失败不喂给它**。
+  **账号侧的形状已经可观察、但仍然不管事**（待办清单 P40① 的准备）：`handlers/auth/account_watch.go` 按登录标识
+  记「尝试 / 失败 / 不同 IP 数」（内存、一小时、不入库、**不参与 `locked()` 判定**），经
+  `GET /admin/security/attempts` 的 `accounts` 出，面板「IP 拉黑」页有只读一节，标黄阈值由响应的
+  `accounts_meta.multi_ip_yellow` 下发（复用 `suspect_distinct_ips` 那一条定义）。**要不要据此锁人是没拍的那一步。**
 - 用户自助密钥（`lp_` 前缀）匹配时**注入归属身份**，计费/配额/监控/套餐门控随该用户生效；静态 env 键保持匿名语义。
 - 会话由 JWT 的 `jti` 对应 `auth_sessions`，无 `jti` 的旧 token 一律 401；禁用/删除用户与改密都吊销会话。
   **密钥是同一次处置的另一条通路，不会跟着会话走**：归属由 `utils.LookupApiKeyIdentity` 解析、

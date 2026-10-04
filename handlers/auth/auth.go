@@ -398,9 +398,15 @@ func Login(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "请输入用户名或邮箱")
 		return
 	}
+	// 账号侧观察用的标识：取提交进来的那一个（归一与截断在 `watchKey` 里，这里不加工）
+	principal := username
+	if principal == "" {
+		principal = email
+	}
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			loginAccountWatch.note(principal, ip, false)
 			loginLimiter.record(ip, false)
 			fail(c, http.StatusUnauthorized, "用户名或密码错误")
 			return
@@ -410,11 +416,15 @@ func Login(c *gin.Context) {
 	}
 
 	if user.Status != 1 {
+		// 只记观察、不喂限频器——这条分支本来就不进限频（禁用账号的失败不该把人锁在门外算别人的账），
+		// 记下来的理由是「一个被禁的账号还在被反复试」本身就是一条有用的读数
+		loginAccountWatch.note(principal, ip, false)
 		fail(c, http.StatusForbidden, "账号已被禁用")
 		return
 	}
 
 	if !user.CheckPassword(req.Password) {
+		loginAccountWatch.note(principal, ip, false)
 		loginLimiter.record(ip, false)
 		fail(c, http.StatusUnauthorized, "用户名或密码错误")
 		return
@@ -443,6 +453,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	loginAccountWatch.note(principal, ip, true)
 	loginLimiter.record(ip, true)
 	body := gin.H{
 		"token":      token,

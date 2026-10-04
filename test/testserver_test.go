@@ -106,6 +106,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 	// 登录/找回密码的按 IP 限频器同为进程级状态（全部用例共享 127.0.0.1），
 	// 逐用例清零，避免累计尝试次数触发锁定导致无关用例失败
 	auth.ResetAttemptLimitersForTest()
+	// 账号侧的登录尝试观察（只读）也是进程级状态，同样逐用例清零
+	auth.ResetLoginAccountWatchForTest()
 	srv := httptest.NewServer(app.CreateApp())
 	t.Cleanup(func() {
 		srv.Close()

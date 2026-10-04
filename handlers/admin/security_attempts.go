@@ -19,11 +19,24 @@ import (
 	"loomproxy/handlers/auth"
 )
 
-// ListSecurityAttempts GET /admin/security/attempts —— 登录与找回密码限频器的当前条目
+// ListSecurityAttempts GET /admin/security/attempts —— 登录与找回密码限频器的当前条目，
+// 外加一份**只读**的账号侧观察（`accounts`）。
+//
+// 为什么把两样东西放同一个端点：它们回答的是同一个问题的两半——
+// 「这个 IP 现在的闸门状态」与「哪些账号被试得多、来自多少个不同 IP」。
+// 后者是待办清单 P40① 唯一缺的数据（现网读数是 536 次失败/222 个 IP，按 IP 那道闸**分不出**
+// "很多人各输错几次"与"分布式慢速爆破"），而它刻意**不带任何处置**：账号侧要不要闸门还没拍，
+// 这里先把问句要的材料摆出来。
 func ListSecurityAttempts(c *gin.Context) {
 	auth.Ok(c, gin.H{
-		"items": auth.SecurityAttemptSnapshot(),
-		"note":  "限频状态只存于当前进程内存：重启即清零，不入库；清空这里不等于解除 IP 黑名单（那在 /admin/blocked-ips）",
+		"items":    auth.SecurityAttemptSnapshot(),
+		"accounts": auth.LoginAccountWatch(),
+		// 标黄阈值取**已有那一条定义**（`suspect_distinct_ips`：窗口内不同 IP 数达到它就算"分散"，只标红不处置）。
+		// 面板不许自己抄一个 5——那是 P46/P53 反复在防的「两处写同一份值」，本轮新写的这一列不能刚写就犯。
+		"accounts_meta": gin.H{"multi_ip_yellow": auth.SuspectDistinctIPs()},
+		"note": "限频状态只存于当前进程内存：重启即清零，不入库；清空这里不等于解除 IP 黑名单（那在 /admin/blocked-ips）。" +
+			"accounts 是**只读观察**：它不锁人、不减速、也不参与上面这些条目的判定——账号侧闸门还没拍（待办清单 P40①）。" +
+			"「失败多」不等于「被攻击」：一个正常用户连错三次和一个脚本各错一次在这一列里长得一样，判定要连同 distinct_ips 一起看。",
 	})
 }
 
