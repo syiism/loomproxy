@@ -298,7 +298,7 @@ func (r *Registry[T]) All() []T {
 	return result
 }
 
-// AllClasses 返回全部工厂（不含实例）
+// AllClasses 返回全部工厂（不含实例）。**顺序不定**（底层 sync.Map），要稳定序列走 AllSorted。
 func (r *Registry[T]) AllClasses() []func(*APIConfig) T {
 	var result []func(*APIConfig) T
 	r.store.Range(func(_, v interface{}) bool {
@@ -311,7 +311,7 @@ func (r *Registry[T]) AllClasses() []func(*APIConfig) T {
 	return result
 }
 
-// AllInstances 返回全部实例
+// AllInstances 返回全部实例。**顺序不定**（底层 sync.Map），要稳定序列走 AllSorted。
 func (r *Registry[T]) AllInstances() []T {
 	var result []T
 	r.store.Range(func(_, v interface{}) bool {
@@ -324,26 +324,50 @@ func (r *Registry[T]) AllInstances() []T {
 	return result
 }
 
-// AllSorted 返回按优先级降序的全部处理器
+// namedInfo 是「注册表里的一项 + 它的键名」。sync.Map 的键就是注册名，
+// 而 HandlerInfo 自己没有名字字段，所以要连键一起取出来才能按名字定序。
+type namedInfo[T any] struct {
+	name string
+	info *HandlerInfo[T]
+}
+
+// AllSorted 返回按优先级降序的全部处理器；**同优先级按注册名升序**。
+//
+// 二级键不是装饰：底层是 sync.Map，`Range` 的遍历顺序按桶散列、不保证稳定，
+// 只比 Priority 的话，同一份注册表两次调用会把同优先级的项排出不同顺序——
+// 而调用方看不出这是"顺序"问题（它看到的是一份每次都略微不同的列表）。
+// 本仓为同一个形状付过学费：管理面对聚合列排序不带二级键时，翻页会重行/漏行（待办清单 P45）。
+// 需要稳定输出的出口都走这里；`All`/`AllClasses`/`AllInstances`/`FilterByMetadata` 是**顺序不定**的。
 func (r *Registry[T]) AllSorted() []T {
-	var infos []*HandlerInfo[T]
-	r.store.Range(func(_, v interface{}) bool {
-		infos = append(infos, v.(*HandlerInfo[T]))
+	var items []namedInfo[T]
+	r.store.Range(func(k, v interface{}) bool {
+		name, ok := k.(string)
+		if !ok {
+			return true
+		}
+		info, ok := v.(*HandlerInfo[T])
+		if !ok {
+			return true
+		}
+		items = append(items, namedInfo[T]{name: name, info: info})
 		return true
 	})
-	sort.Slice(infos, func(i, j int) bool {
-		return infos[i].Priority > infos[j].Priority
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].info.Priority != items[j].info.Priority {
+			return items[i].info.Priority > items[j].info.Priority
+		}
+		return items[i].name < items[j].name
 	})
 	var result []T
-	for _, info := range infos {
-		if h, ok := instantiate(info, nil); ok {
+	for _, it := range items {
+		if h, ok := instantiate(it.info, nil); ok {
 			result = append(result, h)
 		}
 	}
 	return result
 }
 
-// FilterByMetadata 按元数据键值过滤
+// FilterByMetadata 按元数据键值过滤。**顺序不定**（底层 sync.Map），调用方要下发就得自己再定序。
 func (r *Registry[T]) FilterByMetadata(key string, value interface{}) []T {
 	var result []T
 	r.store.Range(func(_, v interface{}) bool {
