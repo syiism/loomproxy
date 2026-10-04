@@ -1126,7 +1126,9 @@ func planDataSourceName(dsID uint) (string, bool) {
 	return ds.Name, true
 }
 
-// AddPlanDataSource 授予套餐一个数据源（= 保证有一行 limit=-1 的限额）
+// AddPlanDataSource 授予套餐一个数据源（= 保证有一行 scope=source 的限额；
+// 限额取该套餐的默认档 `db.DefaultPerSourceLimit(plan.Code)`，**不是**固定的 -1——
+// free 是 100、自定义套餐才是 -1。响应里报的是读回来的生效值，不是这里的字面量。
 func AddPlanDataSource(c *gin.Context) {
 	var plan models.QuotaPlan
 	if err := db.DB.First(&plan, c.Param("id")).Error; err != nil {
@@ -1155,7 +1157,17 @@ func AddPlanDataSource(c *gin.Context) {
 		return
 	}
 	catalog.InvalidateDatasourcesCache()
-	auth.Ok(c, gin.H{"plan_id": plan.ID, "data_source_id": req.DataSourceID, "limit": -1, "period": "day"})
+	// 响应里必须是**库里那行真正的值**：过去这里回的是字面量 `limit:-1, period:"day"`，
+	// 而 grant 写进去的是该套餐的默认档（free=100）——于是调用方读到一份与库里不同的事实，
+	// 面板不接这个响应（它走 limits 接口）掩盖了它，脚本与直连 API 却照单全收（待办清单 P48 同一族）。
+	var row models.QuotaLimit
+	if err := db.DB.Where("plan_id = ? AND scope = ? AND target = ?", plan.ID, "source", name).
+		First(&row).Error; err != nil {
+		log.Printf("ERROR: 授权已写入但读回生效值失败（plan=%d source=%s）：%v", plan.ID, name, err)
+		auth.Fail(c, http.StatusInternalServerError, "授权已写入，但读不回生效的限额值")
+		return
+	}
+	auth.Ok(c, gin.H{"plan_id": plan.ID, "data_source_id": req.DataSourceID, "limit": row.Limit, "period": row.Period})
 }
 
 // BatchAddPlanDataSources 批量授权（跳过不存在的源与已授权的源）
