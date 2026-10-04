@@ -69,6 +69,10 @@
   + N 个冷备，临期续领、用尽换号、错误驱动扩容；`spread` = 用量摊薄型，框架**只调 `Create`**（不 Claim
   不探活），把请求轮询到全部可用号上，失效走 `Pool.Cooldown` 的临时冷却而不是判死（P5）。
   给「不因墙钟过期、燃烧看请求量」的号套默认形态，等于把所有请求打到同一台设备上。
+- **两条后台路径的 panic 兜底 + 临界区一律 defer 解锁**（待办清单 P77/P78）：`Start`/`Maintain` 各
+  `defer p.guardPanic(...)`（它们直调源写的 `Provider.Create/Refresh/Claim`，而这里没有 gin Recovery），
+  被它们走到的临界区一律 `p.locked(fn)`；启动装填 `initLedger` **全程持锁**——`go pool.StartAll()` 排在
+  `http.Server` 之前，端口开着而燃烧型还在逐行探活，不持锁等于让并发 `Acquire` 读半装填的切片。
 - 嵌套凭证（会话 cookie 一类）走 `Device.Payload` / `pool_devices.payload`，框架不解析、只搬运
   （回写用 `Pool.UpdatePayload`）；`Attrs` 是扁平 `map[string]string`——**塞嵌套在 Go 里就编译不过**，
   真实的坏形态是这一列被库外面改坏（手填 SQL、截断文本），那会表现为"号在库里但凭证为空"；
