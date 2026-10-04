@@ -23,8 +23,7 @@ func ListUsageLogs(c *gin.Context) {
 
 	q := db.DB.Model(&models.QuotaUsageLog{})
 	if username := c.Query("username"); username != "" {
-		// 同上：转义 + ESCAPE 子句（SQLite 的 LIKE 默认没有转义字符）
-		q = q.Joins("JOIN users ON users.id = quota_usage_logs.user_id AND users.username LIKE ? ESCAPE '\\'", "%"+escapeLike(username)+"%")
+		q = q.Joins("JOIN users ON users.id = quota_usage_logs.user_id AND "+likeESCAPE("users.username"), "%"+escapeLike(username)+"%")
 	}
 	if group := c.Query("group"); group != "" {
 		q = q.Where("group_code = ?", group)

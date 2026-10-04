@@ -56,8 +56,7 @@ func ListDeviceActivity(c *gin.Context) {
 	q := db.DB.Model(&models.User{})
 	if keyword != "" {
 		like := "%" + escapeLike(keyword) + "%"
-		// 转义之外还必须带 ESCAPE 子句：SQLite 的 LIKE 没有默认转义字符（同 admin.go 那处修复）
-		q = q.Where("username LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\'", like, like, like)
+		q = q.Where(likeESCAPE("username")+" OR "+likeESCAPE("email")+" OR "+likeESCAPE("nickname"), like, like, like)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

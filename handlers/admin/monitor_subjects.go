@@ -12,10 +12,29 @@ import (
 	"loomproxy/handlers/subjectrank"
 )
 
+// likeEscapeChar 是 LIKE 的转义字符。**刻意选 '!' 而不是反斜杠**（实测两方言，见待办清单 P43 那条判据）：
+//
+//	mysql/mariadb：  ... ESCAPE '\'   → ERROR 1064（字符串字面量里的 '\' 吞掉收尾引号）
+//	postgres       ： 标准模式不处理反斜杠，'\' 是两个字符 → ESCAPE 参数不是单字符
+//	sqlite         ： 接受 '\\' 但报错 "ESCAPE expression must be a single character"
+//
+// 也就是说：**不存在一种反斜杠写法能同时在三家成立**，换字符是唯一解。
+// '!' 自身必须一起转义，否则用户搜「!%」时会把 '%' 转义掉，语义就变了。
+const likeEscapeChar = '!'
+
+// likeESCAPE 生成「列 LIKE ? ESCAPE '!'」片段：转义符只在这里出现一次，
+// 各调用点不再手抄 ESCAPE 子句——手抄的下一句就是「MySQL 报 1064、SQLite 绿着过」。
+func likeESCAPE(column string) string {
+	return column + " LIKE ? ESCAPE '" + string(likeEscapeChar) + "'"
+}
+
 // escapeLike 转义 LIKE 模式里的通配符：用户搜「100%」不该把全表匹配进来。
-// 转义字符用反斜杠（SQLite/MySQL/PostgreSQL 的 ESCAPE '\' 语义一致）
 func escapeLike(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	r := strings.NewReplacer(
+		string(likeEscapeChar), string(likeEscapeChar)+string(likeEscapeChar),
+		`%`, string(likeEscapeChar)+`%`,
+		`_`, string(likeEscapeChar)+`_`,
+	)
 	return r.Replace(s)
 }
 
