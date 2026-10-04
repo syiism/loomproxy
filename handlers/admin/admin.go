@@ -34,6 +34,7 @@ func RegisterRoutes(r *gin.Engine) {
 		g.POST("/users/:id/restore", RestoreUser)
 		g.POST("/users/:id/roles", UpdateUserRoles)
 		g.POST("/users/:id/reset-password", ResetUserPassword)
+		g.POST("/users/:id/refresh-quota", RefreshUserQuota)
 		g.GET("/roles", ListRoles)
 		g.POST("/roles", CreateRole)
 		g.PATCH("/roles/:id", UpdateRole)

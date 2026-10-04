@@ -22,6 +22,13 @@ type User struct {
 	LastLoginAt       *time.Time `json:"last_login_at"`
 	UsernameChangedAt *time.Time `json:"username_changed_at"` // 上次修改用户名时间；NULL=从未修改（用户名每 30 天限改一次）
 	TokenExpireHours  *int       `json:"token_expire_hours"`  // 个人登录 token 有效时长（小时）；NULL=跟随系统设置，对下次及以后登录生效
+	// QuotaResetAt 单日额度的起算点覆盖（管理员「刷新额度」写入，待办清单 P41）。
+	// **NULL = 从未刷新**，起算点就是当日零点；非空时取「零点」与「此刻」里较晚的那个，
+	// 于是刷新之后的消耗重新计，而零点之后它自然失效（新的一天本来就从零开始）。
+	// 刻意不删也不冲正 quota_usage_logs：那张表是只追加的流水，
+	// 删行等于毁掉「今天到底用了多少」的证据，写负数行等于在总和里掺假账——
+	// 需要改的是**起算点**这一份事实，而且它只有一处定义（gate.UsageSince）。
+	QuotaResetAt *time.Time `json:"quota_reset_at"`
 	// ContentConsent 是否同意网关留存「搜索词与阅读记录」（监控明细的内容维度）。
 	// **NULL = 从未表态 = 同意**：默认档写在这里，升级前的存量用户读出来就是同意，
 	// 不需要一次回填写数据（那是生产库写操作）。显式 false 才是不同意。

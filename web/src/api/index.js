@@ -40,6 +40,8 @@ export const adminApi = {
   restoreUser: (id) => request('/admin/users/' + id + '/restore', { method: 'POST' }),
   updateUserRoles: (id, roleCode) => request('/admin/users/' + id + '/roles', { method: 'POST', body: { role_code: roleCode } }),
   resetUserPassword: (id, newPassword) => request('/admin/users/' + id + '/reset-password', { method: 'POST', body: { new_password: newPassword } }),
+  // 单日额度刷新：把该用户的用量起算点推到此刻（流水不删，待办清单 P41）
+  refreshUserQuota: (id) => request('/admin/users/' + id + '/refresh-quota', { method: 'POST' }),
   updateUserPlan: (id, planId) => request('/admin/users/' + id + '/plan', { method: 'PUT', body: { plan_id: planId } }),
   getUserQuota: (id) => request('/admin/users/' + id + '/quota'),
   updateUserQuota: (id, overrides) => request('/admin/users/' + id + '/quota', { method: 'PUT', body: { overrides } }),

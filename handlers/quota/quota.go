@@ -193,7 +193,7 @@ func Dashboard(c *gin.Context) {
 			used = gate.UsedTodayAll(ds.Name)
 			activeUsers = gate.ActiveUsersToday(ds.Name)
 		} else {
-			used = gate.UsedToday(uid, ds.Name)
+			used = gate.UsedToday(&user, ds.Name)
 		}
 
 		remaining := quota

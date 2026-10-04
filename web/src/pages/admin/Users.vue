@@ -215,6 +215,16 @@
           <span class="ml-2 text-xs">覆盖值在计划额度上增减（可为负），留空或 0 表示不调整；
             标「无权限」的行是该套餐没授权的源（授权=限额行，P34），改它不会让用户能用上这个源</span>
           <router-link to="/admin/quotas" class="ml-2 text-xs text-text-muted hover:text-text transition-colors">计划额度本身在「额度 · 套餐」页改 ↗</router-link>
+          <!-- 单日额度刷新：动的是用量**起算点**，不是流水也不是限额（待办清单 P41）。
+               起算点必须显示出来，否则「已用 0」会被读成「今天还没用」；管理员一眼看到它是几点。 -->
+          <div class="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
+            <span class="text-xs text-text-muted font-mono">
+              当日已用自 {{ fmtDate(quotaUser.usage_since) }} 起算
+              <span v-if="quotaUser.quota_reset_at">（{{ fmtDate(quotaUser.quota_reset_at) }} 刷新过）</span>
+              <span v-else>（零点口径，未刷新过）</span>
+            </span>
+            <button @click="refreshQuota" class="btn-ghost btn-sm self-start sm:self-auto whitespace-nowrap" :disabled="submitting">刷新额度</button>
+          </div>
         </div>
         <table class="table-base w-full">
           <thead>
@@ -480,6 +490,25 @@ const confirmRestore = async (u) => {
 const fmtQuota = (n) => {
   if (n < 0) return '不限'
   return String(n)
+}
+
+// 刷新单日额度：确认后重开弹窗，让「已用」列与起算点一起跟着新读数变。
+// 提示里带上「刷掉了多少」——只说「已刷新」不说明刚才那些消耗去哪了。
+const refreshQuota = async () => {
+  if (submitting.value || !quotaUser.value) return
+  const uid = quotaUser.value.id
+  if (!uid) { toast('拿不到用户 ID，请关闭后重开额度弹窗', 'error'); return }
+  submitting.value = true
+  try {
+    const r = await adminApi.refreshUserQuota(uid)
+    toast('已刷新：' + (r && r.used_before != null ? r.used_before : '?') + ' 点当日消耗不再计入，起算点改为 '
+      + fmtDate(r && r.usage_since) + '（流水未删）', 'success')
+    submitting.value = false
+    await openQuota(quotaUser.value)
+  } catch (e) {
+    submitting.value = false
+    toast(e.message, 'error')
+  }
 }
 
 const openQuota = async (u) => {

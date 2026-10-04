@@ -170,7 +170,7 @@ func BillingMiddleware(sourceName, action string) gin.HandlerFunc {
 		plan := ResolvePlan(&user)
 		limit := EffectiveSourceLimit(&user, sourceName, PlanSourceLimits(plan.ID))
 		if limit >= 0 {
-			used := UsedToday(user.ID, sourceName)
+			used := UsedToday(&user, sourceName)
 			if used+cost.Cost > limit {
 				c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 					"code": conf.Config.ErrorCode,
@@ -224,7 +224,7 @@ func AggregateTargetVerdict(user *models.User, sourceName, action string) (allow
 	}
 	plan := ResolvePlan(user)
 	limit := EffectiveSourceLimit(user, sourceName, PlanSourceLimits(plan.ID))
-	if limit >= 0 && UsedToday(user.ID, sourceName)+stored.Cost > limit {
+	if limit >= 0 && UsedToday(user, sourceName)+stored.Cost > limit {
 		return false, stored.Cost, "limit_exceeded"
 	}
 	return true, stored.Cost, ""

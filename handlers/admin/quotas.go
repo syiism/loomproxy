@@ -2,8 +2,10 @@ package admin
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -434,7 +436,7 @@ func GetUserQuota(c *gin.Context) {
 			v := l
 			item.UserLimit = &v
 		}
-		item.Used = gate.UsedToday(user.ID, ds.Name)
+		item.Used = gate.UsedToday(&user, ds.Name)
 		// 生效额度 = 计划额度 + 用户覆盖（覆盖为空视为 0，可加可减，下限 0；
 		// 计划额度为负（不限）时覆盖不生效，仍是不限）。
 		// **未授权的源不参与这条算式**：访问控制（order 400）先于计费（500），
@@ -465,7 +467,50 @@ func GetUserQuota(c *gin.Context) {
 		"username":  user.Username,
 		"plan_name": planName,
 		"plan_code": planCode,
-		"items":     items,
+		// 起算点与刷新时刻一起下发：面板的「已用」是按它算的，不带上这两个值，
+		// 刷新过的用户就会读成「今天还没用」而不是「今天 13:40 之后没用」
+		"quota_reset_at": user.QuotaResetAt,
+		"usage_since":    gate.UsageSince(&user),
+		"items":          items,
+	})
+}
+
+// RefreshUserQuota 手动刷新某用户的单日额度（待办清单 P41）：把用量起算点推到此刻。
+//
+// 刻意**不删也不冲正** quota_usage_logs：那张表是只追加的账本，删行等于毁掉
+// 「今天到底用了多少」的证据，写负数行等于在总和里掺假账。要改的是起算点这一份事实，
+// 而它只有 gate.UsageSince 一处定义，所以判定与读数会一起跟着走。
+// 过了零点它自然失效（新的一天本来就从零开始），不需要任何定时任务去抹掉这个水印。
+//
+// 可以反复点，一次点击等于再给一天的量——这是「管理员手工放行」本来的语义。
+// 代价是单日额度对这名用户暂时不构成约束，所以每次都在服务端留一行 journal：
+// 谁刷的、刷掉了多少已用量。事后要回答「今天这人到底用了多少」，流水里查得到。
+func RefreshUserQuota(c *gin.Context) {
+	id := c.Param("id")
+	var user models.User
+	if err := db.DB.Preload("Roles").First(&user, id).Error; err != nil {
+		auth.Fail(c, http.StatusNotFound, "用户不存在")
+		return
+	}
+
+	before := gate.UsedTodayAllSources(&user)
+	now := time.Now()
+	if err := db.DB.Model(&models.User{}).Where(map[string]interface{}{"id": user.ID}).
+		Update("quota_reset_at", now).Error; err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "刷新失败")
+		return
+	}
+
+	actor, _ := c.Get("username")
+	log.Printf("ADMIN: 刷新单日额度 user=%s operator=%v 刷前当日已用=%d 新起点=%s（流水未删）",
+		user.Username, actor, before, now.Format("2006-01-02 15:04:05"))
+
+	auth.Ok(c, gin.H{
+		"user_id":        user.ID,
+		"username":       user.Username,
+		"quota_reset_at": now,
+		"used_before":    before,
+		"usage_since":    gate.UsageSince(&user),
 	})
 }
 
