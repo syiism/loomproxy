@@ -90,7 +90,8 @@
   **账号侧的形状已经可观察、但仍然不管事**（待办清单 P40① 的准备）：`handlers/auth/account_watch.go` 按登录标识
   记「尝试 / 失败 / 不同 IP 数」（内存、一小时、不入库、**不参与 `locked()` 判定**），经
   `GET /admin/security/attempts` 的 `accounts` 出，面板「IP 拉黑」页有只读一节，标黄阈值由响应的
-  `accounts_meta.multi_ip_yellow` 下发（复用 `suspect_distinct_ips` 那一条定义）。**要不要据此锁人是没拍的那一步。**
+  `accounts_meta.multi_ip_yellow` 下发（复用 `suspect_distinct_ips` 那一条定义）；那一节还渲染
+  `first_seen`/`last_seen` 两个时刻（**跨度**才是"慢速试"唯一看得出的形状，P66）。**要不要据此锁人是没拍的那一步。**
 - 用户自助密钥（`lp_` 前缀）匹配时**注入归属身份**，计费/配额/监控/套餐门控随该用户生效；静态 env 键保持匿名语义。
 - 会话由 JWT 的 `jti` 对应 `auth_sessions`，无 `jti` 的旧 token 一律 401；**会话行就是鉴权的执行点**
   （每请求 `db.ValidateSession` 查 `revoked_at`），所以"吊销没做成"等于那个人还能用。
