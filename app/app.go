@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -293,7 +294,7 @@ func handleError(c *gin.Context, err error) {
 		return
 	}
 
-	log.Printf("ERROR: %v", err)
+	log.Printf("ERROR: %s", scrubQueryForLog(err.Error()))
 
 	if ue, ok := base.IsUpstreamError(err); ok {
 		switch ue.StatusCode {
@@ -369,9 +370,25 @@ func handleError(c *gin.Context, err error) {
 	})
 }
 
+// scrubQueryForLog 把错误文本里每个 URL 的**查询串**换成占位，保留协议+域名+路径。
+//
+// 为什么服务端日志也要洗：`sanitizeUpstreamMsg` 只管对外那一句，注释里写着"完整错误已由 handleError
+// 记入服务端日志"——而传输层错误的原文必带完整请求 URL，**Legado 这一族的查询串里就是用户读什么**：
+// 搜索词（uxx 的 `?wd=重生高考前99天`）、书目标识、章节标识。那些字节进 journald 之后，
+// §11 的承诺就不成立了：`content_consent`（P37）关不掉进程日志，`MONITOR_RETENTION_DAYS` 也不轮转它，
+// 面板上按"留存已关"筛掉的人，日志里还留着他们的搜索词（待办清单 P92，现网 14 天实测到 79 行）。
+//
+// 域名与路径要留着：那是排障真正要看的部分（打到哪个站、哪个接口），而查询串对排障几乎没用。
+func scrubQueryForLog(msg string) string {
+	return urlWithQueryRe.ReplaceAllString(msg, "${1}?<查询串已隐去>")
+}
+
+// 只吃 URL 的 query 部分：字符类里排除引号、空白与右尖括号，正好停在 Go 的 `Get "…": error` 收尾引号前
+var urlWithQueryRe = regexp.MustCompile(`(?i)(https?://[^\s"'<>?]+)\?[^\s"'<>]*`)
+
 // sanitizeUpstreamMsg 对外文案脱敏：上游错误信息常内嵌完整请求 URL（签名站会带上
 // app_key/device_sn/sig 一类参数，也暴露自家上游域名），出现 URL 一律换成通用提示。
-// 完整错误已由 handleError 记入服务端日志，这里只影响下游看到什么。
+// 服务端日志侧的另一半在 `scrubQueryForLog`——两者判据不同，别合并成一份。
 func sanitizeUpstreamMsg(msg string) string {
 	if strings.Contains(msg, "://") {
 		return "上游请求失败，请稍后重试"

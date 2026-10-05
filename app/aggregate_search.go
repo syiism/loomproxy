@@ -12,6 +12,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -230,7 +231,7 @@ func runAggregateTarget(c *gin.Context, name, action string, uid uint, caller *m
 	defer cancel()
 	result, callErr := callSourceHandler(ctx, handler, params)
 	if callErr != nil {
-		log.Printf("聚合搜索目标源失败: source=%s action=%s err=%v", name, action, callErr)
+		log.Printf("聚合搜索目标源失败: source=%s action=%s err=%s", name, action, scrubQueryForLog(callErr.Error()))
 		if errors.Is(callErr, errAggregatePanic) {
 			return nil, aggInternalFailure, callErr // 源自己崩了：与「上游没回」分开报，两者排查方向不同
 		}
@@ -250,7 +251,7 @@ func runAggregateTarget(c *gin.Context, name, action string, uid uint, caller *m
 func callSourceHandler(ctx context.Context, handler base.Handler, params map[string]interface{}) (result interface{}, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("聚合搜索目标源 panic: %v", r)
+			log.Printf("聚合搜索目标源 panic: %s", scrubQueryForLog(fmt.Sprint(r)))
 			result, err = nil, errAggregatePanic
 		}
 	}()
