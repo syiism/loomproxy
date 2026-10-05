@@ -110,7 +110,7 @@ func observeChapterList(source string, subj *base.CallSubject, items []ChapterIt
 	}
 	subj.ResultCount = len(items)
 	for _, it := range items {
-		base.RememberChapter(source, it.ItemId, it.Title)
+		base.RememberChapter(source, subj.BookKey, it.ItemId, it.Title)
 	}
 }
 
@@ -168,7 +168,7 @@ func observeLooseMap(source string, subj *base.CallSubject, m map[string]interfa
 			if item == nil {
 				continue
 			}
-			base.RememberChapter(source,
+			base.RememberChapter(source, subj.BookKey,
 				base.ParamString(item, "itemId", "u", "url"),
 				base.ParamString(item, "title", "n", "name"))
 		}
@@ -233,8 +233,9 @@ func backfillFromCache(source string, subj *base.CallSubject) {
 			subj.BookName = name
 		}
 	}
-	if subj.ChapterTitle == "" && subj.ChapterKey != "" {
-		subj.ChapterTitle = base.LookupChapter(source, subj.ChapterKey)
+	// 章名必须按（书, 章）反查：章节标识多数只书内唯一，少一段就是拿别本书的标题填进来
+	if subj.ChapterTitle == "" && subj.ChapterKey != "" && subj.BookKey != "" {
+		subj.ChapterTitle = base.LookupChapter(source, subj.BookKey, subj.ChapterKey)
 	}
 }
 

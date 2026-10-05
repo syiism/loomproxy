@@ -44,7 +44,8 @@ func TestBackfillTickFillsMissingNames(t *testing.T) {
 	base.ResetMetrics()
 
 	base.RememberBook("fake_a", "bk-loop", "回填循环测试书", base.MediaNovel)
-	base.RememberChapter("fake_a", "ch-loop", "回填循环测试章")
+	// 章名的键带书标识（待办清单 P84），登记时必须与明细行的 book_ident 同一本书
+	base.RememberChapter("fake_a", "bk-loop", "ch-loop", "回填循环测试章")
 	insertIdentRow(t, "fake_a", "bk-loop", "", "ch-loop", "")
 	insertIdentRow(t, "fake_a", "bk-loop", "", "ch-loop", "")
 

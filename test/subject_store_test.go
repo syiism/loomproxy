@@ -26,8 +26,8 @@ func (f *fakeSubjectStore) key(source, ident string) string { return source + "|
 func (f *fakeSubjectStore) SaveBook(source, ident, name, media string) {
 	f.books[f.key(source, ident)] = [2]string{name, media}
 }
-func (f *fakeSubjectStore) SaveChapter(source, ident, title string) {
-	f.chapters[f.key(source, ident)] = title
+func (f *fakeSubjectStore) SaveChapter(source, bookIdent, ident, title string) {
+	f.chapters[f.key(source, bookIdent+"|"+ident)] = title
 }
 func (f *fakeSubjectStore) LoadBook(source, ident string) (string, string, bool) {
 	v, ok := f.books[f.key(source, ident)]
@@ -36,8 +36,8 @@ func (f *fakeSubjectStore) LoadBook(source, ident string) (string, string, bool)
 	}
 	return v[0], v[1], true
 }
-func (f *fakeSubjectStore) LoadChapter(source, ident string) (string, bool) {
-	v, ok := f.chapters[f.key(source, ident)]
+func (f *fakeSubjectStore) LoadChapter(source, bookIdent, ident string) (string, bool) {
+	v, ok := f.chapters[f.key(source, bookIdent+"|"+ident)]
 	return v, ok
 }
 

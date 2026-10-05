@@ -52,8 +52,12 @@ type redisSubjectStore struct {
 func subjectBookKey(source, ident string) string {
 	return subjectKeyPrefix + "book:" + source + "|" + ident
 }
-func subjectChapterKey(source, ident string) string {
-	return subjectKeyPrefix + "chapter:" + source + "|" + ident
+func subjectChapterKey(source, bookIdent, ident string) string {
+	if bookIdent == "" || ident == "" {
+		return ""
+	}
+	// 与 base.chapterIdentKey 同形：章节标识多数只书内唯一，键必须带书（待办清单 P84）
+	return subjectKeyPrefix + "chapter:" + source + "|" + bookIdent + "|" + ident
 }
 
 // newRedisSubjectStore 尝试接入 Redis：未启用或连不上返回 false（调用方保持纯内存行为）
@@ -169,8 +173,8 @@ func (s *redisSubjectStore) SaveBook(source, ident, name, media string) {
 	s.enqueue(subjectBookKey(source, ident), name+"\x00"+media)
 }
 
-func (s *redisSubjectStore) SaveChapter(source, ident, title string) {
-	s.enqueue(subjectChapterKey(source, ident), title)
+func (s *redisSubjectStore) SaveChapter(source, bookIdent, ident, title string) {
+	s.enqueue(subjectChapterKey(source, bookIdent, ident), title)
 }
 
 func (s *redisSubjectStore) get(key string) (string, bool) {
@@ -195,8 +199,8 @@ func (s *redisSubjectStore) LoadBook(source, ident string) (string, string, bool
 	return name, media, name != "" || media != ""
 }
 
-func (s *redisSubjectStore) LoadChapter(source, ident string) (string, bool) {
-	v, ok := s.get(subjectChapterKey(source, ident))
+func (s *redisSubjectStore) LoadChapter(source, bookIdent, ident string) (string, bool) {
+	v, ok := s.get(subjectChapterKey(source, bookIdent, ident))
 	if !ok {
 		return "", false
 	}

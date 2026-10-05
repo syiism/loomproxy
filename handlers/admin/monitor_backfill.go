@@ -84,7 +84,7 @@ func RunSubjectBackfill(days int) (BackfillSummary, error) {
 			}
 		}
 		if r.ChapterIdent != "" {
-			if title := base.LookupChapter(r.Source, r.ChapterIdent); title != "" {
+			if title := base.LookupChapter(r.Source, r.BookIdent, r.ChapterIdent); title != "" {
 				k := key{r.Source, r.ChapterIdent, title}
 				chapterIDs[k] = append(chapterIDs[k], r.ID)
 			}

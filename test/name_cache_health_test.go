@@ -15,11 +15,11 @@ import (
 // healthStore 只提供契约要求的四个方法 + PersistHealth，数字是喂给断言的已知值
 type healthStore struct{ queued, dropped, failed int64 }
 
-func (healthStore) SaveBook(source, ident, name, media string)           {}
-func (healthStore) SaveChapter(source, ident, title string)              {}
-func (healthStore) LoadBook(source, ident string) (string, string, bool) { return "", "", false }
-func (healthStore) LoadChapter(source, ident string) (string, bool)      { return "", false }
-func (h healthStore) PersistHealth() (int64, int64, int64)               { return h.queued, h.dropped, h.failed }
+func (healthStore) SaveBook(source, ident, name, media string)                 {}
+func (healthStore) SaveChapter(source, bookIdent, ident, title string)         {}
+func (healthStore) LoadBook(source, ident string) (string, string, bool)       { return "", "", false }
+func (healthStore) LoadChapter(source, bookIdent, ident string) (string, bool) { return "", false }
+func (h healthStore) PersistHealth() (int64, int64, int64)                     { return h.queued, h.dropped, h.failed }
 
 type nameCacheResp struct {
 	NameCache struct {

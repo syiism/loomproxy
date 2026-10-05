@@ -170,6 +170,14 @@ var (
 	chapterNameCache = newNameCache()
 )
 
+// chapterIdentKey 是章节名的键：在 identKey 之上再多一段书标识（理由见 RememberChapter）。
+func chapterIdentKey(source, bookIdent, ident string) string {
+	if bookIdent == "" || ident == "" {
+		return ""
+	}
+	return source + "|" + bookIdent + "|" + ident
+}
+
 func identKey(source, ident string) string {
 	if ident == "" {
 		return ""
@@ -185,9 +193,10 @@ func identKey(source, ident string) string {
 // 取不到就当没命中——名称留空是合法状态，猜一个才是错。
 type SubjectStore interface {
 	SaveBook(source, ident, name, media string)
-	SaveChapter(source, ident, title string)
+	// 章节两式都带书标识：章节标识在多数上游只在**书内**唯一（见 base.RememberChapter）
+	SaveChapter(source, bookIdent, ident, title string)
 	LoadBook(source, ident string) (name, media string, ok bool)
-	LoadChapter(source, ident string) (title string, ok bool)
+	LoadChapter(source, bookIdent, ident string) (title string, ok bool)
 }
 
 var (
@@ -255,28 +264,39 @@ func LookupBook(source, ident string) (name, media string) {
 	return "", ""
 }
 
-// RememberChapter 登记「章节标识 → 章节标题」
-func RememberChapter(source, ident, title string) {
-	if ident == "" || title == "" {
+// RememberChapter 登记「（书, 章节）标识 → 章节标题」——**键必须带书维度**。
+//
+// 少这一维不是理论风险：现网实测 `(source, 章节标识)` 有 123 组跨书重复，
+// uxx 的标识 "0" 出现在 96 本书下、对应 35 个不同标题（待办清单 P84）。
+// 键不含书时，后登记的那本会覆盖前一本，于是章节榜会显示**另一本书**的标题，
+// 而监控回填还会把那个错标题写进别的书的明细行。
+// 标识是否全局唯一由各上游决定（章节 URL 唯一、章号不唯一），**框架不去猜**：
+// 没有书标识就整条不登记、不反查——名称留空是合法状态，猜一个才是错。
+func RememberChapter(source, bookIdent, ident, title string) {
+	key := chapterIdentKey(source, bookIdent, ident)
+	if key == "" || title == "" {
 		return
 	}
-	chapterNameCache.put(identKey(source, ident), title, "")
+	chapterNameCache.put(key, title, "")
 	if st := subjectStoreRef(); st != nil {
-		st.SaveChapter(source, ident, title)
+		st.SaveChapter(source, bookIdent, ident, title)
 	}
 }
 
 // LookupChapter 反查章节标题；内存未命中时问持久化后端并回填内存
-func LookupChapter(source, ident string) string {
-	key := identKey(source, ident)
+func LookupChapter(source, bookIdent, ident string) string {
+	key := chapterIdentKey(source, bookIdent, ident)
+	if key == "" {
+		return ""
+	}
 	if e := chapterNameCache.get(key); e.name != "" {
 		return e.name
 	}
 	st := subjectStoreRef()
-	if st == nil || key == "" {
+	if st == nil {
 		return ""
 	}
-	if title, ok := st.LoadChapter(source, ident); ok && title != "" {
+	if title, ok := st.LoadChapter(source, bookIdent, ident); ok && title != "" {
 		chapterNameCache.put(key, title, "")
 		return title
 	}
