@@ -130,7 +130,7 @@
 - 计费/访问控制/限流三轴在 `gate/`，顺序 access(400) → billing(500) → ratelimit(600)，`monitor(200)` 置于其前以覆盖 403/429。
   **还有一个更外层的闸门：`maintenance_mode`**（待办清单 P53②，面板那个开关从此说话算）——开着时数据面
   `/{source}/{action}` 在进 handler 之前一律 503，**管理员放行**、查不到角色按拦处理（失败关闭），
-  控制面与登录注册不受影响；被它拦下的请求没进过 handler，`CallSubject` 是 nil、维度全空，但观测仍要走完。
+  控制面与登录注册不受影响；被它拦下的请求没进过 handler，`CallSubject` 是 nil、维度全空，但观测仍要走完。**面板顶部有一条横幅说明这件事**（P95：信号是 `/announcement` 的 `maintenance`，按 `isAdmin()` 分两个变体、不可关闭；定稿里给登录页的那条被撤回——维护不动登录注册，写上去就是替系统说假话）。
 - **多设备登录监控（P44）**：登录时按 `max_active_sessions` 把超出的旧会话移出（保留最近的），开关 `device_watch_enabled` **默认关**；
   处置**只按会话数，IP 数再多也只标红不踢人**。读数在 `/admin/devices`；密钥侧只统计数量与来源 IP 分布，**不做冻结**。
   **活跃会话只有一份定义**（`db.ActiveSessionCond`：窗口内建立 + 未吊销 + 未过期），页面的 `active_sessions`
