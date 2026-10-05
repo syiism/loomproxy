@@ -31,7 +31,7 @@ import (
 func blockInsert(t *testing.T, table string) func() {
 	t.Helper()
 	switch table {
-	case "user_source_configs", "quota_usage_logs":
+	case "user_source_configs", "quota_usage_logs", "users":
 	default:
 		t.Fatalf("blockInsert 不认识这张表 %q（要加就去白名单里加）", table)
 	}

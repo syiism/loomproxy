@@ -259,7 +259,13 @@ func Register(c *gin.Context) {
 	}
 
 	if err := db.DB.Create(user).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "注册失败: "+err.Error())
+		// 这个端点是**匿名可达**的，所以这一句是出口而不是调试信息：
+		// 驱动原文里会躺着 `Duplicate entry 'someone@example.com' for key 'users.email'`
+		// 或 `Data too long for column 'nickname'` 这类东西——前者等于替人做账号枚举，
+		// 后者把列名与形状交出去。上面那两处重复检查发的都是固定句（"邮箱已注册"/"该邮箱已被注销账号占用"），
+		// 这里漏网的是"预检与插入之间那段时间窗里被别的请求抢先注册"以及列宽/连接类失败（待办清单 P90）。
+		log.Printf("ERROR: 注册写库失败（对外只回固定句，真因留在服务端）：%v", err)
+		fail(c, http.StatusInternalServerError, "注册失败，请稍后再试")
 		return
 	}
 	if vcRow != nil && !verify.Consume(vcRow.ID) {
