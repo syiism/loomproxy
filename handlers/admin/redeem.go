@@ -126,9 +126,13 @@ func ListRedeemCodes(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
 		return
 	}
-	// 附带套餐名与使用者用户名；明文直出，存量哈希行仅作标记
-	planNames := make(map[uint]string)
-	userNames := make(map[uint]string)
+	// 附带套餐名与使用者用户名；明文直出，存量哈希行仅作标记。
+	// **名称按整页一次取回**（原来是一行一条 `First`：一页 20 条就是约 25 条 SQL，
+	// 上限 100 时到 104 条；而 `redemption_codes` 正是那张只增不减的表——见待办清单 P87）。
+	// 顺带修掉旧写法的一处缓存 bug：它拿 `planName == ""` 当"没查过"，
+	// 于是**套餐名为空或套餐已删**的那一行，每条都重新查一次数据库。
+	planNames := namesByPlanID(list)
+	userNames := namesByUser(list)
 	items := make([]gin.H, 0, len(list))
 	for _, rc := range list {
 		codeDisplay := rc.Code
@@ -136,24 +140,9 @@ func ListRedeemCodes(c *gin.Context) {
 			codeDisplay = rc.Code[:8] + "…（旧哈希存量）"
 		}
 		planName := planNames[rc.PlanID]
-		if planName == "" {
-			var p models.QuotaPlan
-			if db.DB.First(&p, rc.PlanID).Error == nil {
-				planName = p.Name
-				planNames[rc.PlanID] = planName
-			}
-		}
 		usedByName := ""
 		if rc.UsedBy != nil {
-			if n, ok := userNames[*rc.UsedBy]; ok {
-				usedByName = n
-			} else {
-				var u models.User
-				if db.DB.First(&u, *rc.UsedBy).Error == nil {
-					usedByName = u.Username
-					userNames[*rc.UsedBy] = usedByName
-				}
-			}
+			usedByName = userNames[*rc.UsedBy]
 		}
 		items = append(items, gin.H{
 			"id":            rc.ID,
@@ -173,6 +162,53 @@ func ListRedeemCodes(c *gin.Context) {
 }
 
 // RevokeRedeemCode 作废单张未使用卡密
+
+// namesByPlanID / namesByUser 把整页要用的 id 收成一份去重列表，**一条 IN 查询**取回 id→名称。
+// 取不到的 id 就是空名（与旧写法一致：套餐或用户没了，列表那一格留空而不是显示一个猜测值）。
+func namesByPlanID(rows []models.RedemptionCode) map[uint]string {
+	set := make(map[uint]bool, len(rows))
+	ids := make([]uint, 0, len(rows))
+	for _, rc := range rows {
+		if rc.PlanID > 0 && !set[rc.PlanID] {
+			set[rc.PlanID] = true
+			ids = append(ids, rc.PlanID)
+		}
+	}
+	out := make(map[uint]string, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	var plans []models.QuotaPlan
+	if err := db.DB.Model(&models.QuotaPlan{}).Select("id", "name").Where("id IN ?", ids).Find(&plans).Error; err == nil {
+		for _, p := range plans {
+			out[p.ID] = p.Name
+		}
+	}
+	return out
+}
+
+func namesByUser(rows []models.RedemptionCode) map[uint]string {
+	set := make(map[uint]bool, len(rows))
+	ids := make([]uint, 0, len(rows))
+	for _, rc := range rows {
+		if rc.UsedBy != nil && *rc.UsedBy > 0 && !set[*rc.UsedBy] {
+			set[*rc.UsedBy] = true
+			ids = append(ids, *rc.UsedBy)
+		}
+	}
+	out := make(map[uint]string, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	var users []models.User
+	if err := db.DB.Model(&models.User{}).Select("id", "username").Where("id IN ?", ids).Find(&users).Error; err == nil {
+		for _, u := range users {
+			out[u.ID] = u.Username
+		}
+	}
+	return out
+}
+
 func RevokeRedeemCode(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
