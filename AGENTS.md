@@ -193,8 +193,8 @@
   丢 err 就是收下它，负 offset 会被 GORM 整段丢掉（P86）。
 - 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露；**已由 `make vet` 扫**），
   条件里的列名一律用 GORM map 形式让它按方言加引号——**不要在 SQL 里写死反引号**（PostgreSQL 只认双引号）。
-- 设置项的 `type` 是行为声明不是展示标签（`string`/`bool`/`number`/`json`）：**四种类型在写入端都校验值形态**
-  （`json` 双侧校验、`bool` 只收 `true`/`false` 且归一存储、`number` 必须是整数；**0 与负数合法**，形态校验不越界去管语义——P60）；
+- 设置项的 `type` 是行为声明不是展示标签（`string`/`bool`/`number`/`json`/`json_object`）：**五种类型在写入端都校验值形态**
+  （`json` 双侧校验、`json_object` 额外要求"字符串到字符串的对象"（判据要与消费方同，P94）、`bool` 只收 `true`/`false` 且归一存储、`number` 必须是整数；**0 与负数合法**，形态校验不越界去管语义——P60）；
   **读取口按类型各只有一处**——bool 走 `db.SettingBool`、整数走 `db.SettingInt`（空/非整数/非正数三种"填了没生效"都出声；
   **0 有业务含义的键走 `db.SettingIntNonNeg`**，它只差合法下界，共用同一份实现——P63）。
 - **配置填了却没生效要说一声，也要有人听**：上限类设置被兜底替换时经 `db.NoticeReplacedSetting` 出一条 ERROR，
