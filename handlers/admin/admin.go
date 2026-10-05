@@ -177,7 +177,7 @@ func ListUsers(c *gin.Context) {
 	// 关键词：转义与 ESCAPE 子句都由 escapeLike / likeESCAPE 负责（P43 判据）
 	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
 		like := "%" + escapeLike(keyword) + "%"
-		q = q.Where(likeESCAPE("username")+" OR "+likeESCAPE("email")+" OR "+likeESCAPE("nickname"), like, like, like)
+		q = q.Where(likeESCAPEGroup("username", "email", "nickname"), like, like, like)
 	}
 
 	// 账号状态三态。原 `with_deleted=1` 是把「正常 + 已删除」混成一锅，想单看已删除反而办不到

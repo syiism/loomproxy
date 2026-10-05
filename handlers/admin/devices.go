@@ -130,7 +130,7 @@ func ListDeviceActivity(c *gin.Context) {
 	q := db.DB.Model(&models.User{})
 	if keyword != "" {
 		like := "%" + escapeLike(keyword) + "%"
-		q = q.Where(likeESCAPE("username")+" OR "+likeESCAPE("email")+" OR "+likeESCAPE("nickname"), like, like, like)
+		q = q.Where(likeESCAPEGroup("username", "email", "nickname"), like, like, like)
 	}
 	// 排序要在聚合之后，所以这里**先取全部命中的人**再分页（实测 2026-10-04：全库 1052 人、
 	// 三份窗口聚合各 269~384 组、一条查询 67ms 内，量级撑得住；真长到人拿不动的那天，

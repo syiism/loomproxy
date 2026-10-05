@@ -28,6 +28,22 @@ func likeESCAPE(column string) string {
 	return column + " LIKE ? ESCAPE '" + string(likeEscapeChar) + "'"
 }
 
+// likeESCAPEGroup 把若干列拼成**一整组带括号的** OR 条件（列数=占位符数，调用方按序传值）。
+//
+// SQL 里 AND 比 OR 结合得紧，而管理面的关键词总是和别的筛选条件串在同一条查询里：
+// 裸写 `a LIKE ? OR b LIKE ?` 再接 `AND status = 1`，字面真意是 `a OR (b AND status=1)`。
+// **今天没有 bug**——GORM 会把每个 Where 的裸表达式自己包一层括号（实测拼出
+// `WHERE (username LIKE ? OR email LIKE ?) AND users.status = ?`），
+// 所以这里加括号不是修缺陷，而是**不把正确性押在拼接细节上**：
+// 同一条查询里将来可能出现手写 `Expr`/`Unscoped` 组合、或有人把两段拼成一个字符串（那时就真漏了）。
+func likeESCAPEGroup(columns ...string) string {
+	parts := make([]string, 0, len(columns))
+	for _, col := range columns {
+		parts = append(parts, likeESCAPE(col))
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
 // escapeLike 转义 LIKE 模式里的通配符：用户搜「100%」不该把全表匹配进来。
 func escapeLike(s string) string {
 	r := strings.NewReplacer(
