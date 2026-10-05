@@ -16,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check
 
 build: web vet test go-build
 
@@ -54,6 +54,7 @@ vet:
 	@$(MAKE) --no-print-directory settings-readers-check
 	@$(MAKE) --no-print-directory judgment-count-check
 	@$(MAKE) --no-print-directory doc-numbers-check
+	@$(MAKE) --no-print-directory todo-status-check
 	@$(MAKE) --no-print-directory tz-check
 	@$(MAKE) --no-print-directory param-assert-check
 	@$(MAKE) --no-print-directory deploy-atomic-check
@@ -100,6 +101,12 @@ judgment-count-check:
 # 与 judgment-count-check 同一条判据，只是对象从判据页换成报告。
 doc-numbers-check:
 	@./scripts/check-doc-numbers.sh
+
+# 待办清单与归档的一致性（判据页《条目做完而状态行还写着「待拍》那一行的机器化部分）：
+# 同一条目不得两处都有正文；引用的归档页必须存在（按链接目标查全树，不按某个固定文件名查）。
+# 「状态行含待拍而正文含已处理」那半句**刻意没做**——本仓合法状态行大量长那样，判它要读语义。
+todo-status-check:
+	@./scripts/check-todo-status.sh
 
 # 平台时区与日界只有一处定义（待办清单 P71）：出现 FixedZone / time.Local / 旧的 TZShanghai 调用即红。
 # 触发它的经验是本轮第十四遍数出来的七种写法——现网三种口径恰好重合，所以它不会自己报错。
