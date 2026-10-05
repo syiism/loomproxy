@@ -135,6 +135,8 @@ func Stats(c *gin.Context) {
 			"window_sec": windowSec,
 			"enabled":    windowSec > 0,
 		},
+		// 只增不减的表长多快（待办清单 P54）：读数，不是清理建议
+		"table_growth": TableGrowth(),
 	})
 }
 

@@ -103,10 +103,16 @@ func (httpSender) Send(scene, target, code string) error {
 	// 请求头：verify_http_headers 为 JSON 对象字符串，如 {"Authorization":"Bearer xx","Content-Type":"application/json"}
 	if headers := strings.TrimSpace(db.GetSetting("verify_http_headers")); headers != "" {
 		var kv map[string]string
-		if json.Unmarshal([]byte(headers), &kv) == nil {
-			for k, v := range kv {
-				req.Header.Set(k, v)
-			}
+		if err := json.Unmarshal([]byte(headers), &kv); err != nil {
+			// **解不开就不发**（P94 的第二半）。原来这里没有失败分支：坏形状被当成"没有这个设置"，
+			// 请求带着空请求头照样打出去——平台大概率回 401，运维看到的是「令牌不对」而不是「你那段 JSON 我们没用上」；
+			// 更坏的一支是某个接口不校验鉴权时**静默成功**。宁可少发一条验证码，也不把匿名请求交给上游。
+			// 这句 error 只进服务端日志（调用方 `verify.go` 已按 P67 那对镜像处理：对外固定句、对内带原始原因），
+			// 所以带上坏值本身；但不带 target，那属 §11 的边界。
+			return fmt.Errorf("verify_http_headers 不是字符串到字符串的 JSON 对象，本次未带任何请求头、已中止发码: %v（值=%s）", err, truncateStr(headers, 200))
+		}
+		for k, v := range kv {
+			req.Header.Set(k, v)
 		}
 	}
 	if req.Header.Get("Content-Type") == "" && bodyReader != nil {

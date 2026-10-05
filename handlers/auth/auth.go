@@ -649,18 +649,25 @@ func UpdatePrivacyConsent(c *gin.Context) {
 		return
 	}
 	uid, _ := c.Get("user_id")
-	if err := db.DB.Model(&models.User{}).Where(map[string]interface{}{"id": uid}).
-		Update("content_consent", *req.ContentConsent).Error; err != nil {
-		fail(c, http.StatusInternalServerError, "更新失败")
-		return
-	}
-	var user models.User
-	if err := db.DB.Preload("Roles").First(&user, uid).Error; err != nil {
+	// 先读**有效值**再决定要不要盖时刻（P52）：`content_consent` 的 NULL 与显式 true 在
+	// `KeepsContentData` 眼里是同一个状态，所以"未表态的人点一次同意"不是变更，
+	// 给没变的状态盖时刻等于让那列说假话——它唯一的用途就是回答"关掉之后还有没有新行被捕获"。
+	var current models.User
+	if err := db.DB.Select("content_consent").First(&current, uid).Error; err != nil {
 		fail(c, http.StatusNotFound, "用户不存在")
 		return
 	}
+	updates := map[string]interface{}{"content_consent": *req.ContentConsent}
+	if current.KeepsContentData() != *req.ContentConsent {
+		updates["content_consent_set_at"] = time.Now()
+	}
+	if err := db.DB.Model(&models.User{}).Where(map[string]interface{}{"id": uid}).
+		Updates(updates).Error; err != nil {
+		fail(c, http.StatusInternalServerError, "更新失败")
+		return
+	}
 	ok(c, map[string]interface{}{
-		"content_consent": user.KeepsContentData(),
+		"content_consent": *req.ContentConsent,
 		"scope":           "关闭后新的调用不再捕获搜索词与阅读记录；已落库的历史明细不追溯删除",
 	})
 }

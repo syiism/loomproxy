@@ -27,6 +27,11 @@ var settingTypes = map[string]bool{
 	"bool":   true,
 	"number": true,
 	"json":   true,
+	// json_object：合法 JSON 之外还要求「字符串到字符串的对象」。
+	// 加这一档是因为 `verify_http_headers` 的**消费方**要的就是这个形状（`map[string]string`），
+	// 而写入端原来只判"是不是合法 JSON"，中间没人负责——数组、裸字符串、值写成数字都能存进去，
+	// 到发送端才被丢掉（P94）。type 是行为声明，所以判据要能对得上读的那一方。
+	"json_object": true,
 }
 
 // normalizeJSONValue 校验并压缩 JSON 型设置值：留空合法（表示该能力未启用），
@@ -47,6 +52,27 @@ func normalizeJSONValue(v string) (string, error) {
 		return "", fmt.Errorf("不是合法 JSON：%s（字符串内的换行要写成 \\\\n，整段建议压成单行）", err.Error())
 	}
 	return buf.String(), nil
+}
+
+// normalizeJSONObjectValue 在合法 JSON 之上再要求「字符串到字符串的对象」（P94）。
+//
+// 判据为什么必须与消费方一致：`handlers/verify/sender.go` 把这个设置解成 `map[string]string`，
+// 而数组 / 裸字符串 / 值写成数字或嵌套，**都能通过 `json.Compact` 却在解的时候失败**——
+// 原实现没有失败分支，解不开就当没这个设置，请求带着空请求头照样打出去。
+// 症状于是是「发码平台返回 401」（说的是令牌不对），而不是「你那段 JSON 我们没用上」。
+//
+// 留空合法：`{}` 与空串都表示"没有额外请求头"，这是 P62 那条"面板从此不能靠留空清空"里写明的合法形态。
+func normalizeJSONObjectValue(v string) (string, error) {
+	normalized, err := normalizeJSONValue(v)
+	if err != nil || normalized == "" {
+		return normalized, err
+	}
+	var kv map[string]string
+	if err := json.Unmarshal([]byte(normalized), &kv); err != nil {
+		return "", fmt.Errorf("必须是字符串到字符串的 JSON 对象（如 {\"authorization\":\"Bearer xx\"}）："+
+			"当前值 %s 解不开（%s）——数组、裸字符串、值写成数字/布尔/嵌套，发送端都会拿不到请求头", normalized, err.Error())
+	}
+	return normalized, nil
 }
 
 type createSettingRequest struct {
@@ -70,6 +96,8 @@ func normalizeSettingValue(settingType, raw string) (string, error) {
 	switch settingType {
 	case "json":
 		return normalizeJSONValue(raw)
+	case "json_object":
+		return normalizeJSONObjectValue(raw)
 	case "bool":
 		v := strings.ToLower(strings.TrimSpace(raw))
 		switch v {

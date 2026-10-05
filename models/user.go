@@ -34,10 +34,17 @@ type User struct {
 	// 不需要一次回填写数据（那是生产库写操作）。显式 false 才是不同意。
 	// 只有本人能改，且走会话 only 的 /auth/me（API Key 改不动自己的同意位）——
 	// 同意位是「谁授权网关留」的记录，让长期密钥能改它等于把授权来源搞混。
-	ContentConsent *bool          `gorm:"column:content_consent" json:"-"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	ContentConsent *bool `gorm:"column:content_consent" json:"-"`
+	// ContentConsentSetAt 同意位**有效值真变**的时刻（待办清单 P52）。
+	// 存在的理由很窄：判断「用户关掉留存之后还有没有新行被捕获」需要一个时间点，
+	// 而 `UpdatedAt` 会被任何一次改昵称/邮箱顶掉——用它定案纯靠"那个用户当天只动过这一次"的时间轴巧合。
+	// **只在有效值变化时盖**（NULL 与显式 true 在 `KeepsContentData` 眼里是同一个状态，
+	// 给没变的状态盖时刻等于让这列说假话）；NULL = 从来没有真变过（含升级前的存量用户）。
+	// 判据同 P41 的 `quota_reset_at`：**被判定读取的时间点要有自己的列**，不借别人的列。
+	ContentConsentSetAt *time.Time     `gorm:"column:content_consent_set_at" json:"-"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // EmailStr 安全获取 email 字符串（向后兼容）

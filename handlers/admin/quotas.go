@@ -255,16 +255,15 @@ func CreateQuotaLimit(c *gin.Context) {
 		return
 	}
 
-	limit := int64(0)
-	if req.Limit != nil {
-		limit = *req.Limit
+	// `limit` 必须显式给（待办清单 P69 选 A 的后半）。过去缺省静默落成 0，
+	// 而同样的"授权一个源"在 helper 与播种那两条路上落的是套餐默认档（free 100 / vip 1000 / -1）——
+	// 一次授权按通路不同得到 `100` 或 `0`，而 `0` 在限额语义上既不是"不限"也不是"不给用"，是个没人定义的数。
+	// 现在"没给"就是 400，不是 0；`-1`（不限）仍然是合法值，所以这条校验只管形态、不管语义。
+	if req.Limit == nil {
+		auth.Fail(c, http.StatusBadRequest, "必须显式给出 limit（-1 = 不限额；不给不等于 0）")
+		return
 	}
-	quotaLimit := models.QuotaLimit{
-		PlanID: req.PlanID,
-		Scope:  req.Scope,
-		Target: req.Target,
-		Limit:  limit,
-	}
+	quotaLimit := db.NewExplicitGrant(req.PlanID, req.Scope, req.Target, *req.Limit)
 	if err := db.DB.Create(&quotaLimit).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "创建额度限制失败")
 		return

@@ -51,7 +51,7 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "verify_provider", Value: "mock", Type: "string", Description: "发码通道：mock=仅打印服务端日志（开发默认）；http=通用 HTTP 模板适配器（配 verify_http_* 对接发码平台）"},
 		{Key: "verify_http_url", Value: "", Type: "string", Description: "http 通道发码接口地址，支持占位符 {{target}} {{code}} {{scene}}"},
 		{Key: "verify_http_method", Value: "POST", Type: "string", Description: "http 通道请求方法"},
-		{Key: "verify_http_headers", Value: "", Type: "json", Description: "http 通道请求头（JSON 对象，保存时校验并压成单行），如 {\"authorization\":\"Bearer xx\",\"content-type\":\"application/json\"}"},
+		{Key: "verify_http_headers", Value: "", Type: "json_object", Description: "http 通道请求头（必须是字符串到字符串的 JSON 对象，保存时校验并压成单行），如 {\"authorization\":\"Bearer xx\",\"content-type\":\"application/json\"}；数组、裸字符串、值写成数字都会被发送端拿不到，这一档当场拒（P94）"},
 		{Key: "verify_http_body", Value: "", Type: "json", Description: "http 通道请求体模板（JSON，保存时校验并压成单行），支持 {{target}} {{code}} {{scene}} 占位符"},
 		{Key: "verify_http_success_keyword", Value: "", Type: "string", Description: "http 通道成功判定关键字（响应体需包含，留空=HTTP 2xx 即成功）"},
 		{Key: "auto_block_enabled", Value: "false", Type: "bool", Description: "IP 自动拉黑开关：滑动窗口内 403/429 次数达阈值自动加入黑名单（回环地址永不自动拉黑）"},
@@ -166,18 +166,18 @@ func seedQuotaPlans(db *gorm.DB) error {
 		if !justCreated[plan.Code] {
 			continue
 		}
-		limits = append(limits, models.QuotaLimit{
-			PlanID: plan.ID, Scope: "global", Target: "api",
-			Limit: d.GlobalAPI, CreatedAt: now, UpdatedAt: now,
-		})
+		globalRow := NewExplicitGrant(plan.ID, "global", "api", d.GlobalAPI)
+		globalRow.CreatedAt, globalRow.UpdatedAt = now, now
+		limits = append(limits, globalRow)
 		if sourceSeedProvider == nil {
 			continue
 		}
 		for _, src := range sourceSeedProvider() {
-			limits = append(limits, models.QuotaLimit{
-				PlanID: plan.ID, Scope: "source", Target: src.Name,
-				Limit: d.PerSource, CreatedAt: now, UpdatedAt: now,
-			})
+			// 每源的默认档走 P69 的那一个入口（`NewSourceGrantRow`），不再在这里抄一份 `d.PerSource`：
+			// 两者读的都是 `builtinPlanLimitDefaults`，抄一遍就是"改一处漏一处"的那个第五处。
+			row := NewSourceGrantRow(plan.ID, plan.Code, src.Name)
+			row.CreatedAt, row.UpdatedAt = now, now
+			limits = append(limits, row)
 		}
 	}
 	for _, limit := range limits {
@@ -547,14 +547,16 @@ func seedDataSources(db *gorm.DB) ([]string, error) {
 }
 
 // attachSourceToBuiltinPlans 把一个源授权给尚缺该授权的内置套餐（幂等：已有授权行就跳过）。
-// 授权 = 一行 scope=source 的限额（待办清单 P34，方案 A），新建行取 limit=-1（可用但不设限）。
+// 授权 = 一行 scope=source 的限额（待办清单 P34，方案 A）。
+// 新建行取**该套餐的默认档**（free 100 / vip 1000 / admin 与自定义 -1），
+// 不是固定的 -1——过去这句注释写的是 -1，而代码早就改成了默认档，属于"注释替代码说假话"。
 func attachSourceToBuiltinPlans(db *gorm.DB, name string) error {
 	for _, code := range builtinPlanCodes {
 		var plan models.QuotaPlan
 		if err := db.Where("code = ?", code).First(&plan).Error; err != nil {
 			continue // 该内置套餐不在这次的库里（例如未播种的空库），交给调用方的其它步骤
 		}
-		created, err := ensurePlanSourceGrant(db, plan.ID, name, DefaultPerSourceLimit(code))
+		created, err := ensurePlanSourceGrant(db, NewSourceGrantRow(plan.ID, code, name))
 		if err != nil {
 			return err
 		}
@@ -566,18 +568,20 @@ func attachSourceToBuiltinPlans(db *gorm.DB, name string) error {
 }
 
 // ensurePlanSourceGrant 保证「套餐 × 源」有一行 scope=source 的限额；已存在则不动，返回是否新建。
-func ensurePlanSourceGrant(db *gorm.DB, planID uint, sourceName string, limit int64) (bool, error) {
+// 行由调用方用 P69 的两个意图口之一构造（默认档 / 显式给值），这里只负责"有没有、要不要建"——
+// 参数从 `(planID, sourceName, limit)` 收成一行 `models.QuotaLimit` 的原因就是这个：
+// 只要限额还从函数签名上传进来，第五处字面量就随时可以再冒出来。
+func ensurePlanSourceGrant(tx *gorm.DB, row models.QuotaLimit) (bool, error) {
 	var n int64
-	if err := db.Model(&models.QuotaLimit{}).
-		Where("plan_id = ? AND scope = ? AND target = ?", planID, "source", sourceName).
+	if err := tx.Model(&models.QuotaLimit{}).
+		Where("plan_id = ? AND scope = ? AND target = ?", row.PlanID, row.Scope, row.Target).
 		Count(&n).Error; err != nil {
 		return false, err
 	}
 	if n > 0 {
 		return false, nil
 	}
-	row := models.QuotaLimit{PlanID: planID, Scope: "source", Target: sourceName, Limit: limit}
-	if err := db.Create(&row).Error; err != nil {
+	if err := tx.Create(&row).Error; err != nil {
 		return false, err
 	}
 	return true, nil
@@ -619,9 +623,9 @@ func alignPlanGrants(db *gorm.DB) error {
 		if !ok {
 			continue // 源已下线的关联行是脏数据，不给它补授权
 		}
-		// 补 -1 是**忠实还原**：旧模型里「有关联行、没限额行」就是不限额。
+		// 补 -1 是**忠实还原**（显式给值那个意图口，不是默认档）：旧模型里「有关联行、没限额行」就是不限额。
 		// 这里若沿用套餐默认档（free 每源 100），搬迁本身就成了给用户新加一道上限。
-		created, err := ensurePlanSourceGrant(db, l.PlanID, name, -1)
+		created, err := ensurePlanSourceGrant(db, NewExplicitGrant(l.PlanID, "source", name, -1))
 		if err != nil {
 			return err
 		}

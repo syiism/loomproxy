@@ -38,6 +38,56 @@
       </button>
     </div>
 
+    <!-- 表增长读数（待办清单 P54，2026-10-06 拍板选 A：**只加读数，清理策略一字不动**）。
+         放在这一页的理由很具体：这几张表只进不出，而"长多快"过去在面板与读数里一个字都没有——
+         将来谁要加清理，就得像 P35 那次一样先猜一个数。这一格是让下一轮不用从头查起。 -->
+    <div class="card reveal mb-8">
+      <div class="text-sm font-medium mb-3">表增长（只读）</div>
+      <UiCollapse title="库里只进不出的四张表" :summary="growthSummary" storage-key="monitor-growth">
+        <div class="text-xs text-text-muted mb-2">
+          行数 = GORM 作用域下的活行（软删行不计）；日增 = 近 {{ growth.window_days || 7 }} 天新增 ÷ 窗口天数（整数，这格回答量级不回答精确速率）。
+          {{ growth.scope }}
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table-base">
+            <thead>
+              <tr>
+                <th>表</th>
+                <th class="text-right">行数</th>
+                <th class="text-right">窗口内新增</th>
+                <th class="text-right">日增</th>
+                <th>保留窗口</th>
+                <!-- 说明列窄屏收起（P66 的先例：补进来的列要给自己宽度约束）。
+                     实测 390 视口下容器 282px / 内容 460px 需要横向滚动，收起这一列后由表自己排；
+                     这一列讲的是"为什么这张表要单独过一句"，属延伸阅读，不是当日读数的一部分。 -->
+                <th class="hidden sm:table-cell">为什么这张表要单独过一句</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in growth.tables" :key="t.table">
+                <!-- 表名列允许断行：实测撑宽度的是这一列（`quota_usage_logs` 这类无空格长 token
+                     默认不折行，独占 154px），其余四列各 35px。上一轮收表头长字没有效果，
+                     因为那几列的宽度本来就由单元格决定，不是由表头决定——**先量是谁在占宽度，再决定收哪一格**。 -->
+                <td class="font-mono break-all">{{ t.table }}</td>
+                <td class="text-right" :style="t.rows < 0 ? 'color:#9F2F2D' : ''">
+                  {{ t.rows < 0 ? '读数不可用' : t.rows.toLocaleString() }}
+                </td>
+                <td class="text-right">{{ t.recent < 0 ? '—' : t.recent.toLocaleString() }}</td>
+                <td class="text-right">{{ t.per_day < 0 ? '—' : t.per_day.toLocaleString() }}</td>
+                <td>
+                  {{ t.has_retention ? (t.retention_days > 0 ? `${t.retention_days} 天` : '永久') : '无' }}
+                  <!-- 括注窄屏收起：390 视口实测内容 307px / 容器 282px 仍差 25px，就是这几个字。
+                       「0＝没在清」这层意思在表格上方那句说明里已经有，不必在每个单元格里各占一格宽度。 -->
+                  <span v-if="t.has_retention && t.retention_days === 0" class="hidden sm:inline text-text-muted">（0＝没在清）</span>
+                </td>
+                <td class="hidden sm:table-cell text-xs text-text-muted">{{ t.note }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </UiCollapse>
+    </div>
+
     <!-- 内容维度榜单：某个搜索词/书名/章节/媒介在窗口内被调用得怎么样。
          口径 = 库中未清理明细 + 内存中尚未落库的明细（与总表一致） -->
     <div class="card reveal mb-8">
@@ -344,6 +394,17 @@ const items = ref([])
 const recent = ref([])
 const overview = ref({ total: 0, success: 0, failed: 0, success_rate: 0, lifetime_total: 0, started_at: null })
 const trend = ref({ days: [], sources: [], rows: [] })
+// 表增长读数（待办清单 P54）：只读，读不到不影响这一页别的东西
+const growth = ref({ window_days: 0, tables: [], scope: '' })
+// 收起态那行 summary 必须是**读数**，不是「暂无异常」那种形容词（P29 同一条判据）
+const growthSummary = computed(() => {
+  const ts = growth.value.tables || []
+  if (!ts.length) return '还没读到数（这一格失败不影响上面的主表）'
+  const bad = ts.filter(t => (t.rows ?? -1) < 0).length
+  if (bad) return `${bad} 张表读数不可用——失败会说，不会报 0`
+  const top = ts.reduce((a, b) => ((b.per_day || 0) > (a.per_day || 0) ? b : a), ts[0])
+  return `${ts.length} 张只增不减的表 · 日增最高 ${top.table} ${top.per_day || 0} 行/天`
+})
 const autoRefresh = ref(false)
 const resetArmed = ref(false)
 const history = ref([])
@@ -456,6 +517,11 @@ const load = async (silent) => {
   try {
     const t = await adminApi.getMonitorTrend()
     trend.value = { days: t.days || [], sources: t.sources || [], rows: t.rows || [] }
+  } catch (e) { /* 保留旧数据 */ }
+  // 表增长读数也独立加载（P54）：它是 `/admin/stats` 里的一格，读不到不该把这一页判死
+  try {
+    const s = await adminApi.stats()
+    growth.value = s.table_growth || { window_days: 0, tables: [], scope: '' }
   } catch (e) { /* 保留旧数据 */ }
   // 表格在异步加载后才渲染，需重新触发渐入观察，否则 .reveal 元素保持透明
   nextTick(revealObserve)

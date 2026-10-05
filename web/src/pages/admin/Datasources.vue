@@ -210,14 +210,10 @@
           <input v-model.number="limitsForm.limit" type="number" class="input font-mono" min="-1">
           <p class="text-xs text-text-muted mt-1">-1 = 不限，0 = 当日不可用，大于 0 = 每日次数</p>
         </div>
-        <div>
-          <label class="label">周期</label>
-          <select v-model="limitsForm.period" class="input w-32">
-            <option value="day">day</option>
-            <option value="week">week</option>
-            <option value="month">month</option>
-          </select>
-        </div>
+        <!-- 这里原来还有一个「周期」下拉（day/week/month 三档）并随请求发送：额度只有一个窗口（当日），
+             `period` 没有任何判定读它，而「按分组套用限额」这个接口**一字都不收**这个字段（`ApplySourceGroupLimits`）。
+             待办清单 P70② 摘掉的是面板与 PUT 那两处，这一处是漏网的第三处——控件在、发的字段在、后端没人读，
+             正是同一条判据里"能改变认知、改变不了行为"的那个形状，所以整块删掉而不是留着。 -->
         <div v-if="applyResult" class="text-xs text-text-muted border-t border-border pt-3">
           <div class="mb-1">已为 {{ applyResult.applied }} 个数据源套用「{{ applyResult.plan_code }}」限额 {{ applyResult.limit < 0 ? '不限' : applyResult.limit }}。</div>
           <div class="font-mono break-words">{{ (applyResult.sources || []).join(', ') }}</div>
@@ -282,7 +278,7 @@ const memberChecked = ref({})
 const savingMembers = ref(false)
 const showLimitsModal = ref(false)
 const limitsGroup = ref(null)
-const limitsForm = ref({ plan_code: '', limit: 100, period: 'day' })
+const limitsForm = ref({ plan_code: '', limit: 100 })
 const savingLimits = ref(false)
 const applyResult = ref(null)
 
@@ -407,7 +403,7 @@ const saveMembers = async () => {
 
 const openApplyLimits = async (g) => {
   limitsGroup.value = g
-  limitsForm.value = { plan_code: '', limit: 100, period: 'day' }
+  limitsForm.value = { plan_code: '', limit: 100 }
   applyResult.value = null
   showLimitsModal.value = true
   if (!plansLoaded.value) {
@@ -424,7 +420,7 @@ const submitApplyLimits = async () => {
   savingLimits.value = true
   try {
     const res = await adminApi.applySourceGroupLimits(limitsGroup.value.id, {
-      plan_code: planCode, limit, period: limitsForm.value.period,
+      plan_code: planCode, limit,
     })
     applyResult.value = res
     const skipped = (res.skipped_ungranted || []).length

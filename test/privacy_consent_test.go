@@ -392,3 +392,56 @@ func TestPrivacyCoverageIgnoresWithheldRows(t *testing.T) {
 		t.Errorf("failed = %d, want 0（退出行的 status 也是 200，但同样不该进这一组读数）", got.Failed)
 	}
 }
+
+// TestPrivacyConsentSetAtOnlyOnRealChange 同意位的「变更时刻」只在**有效值真变**时刷新（待办清单 P52）。
+// 这一列存在的唯一理由，是让「用户关掉留存之后还有没有新行被捕获」这个问题答得出来；
+// 借 `UpdatedAt` 答不了——它会被任何一次改昵称/邮箱顶掉（P52 那次能定案纯靠时间轴刚好干净）。
+// 所以它对"变更"必须诚实：未表态（NULL）的人点一次“同意”**不是变更**（NULL 与 true 在
+// `KeepsContentData` 眼里是同一个状态），把同一个值再提交一次也不是变更——
+// 否则这列记的就是"点了几次按钮"，而不是"什么时候改的主意"。
+func TestPrivacyConsentSetAtOnlyOnRealChange(t *testing.T) {
+	srv := newTestServer(t)
+
+	token, name := privacyUser(t, srv)
+	read := func() *time.Time {
+		t.Helper()
+		var u models.User
+		if err := db.DB.Where(map[string]interface{}{"username": name}).First(&u).Error; err != nil {
+			t.Fatalf("读回用户失败: %v", err)
+		}
+		return u.ContentConsentSetAt
+	}
+
+	// 1) 未表态 → 显式 true：有效值没变，不许盖时刻
+	setPrivacyConsent(t, srv, token, true)
+	if got := read(); got != nil {
+		t.Errorf("未表态的人点一次“同意”就盖了时刻 %v，want NULL——判定结果一字未变，这列不能替他记一笔", *got)
+	}
+
+	// 2) true → false：真变，必须盖
+	setPrivacyConsent(t, srv, token, false)
+	off := read()
+	if off == nil {
+		t.Fatal("关闭留存没盖时刻——这一列的第一个用途就是回答“关掉之后还有没有新行被捕获”")
+	}
+
+	// 3) 再提交一次同样的 false：不刷新
+	setPrivacyConsent(t, srv, token, false)
+	if again := read(); again == nil || !again.Equal(*off) {
+		t.Errorf("改成同样的值也刷新了时刻（%v → %v）——重复提交不是变更", off, again)
+	}
+
+	// 4) 把库里那行倒拨 48 小时再 true：真变，必须刷新
+	//    （不用「比上一次的刻晚」来判，是因为 MySQL 的 DATETIME 只到秒——同一秒内两次写入会相等，
+	//    用例就会偶发红；倒拨出来的差是确定的。）
+	back := off.Add(-48 * time.Hour)
+	if err := db.DB.Model(&models.User{}).Where(map[string]interface{}{"username": name}).
+		Update("content_consent_set_at", back).Error; err != nil {
+		t.Fatalf("倒拨时刻失败: %v", err)
+	}
+	setPrivacyConsent(t, srv, token, true)
+	now := read()
+	if now == nil || !now.After(back) {
+		t.Errorf("从不同意回到同意没刷新时刻（back=%v, now=%v）——真变必须记上", back, now)
+	}
+}

@@ -86,10 +86,8 @@ func GrantPlanSource(planID uint, sourceName string) (bool, error) {
 	if err := db.DB.Where("id = ?", planID).First(&plan).Error; err != nil {
 		return false, err
 	}
-	row := models.QuotaLimit{
-		PlanID: planID, Scope: "source", Target: sourceName,
-		Limit: db.DefaultPerSourceLimit(plan.Code),
-	}
+	// 行的构造在 db（P69 的两个意图口之一），判定与写仍然分开
+	row := db.NewSourceGrantRow(planID, plan.Code, sourceName)
 	if err := db.DB.Create(&row).Error; err != nil {
 		return false, err
 	}

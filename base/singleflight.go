@@ -34,7 +34,8 @@ type Flight struct {
 	calls map[string]*sfCall
 }
 
-// NewFlight 构造请求合并组，timeout 为 follower 等待 leader 的兜底上限。
+// NewFlight 构造请求合并组，timeout 为 follower 等待 leader 的兜底上限——
+// **口径是 per-call**：从进入 `Do` 起算，跨多轮竞争不重置（P91）。
 func NewFlight(timeout time.Duration) *Flight {
 	return &Flight{timeout: timeout, calls: make(map[string]*sfCall)}
 }
@@ -47,6 +48,15 @@ func doSingleflight(key string, fn func() (interface{}, error)) (interface{}, er
 }
 
 func (f *Flight) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
+	// 兜底上限是 **per-call**：计时器只能在循环外造一次。
+	// 原来每轮 `time.After(f.timeout)` 现造，走到 `continue`（leader 失败或空结果、不算共享）
+	// 之后再进下一轮，又重新拿到一整个 timeout——总等待是 N × timeout，
+	// 而 `NewFlight` 的注释承诺的是"一个上限"，那句 15s = 10s 客户端超时 + 5s 余量更是按一次等待算的。
+	// 这条**没有能区分两种写法的断言**（`continue` 之后 follower 通常自己变成 leader，
+	// 要它真多等必须第三方每轮抢先占槽，那是时序竞争、用例只会偶发红），
+	// 所以按待办清单 P91 的拍板：改代码、不写空转的用例。
+	deadline := time.NewTimer(f.timeout)
+	defer deadline.Stop()
 	for {
 		// **查与占必须在同一段临界区里**：本轮先把它拆成"读一次、再写一次"两个闭包，
 		// 于是两个 goroutine 都读到空、都去登记，后写的覆盖先写的——同一 key 的并发不再合并，
@@ -71,8 +81,8 @@ func (f *Flight) Do(key string, fn func() (interface{}, error)) (interface{}, er
 				}
 				// 结果校验：失败/空结果不共享，重新竞争成为新 leader
 				continue
-			case <-time.After(f.timeout):
-				// 超时兜底：脱离共享，自己执行
+			case <-deadline.C:
+				// 超时兜底：从进入 Do 起算最多等 timeout，到点脱离共享、自己执行
 				return fn()
 			}
 		}
