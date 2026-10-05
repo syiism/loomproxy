@@ -173,9 +173,14 @@
 
 ## 10. 开发约定
 
-- 响应统一 `{code,msg,data}`；对下游错误文案必须脱敏。**出口有两条，都要过 `sanitizeUpstreamMsg`**：
+- 响应统一 `{code,msg,data}`；对下游错误文案必须脱敏。**上游文本的出口有两条，都要过 `sanitizeUpstreamMsg`**：
   `handleError`（handler 报错）与 `scrubInBandMsg`（带内错误正文，`ContentType=="error"` 的 `message`，P23①）。
   只收口错误文案，正文不扫。
+  **还有第三条出口不归它管**（待办清单 P90）：我们自己把 `err.Error()` 拼进响应——本地写库失败发的
+  是驱动原文（`Duplicate entry …` 等于替人枚举账号，`Data too long for column …` 交出列名），
+  而 `sanitizeUpstreamMsg` 只处理上游文案，**顺着 sanitize 的覆盖面找不出这一类**。
+  判据：按**读者**（`AdminRequired()` 之后可信，SQL 文本是 §11 设计的一部分）与**来源**
+  （预定义句安全 / 绑定错误泄露结构体名 / 驱动与上游原文泄露）两轴审一遍。
 - **数字 query 参数只走 `utils.Paginate`**（单一处夹，页长 100 / 页码 1e6）：
   `Atoi` 超范围时返回错误**但也返回 `MaxInt64`**，丢 err 就是收下它，负 offset 会被 GORM 整段丢掉
   （第一页的数据配一个不存在的页码）；已由 `make vet` 拦回潮（待办清单 P86）。
