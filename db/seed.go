@@ -70,7 +70,8 @@ func seedSettings(db *gorm.DB) error {
 	// rank_public_enabled（bool 总开关）被 rank_public_sources（按源白名单）取代；
 	// legado_import_url（管理员手填书源直链）被静态托管 /data/shuyuan/bookSource.json 取代——
 	// 下发位置是部署事实，不该是一个可能被填错、又没人校验的设置项。
-	for _, gone := range []string{"rank_public_enabled", "legado_import_url"} {
+	// site_name 没有任何后端读取方（P53② 巡检数出来的），面板控件一并摘掉，键随之硬删
+for _, gone := range []string{"rank_public_enabled", "legado_import_url", "site_name"} {
 		var n int64
 		goneCond := map[string]interface{}{"key": gone}
 		db.Model(&models.SystemSetting{}).Unscoped().Where(goneCond).Count(&n)
@@ -166,7 +167,7 @@ func seedQuotaPlans(db *gorm.DB) error {
 		}
 		limits = append(limits, models.QuotaLimit{
 			PlanID: plan.ID, Scope: "global", Target: "api",
-			Limit: d.GlobalAPI, Period: "day", CreatedAt: now, UpdatedAt: now,
+			Limit: d.GlobalAPI, CreatedAt: now, UpdatedAt: now,
 		})
 		if sourceSeedProvider == nil {
 			continue
@@ -174,7 +175,7 @@ func seedQuotaPlans(db *gorm.DB) error {
 		for _, src := range sourceSeedProvider() {
 			limits = append(limits, models.QuotaLimit{
 				PlanID: plan.ID, Scope: "source", Target: src.Name,
-				Limit: d.PerSource, Period: "day", CreatedAt: now, UpdatedAt: now,
+				Limit: d.PerSource, CreatedAt: now, UpdatedAt: now,
 			})
 		}
 	}
@@ -574,7 +575,7 @@ func ensurePlanSourceGrant(db *gorm.DB, planID uint, sourceName string, limit in
 	if n > 0 {
 		return false, nil
 	}
-	row := models.QuotaLimit{PlanID: planID, Scope: "source", Target: sourceName, Limit: limit, Period: "day"}
+	row := models.QuotaLimit{PlanID: planID, Scope: "source", Target: sourceName, Limit: limit}
 	if err := db.Create(&row).Error; err != nil {
 		return false, err
 	}

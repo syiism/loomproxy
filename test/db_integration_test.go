@@ -97,7 +97,7 @@ func TestSeedLegacyGroupExpansionAndRetired(t *testing.T) {
 		&models.QuotaCost{GroupCode: fakeLegacyGroup, Interface: iface, Cost: 3, Status: 1, Interval: 7},
 		&models.QuotaCost{GroupCode: retired, Interface: "search", Cost: 9, Status: 1},
 		&models.DataSource{Name: retired, DisplayName: "已退役源", Category: "legacy", Status: 1},
-		&models.QuotaLimit{PlanID: planIDByCode(t, "free"), Scope: "source", Target: retired, Limit: 5, Period: "day"},
+		&models.QuotaLimit{PlanID: planIDByCode(t, "free"), Scope: "source", Target: retired, Limit: 5},
 	}
 	for _, row := range toCreate {
 		if err := db.DB.Create(row).Error; err != nil {

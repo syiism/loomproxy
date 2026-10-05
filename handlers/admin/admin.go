@@ -590,7 +590,18 @@ func ListSettings(c *gin.Context) {
 	// 排序放内存里做：`key` 在 MySQL 是保留字要加引号，而反引号是 MySQL 方言、
 	// PostgreSQL 只认双引号——ORDER BY 里怎么写都不跨方言，交给 GORM 又只支持条件形式
 	sort.Slice(settings, func(i, j int) bool { return settings[i].Key < settings[j].Key })
-	auth.Ok(c, settings)
+	// 敏感键只写不回显（P62）：值不下发，名单随响应给面板渲染密钥控件
+	sensitive := make([]string, 0, len(db.SensitiveSettingKeys))
+	for k := range db.SensitiveSettingKeys {
+		sensitive = append(sensitive, k)
+	}
+	sort.Strings(sensitive)
+	for i := range settings {
+		if db.SensitiveSettingKeys[settings[i].Key] {
+			settings[i].Value = ""
+		}
+	}
+	auth.Ok(c, gin.H{"items": settings, "sensitive_keys": sensitive})
 }
 
 type updateSettingRequest struct {
@@ -611,6 +622,11 @@ func UpdateSetting(c *gin.Context) {
 	var setting models.SystemSetting
 	if err := db.DB.Where(map[string]interface{}{"key": key}).First(&setting).Error; err != nil {
 		auth.Fail(c, http.StatusNotFound, "设置项不存在")
+		return
+	}
+	// 敏感键（P62）留空保存 = 保持原值：回显被掩掉后，"看一眼再保存"不能把空串写回去
+	if db.SensitiveSettingKeys[key] && strings.TrimSpace(req.Value) == "" {
+		auth.Ok(c, gin.H{"message": "敏感项留空，保持原值"})
 		return
 	}
 	// 值的形态按声明的 type 校验（`json` 之外补上 `bool`/`number`，与创建走同一条判据；
@@ -1166,7 +1182,7 @@ func AddPlanDataSource(c *gin.Context) {
 		auth.Fail(c, http.StatusInternalServerError, "授权已写入，但读不回生效的限额值")
 		return
 	}
-	auth.Ok(c, gin.H{"plan_id": plan.ID, "data_source_id": req.DataSourceID, "limit": row.Limit, "period": row.Period})
+	auth.Ok(c, gin.H{"plan_id": plan.ID, "data_source_id": req.DataSourceID, "limit": row.Limit})
 }
 
 // BatchAddPlanDataSources 批量授权（跳过不存在的源与已授权的源）

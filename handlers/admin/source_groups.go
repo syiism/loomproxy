@@ -271,7 +271,6 @@ func UpdateSourceGroupMembers(c *gin.Context) {
 type applyGroupLimitsRequest struct {
 	PlanCode string `json:"plan_code" binding:"required"`
 	Limit    *int64 `json:"limit" binding:"required"`
-	Period   string `json:"period"`
 }
 
 // ApplySourceGroupLimits 按组批量套用限额：存储仍是每源一行 quota_limits
@@ -300,11 +299,6 @@ func ApplySourceGroupLimits(c *gin.Context) {
 		}
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
 		return
-	}
-
-	period := strings.TrimSpace(req.Period)
-	if period == "" {
-		period = "day"
 	}
 
 	var members []models.DataSource
@@ -350,11 +344,6 @@ func ApplySourceGroupLimits(c *gin.Context) {
 	// G2：不写覆盖日志（可回滚靠限额页逐行看），只留一条服务端日志说明批量改动了哪些源
 	log.Printf("按分组套用限额: group=%s plan=%s limit=%d sources=%s 未授权跳过=%s",
 		group.Name, plan.Code, *req.Limit, strings.Join(codes, ","), strings.Join(skipped, ","))
-	if written > 0 && periodNotEnforced(period, *req.Limit) {
-		// 这个接口的入参里有 period，但它只写 limit：请求带进来的周期既没落库、也不参与判定（见 quotas.go 的判据）
-		log.Printf("ERROR: 按分组套用限额带了 period=%q（group=%s plan=%s），可这个接口只写 limit——那些行的 period 一列没被改动，而它本来也不参与判定：额度窗口一律「当日」（gate.UsageSince）。面板上那个周期下拉今天改不动任何东西（待办清单 P70）",
-			period, group.Name, plan.Code)
-	}
 	auth.Ok(c, gin.H{
 		"applied": written, "plan_code": plan.Code, "limit": *req.Limit,
 		"sources": codes, "skipped_ungranted": skipped,

@@ -26,7 +26,7 @@
           <div v-if="p.limits && p.limits.length" class="space-y-2">
             <div v-for="l in p.limits" :key="l.id" class="flex justify-between items-center text-sm">
               <span class="font-mono text-xs text-text-muted">{{ l.scope }} / {{ l.target }}</span>
-              <span class="font-mono text-xs">{{ l.limit < 0 ? '不限' : l.limit }} / {{ l.period }}</span>
+              <span class="font-mono text-xs">{{ l.limit < 0 ? '不限' : l.limit }}<span class="text-text-muted"> / 日</span></span>
             </div>
           </div>
           <div v-else class="text-center py-3 text-text-muted text-sm">无限制项</div>
@@ -105,12 +105,7 @@
                   <span v-else class="font-mono text-xs">{{ l.limit < 0 ? '不限' : l.limit }}</span>
                 </td>
                 <td>
-                  <select v-if="editingLimit === l.id" v-model="limitEditForm.period" class="input input-sm w-24">
-                    <option value="day">day</option>
-                    <option value="week">week</option>
-                    <option value="month">month</option>
-                  </select>
-                  <span v-else class="font-mono text-xs">{{ l.period }}</span>
+                  <span class="font-mono text-xs text-text-muted">日</span>
                 </td>
                 <td>
                   <div class="flex gap-3">
@@ -155,11 +150,7 @@
               <input v-model.number="limitForm.limit" type="number" class="input font-mono" required>
             </UiField>
             <UiField label="周期">
-              <select v-model="limitForm.period" class="input">
-                <option value="day">day</option>
-                <option value="week">week</option>
-                <option value="month">month</option>
-              </select>
+              <span class="input font-mono text-text-muted">日（额度窗口只有一个口径）</span>
             </UiField>
             <button type="submit" class="btn-primary col-span-2 sm:col-span-1" :disabled="submitting">添加</button>
           </div>
@@ -205,9 +196,9 @@ const planForm = ref({ code: '', name: '', description: '', status: 1, level: 0,
 const deletePlanTarget = ref(null)
 const limitsPlan = ref(null)
 const limits = ref([])
-const limitForm = ref({ scope: 'source', target: '', limit: 100, period: 'day' })
+const limitForm = ref({ scope: 'source', target: '', limit: 100 })
 const editingLimit = ref(null)
-const limitEditForm = ref({ limit: 0, period: 'day' })
+const limitEditForm = ref({ limit: 0 })
 const deleteLimitTarget = ref(null)
 const allDataSources = ref([])
 
@@ -328,7 +319,6 @@ const addLimit = async () => {
       scope: limitForm.value.scope,
       target,
       limit: limitForm.value.limit,
-      period: limitForm.value.period,
     })
     toast(limitForm.value.scope === 'source' ? `已授权并限额 ${target}` : '限制项已添加', 'success')
     limitForm.value.target = ''
@@ -339,12 +329,12 @@ const addLimit = async () => {
 
 const startEditLimit = (l) => {
   editingLimit.value = l.id
-  limitEditForm.value = { limit: l.limit, period: l.period }
+  limitEditForm.value = { limit: l.limit }
 }
 
 const saveLimit = async (l) => {
   try {
-    await adminApi.updateLimit(l.id, { limit: limitEditForm.value.limit, period: limitEditForm.value.period })
+    await adminApi.updateLimit(l.id, { limit: limitEditForm.value.limit })
     toast('已更新', 'success')
     editingLimit.value = null
     await loadLimits()

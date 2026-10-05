@@ -27,7 +27,6 @@ type QuotaLimit struct {
 	Scope     string    `gorm:"size:32;not null" json:"scope"`
 	Target    string    `gorm:"size:128;not null" json:"target"`
 	Limit     int64     `gorm:"default:0" json:"limit"`
-	Period    string    `gorm:"size:32;default:month" json:"period"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

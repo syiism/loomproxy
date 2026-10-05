@@ -88,7 +88,7 @@ func GrantPlanSource(planID uint, sourceName string) (bool, error) {
 	}
 	row := models.QuotaLimit{
 		PlanID: planID, Scope: "source", Target: sourceName,
-		Limit: db.DefaultPerSourceLimit(plan.Code), Period: "day",
+		Limit: db.DefaultPerSourceLimit(plan.Code),
 	}
 	if err := db.DB.Create(&row).Error; err != nil {
 		return false, err

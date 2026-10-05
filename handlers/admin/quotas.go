@@ -22,22 +22,6 @@ var quotaScopes = map[string]bool{
 	"source": true,
 }
 
-var quotaPeriods = map[string]bool{
-	"day":   true,
-	"week":  true,
-	"month": true,
-}
-
-// periodNotEnforced 报告这一行的 period 是不是一个「被接受、被存储、被面板当单位显示，却没有任何判定读它」的值。
-// **判据只在这一处**：额度窗口只有一个口径「当日」（`gate.UsageSince` = max(零点, 管理员刷新时刻)），
-// 全仓没有任何判定读 `quota_limits.period`（`gate/plan.go` 按 plan_id+scope 取行、`gate/usage.go` 按日累计）。
-// 于是库里一行 `limit=100, period=month` 在面板读作「100 / 每月」，闸门放的却是「100 / 每日」。
-// `limit<0` 是不限额，窗口多长都不成立，那种行不必喊；day 是播种与授权口的既有值、也是唯一与判定吻合的值，也不喊。
-// 这里只把不一致说出口，不代替拍板（三个选项见待办清单 P70）。
-func periodNotEnforced(period string, limit int64) bool {
-	return limit >= 0 && period != "" && period != "day"
-}
-
 type createQuotaPlanRequest struct {
 	Code        string `json:"code" binding:"required"`
 	Name        string `json:"name" binding:"required"`
@@ -226,7 +210,6 @@ type createQuotaLimitRequest struct {
 	Scope  string `json:"scope" binding:"required"`
 	Target string `json:"target" binding:"required"`
 	Limit  *int64 `json:"limit"`
-	Period string `json:"period"`
 }
 
 // CreateQuotaLimit 创建额度限制（limit 默认 0，-1 表示无限）
@@ -238,15 +221,6 @@ func CreateQuotaLimit(c *gin.Context) {
 	}
 	if !quotaScopes[req.Scope] {
 		auth.Fail(c, http.StatusBadRequest, "scope 必须是 global/source 之一")
-		return
-	}
-
-	period := req.Period
-	if period == "" {
-		period = "month"
-	}
-	if !quotaPeriods[period] {
-		auth.Fail(c, http.StatusBadRequest, "period 必须是 day/week/month 之一")
 		return
 	}
 
@@ -290,7 +264,6 @@ func CreateQuotaLimit(c *gin.Context) {
 		Scope:  req.Scope,
 		Target: req.Target,
 		Limit:  limit,
-		Period: period,
 	}
 	if err := db.DB.Create(&quotaLimit).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "创建额度限制失败")
@@ -299,11 +272,6 @@ func CreateQuotaLimit(c *gin.Context) {
 	if quotaLimit.Scope == "source" {
 		// 新增一行 source 限额 = 该套餐多了一个可用源，/datasources 的缓存视图要跟着变
 		catalog.InvalidateDatasourcesCache()
-	}
-	if periodNotEnforced(quotaLimit.Period, quotaLimit.Limit) {
-		// 不带 period 的调用（脚本、直连 API）落的就是这个不参与判定的默认值 month
-		log.Printf("ERROR: 新建限额行 period=%q（scope=%s target=%s plan_id=%d limit=%d），而没有任何判定读这一列——额度窗口只有一个口径「当日」（gate.UsageSince）。面板读作「%d / %s」，闸门放的是每日 %d 次（待办清单 P70）",
-			quotaLimit.Period, quotaLimit.Scope, quotaLimit.Target, quotaLimit.PlanID, quotaLimit.Limit, quotaLimit.Limit, quotaLimit.Period, quotaLimit.Limit)
 	}
 	auth.Ok(c, quotaLimit)
 }
@@ -332,13 +300,6 @@ func UpdateQuotaLimit(c *gin.Context) {
 	if req.Limit != nil {
 		updates["limit"] = *req.Limit
 	}
-	if req.Period != nil {
-		if !quotaPeriods[*req.Period] {
-			auth.Fail(c, http.StatusBadRequest, "period 必须是 day/week/month 之一")
-			return
-		}
-		updates["period"] = *req.Period
-	}
 	if len(updates) == 0 {
 		auth.Fail(c, http.StatusBadRequest, "无更新字段")
 		return
@@ -351,10 +312,6 @@ func UpdateQuotaLimit(c *gin.Context) {
 	if err := db.DB.First(&quotaLimit, quotaLimit.ID).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
 		return
-	}
-	if periodNotEnforced(quotaLimit.Period, quotaLimit.Limit) {
-		log.Printf("ERROR: 限额行 id=%d 改完是 period=%q（scope=%s target=%s limit=%d），而没有任何判定读这一列——额度窗口只有一个口径「当日」（gate.UsageSince）。面板读作「%d / %s」，闸门放的是每日 %d 次（待办清单 P70）",
-			quotaLimit.ID, quotaLimit.Period, quotaLimit.Scope, quotaLimit.Target, quotaLimit.Limit, quotaLimit.Limit, quotaLimit.Period, quotaLimit.Limit)
 	}
 	auth.Ok(c, quotaLimit)
 }
