@@ -534,15 +534,19 @@ func CreateApp() *gin.Engine {
 
 	// 端点列表（需认证，返回用户有权限访问的端点）
 	apiAuth, _ := middleware.Build("apiauth", middleware.Spec{})
+	// 这两支 401 是**端点自己的守卫**，不是网关拦的（P64 之后网关关了也会解析凭证，
+	// 匿名与坏票都会落到这里）。原来发的是裸英文单词 `"unauthorized"`，
+	// 中文界面里读不出"要登录"还是"网关没开"，而这句话现在是这条端点唯一的用户可读成因（P64 剩下的那一半）。
+	const needOwner = "这个端点要按你的套餐过滤端点清单，必须有登录归属：请带会话 Cookie、JWT 或账号 API Key 再试（网关鉴权关闭时同样要带凭证）"
 	r.GET("/endpoints", apiAuth, func(c *gin.Context) {
 		uid, exists := c.Get("user_id")
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "unauthorized"})
+			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": needOwner})
 			return
 		}
 		userID, ok := uid.(uint)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "unauthorized"})
+			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": needOwner})
 			return
 		}
 

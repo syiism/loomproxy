@@ -131,13 +131,17 @@ func startDedupeJanitor() {
 			defer ticker.Stop()
 			for range ticker.C {
 				now := time.Now()
-				deductMu.Lock()
-				for k, at := range deductAt {
-					if now.Sub(at) > idle {
-						delete(deductAt, k)
+				// 循环体里就地写 defer 会等协程退出才解锁（下一次 tick 就抢不到锁了），
+				// 所以这一段包闭包——尾解锁的问题是 panic 会把锁永久留在手里（待办清单 P93）
+				func() {
+					deductMu.Lock()
+					defer deductMu.Unlock()
+					for k, at := range deductAt {
+						if now.Sub(at) > idle {
+							delete(deductAt, k)
+						}
 					}
-				}
-				deductMu.Unlock()
+				}()
 			}
 		}()
 	})
@@ -146,7 +150,6 @@ func startDedupeJanitor() {
 // DedupeStats 给自省与管理端用：累计被冷却挡掉的扣减次数、当前在册键数、当前窗口秒数。
 func DedupeStats() (skipped int64, keys int, windowSec int) {
 	deductMu.Lock()
-	keys = len(deductAt)
-	deductMu.Unlock()
-	return deductSkip.Load(), keys, conf.Config.BillingDedupeSec
+	defer deductMu.Unlock()
+	return deductSkip.Load(), len(deductAt), conf.Config.BillingDedupeSec
 }

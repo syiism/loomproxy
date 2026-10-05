@@ -840,23 +840,27 @@ func SecurityAttemptSnapshot() []AttemptSnapshot {
 		{"login", loginLimiter},
 		{"forgot", forgotLimiter},
 	} {
-		e.limiter.mu.Lock()
-		e.limiter.pruneLocked(now)
-		for ip, a := range e.limiter.attempts {
-			s := AttemptSnapshot{
-				Kind:         e.kind,
-				IP:           ip,
-				FailStreak:   a.failStreak,
-				MaxPerMinute: e.limiter.maxPerMinute,
-				Locked:       now.Before(a.lockedUntil),
-				LockedUntil:  a.lockedUntil,
+		// 循环体里**不能**就地写 defer（那要等函数返回才解锁，第二个 limiter 就抢不到锁了），
+		// 所以每轮包一个闭包，让 defer 的作用域正好是这一轮（待办清单 P93 的闭包写法）
+		func() {
+			e.limiter.mu.Lock()
+			defer e.limiter.mu.Unlock()
+			e.limiter.pruneLocked(now)
+			for ip, a := range e.limiter.attempts {
+				s := AttemptSnapshot{
+					Kind:         e.kind,
+					IP:           ip,
+					FailStreak:   a.failStreak,
+					MaxPerMinute: e.limiter.maxPerMinute,
+					Locked:       now.Before(a.lockedUntil),
+					LockedUntil:  a.lockedUntil,
+				}
+				if now.Sub(a.windowStart) <= time.Minute {
+					s.WindowCount = a.count
+				}
+				out = append(out, s)
 			}
-			if now.Sub(a.windowStart) <= time.Minute {
-				s.WindowCount = a.count
-			}
-			out = append(out, s)
-		}
-		e.limiter.mu.Unlock()
+		}()
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Locked != out[j].Locked {
@@ -878,12 +882,14 @@ func SecurityAttemptSnapshot() []AttemptSnapshot {
 func ResetAttemptLock(ip string) int {
 	n := 0
 	for _, l := range []*ipAttemptLimiter{loginLimiter, forgotLimiter} {
-		l.mu.Lock()
-		if _, ok := l.attempts[ip]; ok {
-			delete(l.attempts, ip)
-			n++
-		}
-		l.mu.Unlock()
+		func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			if _, ok := l.attempts[ip]; ok {
+				delete(l.attempts, ip)
+				n++
+			}
+		}()
 	}
 	return n
 }
@@ -893,9 +899,11 @@ func ResetAttemptLock(ip string) int {
 // 每个新测试服务创建时调用以隔离用例（与 verify.MockLastCode 同为测试钩子，生产代码不应调用）
 func ResetAttemptLimitersForTest() {
 	for _, l := range []*ipAttemptLimiter{forgotLimiter, loginLimiter} {
-		l.mu.Lock()
-		l.attempts = make(map[string]*ipAttempt)
-		l.mu.Unlock()
+		func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.attempts = make(map[string]*ipAttempt)
+		}()
 	}
 }
 

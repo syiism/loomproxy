@@ -49,15 +49,19 @@ var (
 // 接口路径（novel_a/chapter，单个接口）；返回空串或未注入 = 不限制（保持历史行为：池非空则全部走代理）
 func SetProxySourcesGetter(f func() string) {
 	proxySourcesMu.Lock()
+	defer proxySourcesMu.Unlock()
 	proxySourcesGetter = f
-	proxySourcesMu.Unlock()
 }
 
 // proxyAllowedForPath 判定指定路由（不含前导斜杠，如 novel_a/chapter）的上游请求是否应走代理池
 func proxyAllowedForPath(path string) bool {
-	proxySourcesMu.RLock()
-	g := proxySourcesGetter
-	proxySourcesMu.RUnlock()
+	// 取 getter 是一小段临界区，包进闭包让 defer 只盖住这一小段：
+	// 下面 `g()` 是回调（读设置/可能的库），把锁带进去就等于持锁跑不确定的代码（待办清单 P81 反向的那件事）。
+	g := func() func() string {
+		proxySourcesMu.RLock()
+		defer proxySourcesMu.RUnlock()
+		return proxySourcesGetter
+	}()
 	if g == nil {
 		return true
 	}
@@ -93,9 +97,11 @@ func proxyPool() []string {
 			pool = append(pool, loadProxyFile(f)...)
 		}
 	}
+	// 这一段的解锁写在尾部——panic 会一起跳过它，于是 `proxyMu` 被永久持有，
+	// 症状是下一个走上游请求的人卡死（待办清单 P93）。改成 defer。
 	proxyMu.Lock()
+	defer proxyMu.Unlock()
 	pool = append(pool, proxyAPIList...)
-	proxyMu.Unlock()
 	return pool
 }
 

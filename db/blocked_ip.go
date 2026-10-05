@@ -18,21 +18,27 @@ var blockedIPCache struct {
 const blockedIPCacheTTL = 10 * time.Second
 
 // IsIPBlocked 判断 IP 是否在黑名单中（带 10s 内存缓存；DB 未初始化时视为未拉黑）
-func IsIPBlocked(ip string) bool {
+// blockedIPCacheLookup 一次读锁里同时问两件事（缓存在不在有效期、这个 IP 在不在表里）。
+// 原来这个临界区是 `RLock() … RUnlock()` 的尾解锁，而且**中间有一支 `return`**——
+// 那种形状只要中间 panic，读锁就被永久持有，此后每个请求的 IP 检查都卡在这把锁上（待办清单 P93）。
+// 合并成一次加锁也保住了原来的语义：缓存有效期内**不**回库刷新（未命中就直接返回 false）。
+func blockedIPCacheLookup(ip string) (fresh bool, hit bool) {
 	blockedIPCache.mu.RLock()
-	if time.Now().Before(blockedIPCache.exp) {
-		_, ok := blockedIPCache.ips[ip]
-		blockedIPCache.mu.RUnlock()
-		return ok
+	defer blockedIPCache.mu.RUnlock()
+	fresh = time.Now().Before(blockedIPCache.exp)
+	_, hit = blockedIPCache.ips[ip]
+	return fresh, hit
+}
+
+func IsIPBlocked(ip string) bool {
+	if fresh, hit := blockedIPCacheLookup(ip); fresh {
+		return hit
 	}
-	blockedIPCache.mu.RUnlock()
 
 	refreshBlockedIPCache()
 
-	blockedIPCache.mu.RLock()
-	_, ok := blockedIPCache.ips[ip]
-	blockedIPCache.mu.RUnlock()
-	return ok
+	_, hit := blockedIPCacheLookup(ip)
+	return hit
 }
 
 func refreshBlockedIPCache() {
@@ -58,6 +64,6 @@ func refreshBlockedIPCache() {
 // InvalidateBlockedIPCache 使黑名单缓存失效（管理后台增删后调用，立即生效）
 func InvalidateBlockedIPCache() {
 	blockedIPCache.mu.Lock()
+	defer blockedIPCache.mu.Unlock()
 	blockedIPCache.exp = time.Time{}
-	blockedIPCache.mu.Unlock()
 }

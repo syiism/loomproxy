@@ -48,13 +48,26 @@ func doSingleflight(key string, fn func() (interface{}, error)) (interface{}, er
 
 func (f *Flight) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
 	for {
-		f.mu.Lock()
-		if c, ok := f.calls[key]; ok {
-			f.mu.Unlock()
+		// **查与占必须在同一段临界区里**：本轮先把它拆成"读一次、再写一次"两个闭包，
+		// 于是两个 goroutine 都读到空、都去登记，后写的覆盖先写的——同一 key 的并发不再合并，
+		// 上游被打两发（`TestSingleflightCoalescesConcurrentRequests` 当场报 2 次）。
+		// 包闭包改的只是解锁姿势，**不能顺手把 check-and-set 拆开**。
+		// 也不能就地写 defer：函数体是 `for`，defer 要等 Do 返回才执行，第二轮抢同一把锁就是自死锁。
+		wait, mine := func() (*sfCall, *sfCall) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if c, ok := f.calls[key]; ok {
+				return c, nil
+			}
+			c := &sfCall{done: make(chan struct{})}
+			f.calls[key] = c
+			return nil, c
+		}()
+		if wait != nil {
 			select {
-			case <-c.done:
-				if c.err == nil && c.val != nil {
-					return c.val, nil
+			case <-wait.done:
+				if wait.err == nil && wait.val != nil {
+					return wait.val, nil
 				}
 				// 结果校验：失败/空结果不共享，重新竞争成为新 leader
 				continue
@@ -63,25 +76,28 @@ func (f *Flight) Do(key string, fn func() (interface{}, error)) (interface{}, er
 				return fn()
 			}
 		}
-		c := &sfCall{done: make(chan struct{})}
-		f.calls[key] = c
-		f.mu.Unlock()
-		return f.exec(key, c, fn)
+		return f.exec(key, mine, fn)
 	}
 }
 
 func (f *Flight) exec(key string, c *sfCall, fn func() (interface{}, error)) (interface{}, error) {
-	defer func() {
-		f.mu.Lock()
-		if c.val == nil && c.err == nil {
-			// fn 未正常返回（panic），标记错误让 follower 走结果校验重试；
-			// panic 本身继续向上传播由 gin recovery 处理
-			c.err = errSfLeaderPanic
-		}
-		delete(f.calls, key)
-		close(c.done)
-		f.mu.Unlock()
-	}()
+	defer f.finish(key, c)
 	c.val, c.err = fn()
 	return c.val, c.err
+}
+
+// finish 收口一次共享：登记 panic 标记、摘槽、唤醒 follower。
+// 锁一律 defer 释放——原来那段是 `Lock() … Unlock()` 的尾解锁写法，
+// 而这个闭包里 `close(c.done)` **本身就能 panic**（重复关同一个 channel），
+// 一旦 panic 走到这里，单飞锁就被永久持有，全站每一次上游取数都会卡在 `Do` 里（待办清单 P93）。
+func (f *Flight) finish(key string, c *sfCall) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c.val == nil && c.err == nil {
+		// fn 未正常返回（panic），标记错误让 follower 走结果校验重试；
+		// panic 本身继续向上传播由 gin recovery 处理
+		c.err = errSfLeaderPanic
+	}
+	delete(f.calls, key)
+	close(c.done)
 }

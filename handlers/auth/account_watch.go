@@ -121,22 +121,27 @@ func (s *accountWatchStore) purgeLocked(now time.Time) {
 // snapshot 导出当前观察：失败多的排前面，其次按尝试数、再按标识。顺带扫一次过期条目。
 func (s *accountWatchStore) snapshot() []AccountWatchSnapshot {
 	now := time.Now()
-	s.mu.Lock()
-	s.purgeLocked(now)
-	out := make([]AccountWatchSnapshot, 0, len(s.byAcct))
-	for k, t := range s.byAcct {
-		ips := make([]string, 0, len(t.ips))
-		for ip := range t.ips {
-			ips = append(ips, ip)
+	// 取数那一段包进闭包，让 defer 只盖住它——排序留在锁外做，与原来的持锁宽度一致
+	// （待办清单 P93：尾解锁在 panic 时会把锁永久留在手里）
+	out := func() []AccountWatchSnapshot {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.purgeLocked(now)
+		list := make([]AccountWatchSnapshot, 0, len(s.byAcct))
+		for k, t := range s.byAcct {
+			ips := make([]string, 0, len(t.ips))
+			for ip := range t.ips {
+				ips = append(ips, ip)
+			}
+			sort.Strings(ips)
+			list = append(list, AccountWatchSnapshot{
+				Principal: k, Attempts: t.attempts, Fails: t.fails,
+				DistinctIPs: t.distinctIPs, SampleIPs: ips,
+				FirstSeen: t.firstSeen, LastSeen: t.lastSeen,
+			})
 		}
-		sort.Strings(ips)
-		out = append(out, AccountWatchSnapshot{
-			Principal: k, Attempts: t.attempts, Fails: t.fails,
-			DistinctIPs: t.distinctIPs, SampleIPs: ips,
-			FirstSeen: t.firstSeen, LastSeen: t.lastSeen,
-		})
-	}
-	s.mu.Unlock()
+		return list
+	}()
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Fails != out[j].Fails {
 			return out[i].Fails > out[j].Fails
@@ -155,7 +160,7 @@ func LoginAccountWatch() []AccountWatchSnapshot { return loginAccountWatch.snaps
 // ResetLoginAccountWatchForTest 清表（集成用例共享进程，与 ResetAttemptLimitersForTest 同一个钩子位）。
 func ResetLoginAccountWatchForTest() {
 	loginAccountWatch.mu.Lock()
+	defer loginAccountWatch.mu.Unlock()
 	loginAccountWatch.byAcct = make(map[string]*accountTally)
 	loginAccountWatch.warnings = 0
-	loginAccountWatch.mu.Unlock()
 }

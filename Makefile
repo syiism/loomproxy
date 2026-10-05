@@ -16,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check
 
 build: web vet test go-build
 
@@ -60,6 +60,7 @@ vet:
 	@$(MAKE) --no-print-directory pagination-single-source-check
 	@$(MAKE) --no-print-directory ledger-write-check
 	@$(MAKE) --no-print-directory ticker-stop-check
+	@$(MAKE) --no-print-directory lock-defer-check
 
 # ticker 必须 Stop：这条形状被处理过两次（P80 给号池巡检协程补 defer Stop；第三十遍发现
 # app.prewarmCache 是全仓 8 个 ticker 里唯一漏的那个），第三次不再靠人想起来
@@ -128,6 +129,14 @@ pagination-single-source-check:
 # 固化成扫描器的理由与 P61 同一条：同一个形状被修过第二次，就别再靠人记得住。
 ledger-write-check:
 	@./scripts/check-ledger-write-checked.sh
+
+# 临界区一律 defer 解锁：P77/P78 把这句写成判据、P93 实测到「panic 跳过尾部 Unlock = 锁被永久持有，
+# 症状从"少一行读数"变成"下一个请求卡死"」，当场数出全仓还有 19 个函数是尾解锁。
+# 约定被踩过第三次就不再靠人想起来（同 ticker-stop-check / ledger-write-check 的来历）。
+# 多段临界区 / 循环体里就地写 defer 会**扩大持锁范围甚至自死锁**，所以脚本要求的是"每段闭包包起来"——
+# 理由与写法都写在脚本头部。
+lock-defer-check:
+	@./scripts/check-lock-defer-unlock.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

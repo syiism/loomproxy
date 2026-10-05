@@ -902,11 +902,11 @@ type errWindow struct {
 
 func (w *errWindow) record(isErr bool) {
 	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.total++
 	if isErr {
 		w.errs++
 	}
-	w.mu.Unlock()
 }
 
 func (w *errWindow) reset() (rate float64, n int) {

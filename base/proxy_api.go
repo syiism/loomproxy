@@ -90,9 +90,13 @@ func healthyAPICount() int {
 // replenishProxies 补充代理池至水位：先复验存量丢弃已死代理，
 // 再逐轮拉取新代理校验入池（跨轮去重，避免重复校验 API 重复下发的同一批死代理）
 func replenishProxies() {
-	proxyMu.Lock()
-	existing := append([]string(nil), proxyAPIList...)
-	proxyMu.Unlock()
+	// 两小段临界区各自包闭包：中间那些是网络活（复验、拉取、休眠重试），
+	// 把 defer 写在函数开头等于持着 `proxyMu` 跑完整轮复验——比原来的尾解锁更糟（待办清单 P81/P93）。
+	existing := func() []string {
+		proxyMu.Lock()
+		defer proxyMu.Unlock()
+		return append([]string(nil), proxyAPIList...)
+	}()
 
 	alive := validateProxies(existing)
 	seen := make(map[string]bool)
@@ -121,9 +125,11 @@ func replenishProxies() {
 		}
 	}
 
-	proxyMu.Lock()
-	proxyAPIList = alive
-	proxyMu.Unlock()
+	func() {
+		proxyMu.Lock()
+		defer proxyMu.Unlock()
+		proxyAPIList = alive
+	}()
 	pruneProxyClients()
 	if len(alive) < proxyAPIMinAlive {
 		log.Printf("动态代理池: 复验 %d 个 + 新拉 %d 个后存活仅 %d 个（水位 %d，下轮补充将在间隔后触发）",
@@ -193,9 +199,11 @@ func validateProxies(proxies []string) []string {
 		go func() {
 			defer wg.Done()
 			if checkProxyAlive(p, checkURL) {
+				// defer 在这个 goroutine 退出时执行，与原来的尾解锁等价；
+				// 统一成 defer 是为了让 `check-lock-defer-unlock` 这条门禁能覆盖所有写法（待办清单 P93）
 				mu.Lock()
+				defer mu.Unlock()
 				alive = append(alive, p)
-				mu.Unlock()
 			}
 		}()
 	}

@@ -73,22 +73,24 @@ func (p *Pool) Status() *Status {
 		return st
 	}
 
-	p.mu.Lock()
-	st.Counts[StatusHot] = int64(len(p.hot))
-	st.Counts[StatusCold] = int64(len(p.cold))
-	for _, d := range p.hot {
-		st.Devices = append(st.Devices, snapshot(d))
-	}
-	for _, d := range p.cold {
-		st.Devices = append(st.Devices, snapshot(d))
-	}
-	for _, d := range p.cooldown {
-		st.Devices = append(st.Devices, snapshot(d))
-	}
-	p.mu.Unlock()
+	// 内存那几格在锁里一次取完（`p.locked` 一律 defer 解锁，待办清单 P78/P93）。
+	// 顺带修掉一处真实的数据竞争：`len(p.cooldown)` 原来写在**解锁之后**，
+	// 与维护协程增删冷却集合并发撞上就是 race——spent/dead 在库里，那两格本来就不碰锁。
+	p.locked(func() {
+		st.Counts[StatusHot] = int64(len(p.hot))
+		st.Counts[StatusCold] = int64(len(p.cold))
+		st.Counts[StatusCooldown] = int64(len(p.cooldown))
+		for _, d := range p.hot {
+			st.Devices = append(st.Devices, snapshot(d))
+		}
+		for _, d := range p.cold {
+			st.Devices = append(st.Devices, snapshot(d))
+		}
+		for _, d := range p.cooldown {
+			st.Devices = append(st.Devices, snapshot(d))
+		}
+	})
 
-	// spent/dead 不驻留内存，从库中补充
-	st.Counts[StatusCooldown] = int64(len(p.cooldown)) // 运行中的冷却集合以内存为准
 	st.Counts[StatusSpent] = countByStatus(p.Name(), StatusSpent)
 	st.Counts[StatusDead] = countByStatus(p.Name(), StatusDead)
 	st.SoftDeleted = countSoftDeleted(p.Name())

@@ -6,6 +6,7 @@ package test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"loomproxy/conf"
@@ -41,12 +42,28 @@ func TestOptionalAuthStillResolvesCredentials(t *testing.T) {
 
 	// 无凭证/坏票：按匿名放行——但 /endpoints 是 user_id 过滤的端点，匿名无身份可挂，
 	// 端点自己的守卫回 401（这是端点语义，不是网关拦的；P64 修的是合法凭证被网关关闭误伤）
-	status, _ = doJSON(t, srv, "GET", "/endpoints", nil, nil)
-	if status != http.StatusUnauthorized {
-		t.Fatalf("AUTH_ENABLED=false + 无凭证 = %d，端点守卫应回 401（匿名无身份）", status)
-	}
-	status, _ = doJSON(t, srv, "GET", "/endpoints", nil, authHeader("not-a-jwt"))
-	if status != http.StatusUnauthorized {
-		t.Fatalf("AUTH_ENABLED=false + 坏票 = %d，应按匿名落到端点守卫", status)
+	//
+	// 顺带钉住那 401 的**句子**（P64 剩下的那一半）：这里过去发裸英文 `unauthorized`，
+	// 中文界面读不出"要登录"还是"网关没开"；而现在网关不拦了，这句话是这条端点唯一的用户可读成因。
+	for _, tc := range []struct{ what, token string }{
+		{"无凭证", ""},
+		{"坏票", "not-a-jwt"},
+	} {
+		var h map[string]string
+		if tc.token != "" {
+			h = authHeader(tc.token)
+		}
+		status, env := doJSON(t, srv, "GET", "/endpoints", nil, h)
+		if status != http.StatusUnauthorized {
+			t.Fatalf("AUTH_ENABLED=false + %s = %d，端点守卫应回 401（匿名无身份）", tc.what, status)
+		}
+		if env.Msg == "unauthorized" || env.Msg == "" {
+			t.Errorf("%s 那支 401 的 msg 还是裸英文/空的：%q——中文界面读不出该登录还是该开票", tc.what, env.Msg)
+		}
+		for _, want := range []string{"套餐", "凭证"} {
+			if !strings.Contains(env.Msg, want) {
+				t.Errorf("%s 那支 401 的 msg 少了 %q：%q", tc.what, want, env.Msg)
+			}
+		}
 	}
 }

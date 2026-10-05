@@ -134,21 +134,27 @@ func startLimiterJanitor() {
 			defer ticker.Stop()
 			for range ticker.C {
 				now := time.Now()
-				rateLimiterMu.Lock()
-				for k, l := range rateLimiters {
-					if l.idleExpired(now) {
-						delete(rateLimiters, k)
+				// 两段各包闭包：这是循环体，就地 defer 要等协程退出才解锁，第二次 tick 就抢不到锁了
+				// （尾解锁才是问题——panic 会把锁永久留在手里，待办清单 P93）
+				func() {
+					rateLimiterMu.Lock()
+					defer rateLimiterMu.Unlock()
+					for k, l := range rateLimiters {
+						if l.idleExpired(now) {
+							delete(rateLimiters, k)
+						}
 					}
-				}
-				rateLimiterMu.Unlock()
+				}()
 
-				windowLimiterMu.Lock()
-				for k, l := range windowLimiters {
-					if l.idleExpired(now) {
-						delete(windowLimiters, k)
+				func() {
+					windowLimiterMu.Lock()
+					defer windowLimiterMu.Unlock()
+					for k, l := range windowLimiters {
+						if l.idleExpired(now) {
+							delete(windowLimiters, k)
+						}
 					}
-				}
-				windowLimiterMu.Unlock()
+				}()
 			}
 		}()
 	})
@@ -158,11 +164,11 @@ func startLimiterJanitor() {
 // 闲置超过一个 interval 后令牌已回满，丢弃与保留等价（2× 是安全余量）。
 func (rl *rateLimiter) idleExpired(now time.Time) bool {
 	rl.mu.Lock()
+	defer rl.mu.Unlock()
 	ttl := limiterIdleTTL
 	if d := time.Duration(rl.interval) * time.Second * 2; d > ttl {
 		ttl = d
 	}
-	rl.mu.Unlock()
 	return now.Sub(time.Unix(0, rl.lastSeen.Load())) > ttl
 }
 
@@ -170,11 +176,11 @@ func (rl *rateLimiter) idleExpired(now time.Time) bool {
 // 闲置超过一个窗口后所有记录都已滑出，丢弃与保留等价。
 func (wl *windowLimiter) idleExpired(now time.Time) bool {
 	wl.mu.Lock()
+	defer wl.mu.Unlock()
 	ttl := limiterIdleTTL
 	if d := wl.window * 2; d > ttl {
 		ttl = d
 	}
-	wl.mu.Unlock()
 	return now.Sub(time.Unix(0, wl.lastSeen.Load())) > ttl
 }
 
@@ -192,9 +198,13 @@ func LimiterIdleExpiredForTest(intervalSec, windowSec int64, idle time.Duration)
 // getRateLimiter 获取（或创建）某接口的间隔限流器
 func getRateLimiter(key string) *rateLimiter {
 	startLimiterJanitor()
-	rateLimiterMu.RLock()
-	limiter, ok := rateLimiters[key]
-	rateLimiterMu.RUnlock()
+	// 读那一段包闭包，让 defer 只盖住这一次查表（待办清单 P93：尾解锁会被 panic 跳过）
+	limiter, ok := func() (*rateLimiter, bool) {
+		rateLimiterMu.RLock()
+		defer rateLimiterMu.RUnlock()
+		l, ok := rateLimiters[key]
+		return l, ok
+	}()
 	if ok {
 		return limiter
 	}
@@ -218,9 +228,13 @@ func getRateLimiter(key string) *rateLimiter {
 // getWindowLimiter 获取（或创建）某接口的窗口计数限流器
 func getWindowLimiter(key string) *windowLimiter {
 	startLimiterJanitor()
-	windowLimiterMu.RLock()
-	limiter, ok := windowLimiters[key]
-	windowLimiterMu.RUnlock()
+	// 同 getRateLimiter：读表那一段包闭包（待办清单 P93）
+	limiter, ok := func() (*windowLimiter, bool) {
+		windowLimiterMu.RLock()
+		defer windowLimiterMu.RUnlock()
+		l, ok := windowLimiters[key]
+		return l, ok
+	}()
 	if ok {
 		return limiter
 	}

@@ -213,8 +213,8 @@ var (
 // SetSubjectStore 注入持久化后端（传 nil 退回纯内存）
 func SetSubjectStore(st SubjectStore) {
 	subjectStoreMu.Lock()
+	defer subjectStoreMu.Unlock()
 	subjectStore = st
-	subjectStoreMu.Unlock()
 }
 
 // SubjectStoreHealth 持久化后端**可选**实现的写侧体检面。丢持久化不是致命错（内存缓存仍在），

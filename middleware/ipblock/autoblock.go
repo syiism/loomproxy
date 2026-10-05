@@ -60,18 +60,22 @@ func RecordFailure(ip string, status int) {
 	}
 
 	now := time.Now()
-	autoBlockState.Lock()
-	// 剪枝窗口外记录后追加本次
-	kept := autoBlockState.failures[ip][:0]
-	for _, ts := range autoBlockState.failures[ip] {
-		if now.Sub(ts) <= window {
-			kept = append(kept, ts)
+	// 剪枝 + 追加是一小段临界区，包进闭包 defer 解锁；下面那句 `n` 的判断与写库都在锁外，
+	// 与原形状的持锁宽度一致（待办清单 P93：尾解锁会被 panic 跳过，这把锁卡住就是一条请求都进不来）
+	n := func() int {
+		autoBlockState.Lock()
+		defer autoBlockState.Unlock()
+		// 剪枝窗口外记录后追加本次
+		kept := autoBlockState.failures[ip][:0]
+		for _, ts := range autoBlockState.failures[ip] {
+			if now.Sub(ts) <= window {
+				kept = append(kept, ts)
+			}
 		}
-	}
-	kept = append(kept, now)
-	autoBlockState.failures[ip] = kept
-	n := len(kept)
-	autoBlockState.Unlock()
+		kept = append(kept, now)
+		autoBlockState.failures[ip] = kept
+		return len(kept)
+	}()
 
 	if n < threshold {
 		return
@@ -89,9 +93,11 @@ func RecordFailure(ip string, status int) {
 	if err := db.DB.Create(&rec).Error; err != nil {
 		return // 唯一冲突（并发/已存在）等，忽略
 	}
-	autoBlockState.Lock()
-	delete(autoBlockState.failures, ip)
-	autoBlockState.Unlock()
+	func() {
+		autoBlockState.Lock()
+		defer autoBlockState.Unlock()
+		delete(autoBlockState.failures, ip)
+	}()
 	db.InvalidateBlockedIPCache()
 	log.Printf("SECURITY: 自动拉黑 IP %s（%d 秒内 %d 次 403/429）", ip, int(window.Seconds()), n)
 }

@@ -20,16 +20,16 @@ var (
 // Register 登记号池（同名覆盖），返回该池便于调用方继续持有
 func Register(p *Pool) *Pool {
 	registryMu.Lock()
+	defer registryMu.Unlock()
 	pools[p.Name()] = p
-	registryMu.Unlock()
 	return p
 }
 
 // Unregister 注销号池（不停止其协程，由调用方自行 Stop）
 func Unregister(name string) {
 	registryMu.Lock()
+	defer registryMu.Unlock()
 	delete(pools, name)
-	registryMu.Unlock()
 }
 
 // Get 按名取池，未登记返回 nil

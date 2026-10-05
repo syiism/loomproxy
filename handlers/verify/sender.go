@@ -54,9 +54,12 @@ func MockLastCode(scene, target string) string {
 func (mockSender) Name() string { return "mock" }
 
 func (mockSender) Send(scene, target, code string) error {
-	mockMu.Lock()
-	mockLastCode[scene+"|"+target] = code
-	mockMu.Unlock()
+	// 写那一段包闭包 defer 解锁，日志照旧在锁外打（待办清单 P93）
+	func() {
+		mockMu.Lock()
+		defer mockMu.Unlock()
+		mockLastCode[scene+"|"+target] = code
+	}()
 	log.Printf("VERIFY [mock] scene=%s target=%s code=%s（mock 通道仅打印日志，不实际发送）", scene, target, code)
 	return nil
 }

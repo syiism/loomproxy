@@ -60,21 +60,28 @@ func (w *MissWatcher) Note(source, stem string) {
 	}
 
 	now := time.Now()
-	w.mu.Lock()
-	w.names = append(w.names, fmt.Sprintf("%s/%s.json(声明=%v)", source, stem, declared))
-	fresh := w.last.IsZero() || now.Sub(w.last) >= w.window
-	if !fresh {
-		w.mu.Unlock()
+	// 登记 + 取本窗口样本是一小段临界区，包进闭包用 defer 解锁；
+	// 那条 ERROR 留在锁外打（它里面还会读原子计数、拼字符串，持锁跑这些没意义）。
+	// 原来这里是两处尾解锁（一支在未到期时 `Unlock(); return`）——中间 panic 就把 `w.mu` 永久留在手里（待办清单 P93）
+	sample, n, due := func() ([]string, int, bool) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		w.names = append(w.names, fmt.Sprintf("%s/%s.json(声明=%v)", source, stem, declared))
+		if !w.last.IsZero() && now.Sub(w.last) < w.window {
+			return nil, 0, false
+		}
+		s := w.names
+		if len(s) > missNameSample {
+			s = s[:missNameSample]
+		}
+		cnt := len(w.names)
+		w.names = nil
+		w.last = now
+		return s, cnt, true
+	}()
+	if !due {
 		return
 	}
-	sample := w.names
-	if len(sample) > missNameSample {
-		sample = sample[:missNameSample]
-	}
-	n := len(w.names)
-	w.names = nil
-	w.last = now
-	w.mu.Unlock()
 
 	log.Printf("ERROR: 静态字典缺位：累计 %d 次（有源声明=%d，通常是部署缺产物；无声明=%d，通常是旧客户端在要已下架的字典）；本窗口的缺位样例 %d 条：\n  %s%s",
 		w.total.Load(), w.declared.Load(), w.unknown.Load(), n,
