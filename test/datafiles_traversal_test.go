@@ -80,9 +80,10 @@ func TestDataFilesCannotEscapeDataDir(t *testing.T) {
 				c.why, c.path, status, truncate(body, 200))
 			continue
 		}
-		// 收口的形状：要么路由层 404，要么入口明确说"非法"。含糊的"200 且什么都没读"不算过
-		if status == http.StatusOK && !strings.Contains(body, "非法的字典路径") {
-			t.Errorf("形态「%s」既没被 404 挡掉也没说非法，status=%d body=%s",
+		// 收口的形状（P51② 已拍板）：一律 404 + 统一 "not found"，不区分原因、不念名单——
+		// 含糊的"200 且什么都没读"与"200 说非法"都不算过
+		if status != http.StatusNotFound || !strings.Contains(body, "not found") {
+			t.Errorf("形态「%s」应 404 + not found（P51②），status=%d body=%s",
 				c.why, status, truncate(body, 160))
 		}
 		t.Logf("形态「%s」→ status=%d，未泄露（body 前 80 字：%s）",

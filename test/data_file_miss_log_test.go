@@ -45,14 +45,15 @@ func TestStaticDictMissCountedAndResponseUnchanged(t *testing.T) {
 	// 夹具里 fake_b 声明了字典 `fakesource.DictFile`（分类目录 fake），临时 DATA_DIR 里没装任何产物 → 声明而不在位
 	total0, declared0, unknown0 := catalog.DataFileMissTotals()
 	status, body := getDataFile(t, srv.URL+"/data/fake/"+fakesource.DictFile+".json")
-	if status != http.StatusOK {
-		t.Errorf("缺文件 status = %d, want 200——**这一版刻意不改对外行为**（404 与否等 P51② 拍板）", status)
+	// P51② 已拍板（2026-10-05）：缺文件一律 404 + 统一形状，不带 Available 枚举（匿名端点的探测面）
+	if status != http.StatusNotFound {
+		t.Errorf("缺文件 status = %d, want 404（P51② 拍板：不再 200 装错误正文）", status)
 	}
-	if !strings.Contains(body, "not found in source") {
+	if !strings.Contains(body, "not found") {
 		t.Errorf("缺文件的正文形状变了：%q", body)
 	}
-	if strings.Contains(body, `"code"`) {
-		t.Errorf("正文里冒出了标准信封字段，形状与生产实测不同（生产是 {\"error\",\"available\"}）：%q", body)
+	if strings.Contains(body, `"code"`) || strings.Contains(body, `"available"`) {
+		t.Errorf("正文冒出了信封字段或 Available 枚举面：%q", body)
 	}
 	total1, declared1, unknown1 := catalog.DataFileMissTotals()
 	if declared1-declared0 != 1 || unknown1-unknown0 != 0 || total1-total0 != 1 {

@@ -36,9 +36,11 @@ type FileListResponse struct {
 	Files  []FileInfo `json:"files"`
 }
 
-type ErrorResponse struct {
-	Error     string   `json:"error"`
-	Available []string `json:"available"`
+// NotFoundResponse 静态托管端点的「没有」响应（P51②）：缺文件与非法路径一律 404 + 这一个形状，
+// 不带 Available 列表——免鉴权端点不该回答「哪些文件存在」（枚举/探测面）。
+// 装配层认得这个类型并回 404；错误文案统一，不区分「没有」与「路径非法」。
+type NotFoundResponse struct {
+	Error string `json:"error"`
 }
 
 type DataFilesHandler struct {
@@ -184,7 +186,7 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 	// 免鉴权的静态托管路径，每一个段都当成不可信输入处理：先验段，再谈读什么。
 	for _, seg := range parts {
 		if !safeDataSegment(strings.TrimSuffix(seg, ".json")) {
-			result = ErrorResponse{Error: "非法的字典路径"}
+			result = NotFoundResponse{Error: "not found"}
 			return result, nil
 		}
 	}
@@ -212,19 +214,10 @@ func (h *DataFilesHandler) Handle(ctx context.Context, params map[string]interfa
 			}
 			data, err := h.readFileRaw(source, name+".json")
 			if err != nil {
-				// 服务端自己要看得见这笔缺位（响应一字未改；缺文件回 200 还是 404 等拍，见待办清单 P51②）
+				// 服务端自己要看得见这笔缺位（读数照记）；对外 P51② 已拍板：404 + 统一形状，
+				// 不区分「缺文件/半截文件/路径非法」，也不带 Available 枚举（匿名端点的探测面）
 				dataFileMisses.Note(source, name)
-				var available []string
-				for _, f := range h.listFiles(source) {
-					validatePath := filepath.Join(h.dataDir(source), fmt.Sprintf("%s.json", f.Name))
-					if raw, e := os.ReadFile(validatePath); e == nil && json.Valid(raw) {
-						available = append(available, f.Name)
-					}
-				}
-				result = ErrorResponse{
-					Error:     fmt.Sprintf("file '%s.json' not found in source '%s'", name, source),
-					Available: available,
-				}
+				result = NotFoundResponse{Error: "not found"}
 			} else {
 				result = data
 			}

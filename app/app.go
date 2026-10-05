@@ -231,6 +231,12 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 					c.Abort()
 					return
 				}
+				// P51②：缺位/非法路径一律 404 + 统一形状（不再 200 装错误正文）
+				if nfr, ok := result.(catalog.NotFoundResponse); ok {
+					c.JSON(http.StatusNotFound, nfr)
+					c.Abort()
+					return
+				}
 			}
 			// 控制面端点（source 为空）没有内容维度可抽
 			if source != "" {
