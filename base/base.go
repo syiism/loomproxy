@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"loomproxy/conf"
 )
@@ -405,6 +406,12 @@ func (h *BaseHandler) FetchJSON(ctx context.Context, url string, headers map[str
 // （上游风控拒绝与资源下架可能同为 403，需凭响应体区分）
 func errBodySnippet(body io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(body, 256))
+	// LimitReader 是按**字节**截的，正好落在一个多字节字符中间时尾巴上会留下半个字符——
+	// 它进的是错误文案，经 JSON 出到面板/日志就成了乱码（U+FFFD）。所以把不完整的尾巴削掉
+	//（最多削 3 字节，代价是一次 ValidString）。待办清单 P83。
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
 	s := strings.TrimSpace(string(b))
 	if s == "" {
 		return ""

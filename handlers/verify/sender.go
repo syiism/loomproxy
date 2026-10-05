@@ -126,9 +126,13 @@ func (httpSender) Send(scene, target, code string) error {
 	return nil
 }
 
+// truncateStr 按 **rune** 截断（不是字节）：这里截的是发码平台的响应体，它是中文正文是常态，
+// 按字节切会在尾部留下半个字符，而这段文本会进错误文案——出到日志与面板就是乱码（待办清单 P83）。
+// base 层有一份同语义的 truncateRunes，两处不合并是分层约束（base 不得导入 utils/handlers）。
 func truncateStr(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+	r := []rune(s)
+	if n <= 0 || len(r) <= n {
+		return s
 	}
-	return s
+	return string(r[:n])
 }
