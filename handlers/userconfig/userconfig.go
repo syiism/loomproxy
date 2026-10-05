@@ -1,6 +1,7 @@
 package userconfig
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -92,12 +93,21 @@ func UpdateSourceConfigs(c *gin.Context) {
 	}
 
 	for _, cfg := range req.Configs {
+		// 这个端点的用途就是那一次写库，写没了却回「已更新」等于让用户以为地址改好了
+		// （实际还在打旧的 base_url）。同族的写入口（生成密钥 / 加黑名单 / 存别名）都是失败就 500，
+		// 这里过去是唯一一个不看结果的。Delete 删 0 行不算错误，所以不会有假失败。
+		q := db.DB.Where("user_id = ? AND source_name = ?", uid, cfg.SourceName)
+		var err error
 		if cfg.BaseURL == "" {
-			db.DB.Where("user_id = ? AND source_name = ?", uid, cfg.SourceName).Delete(&models.UserSourceConfig{})
+			err = q.Delete(&models.UserSourceConfig{}).Error
 		} else {
-			db.DB.Where("user_id = ? AND source_name = ?", uid, cfg.SourceName).
-				Assign(models.UserSourceConfig{UserID: uid, SourceName: cfg.SourceName, BaseURL: cfg.BaseURL}).
-				FirstOrCreate(&models.UserSourceConfig{})
+			err = q.Assign(models.UserSourceConfig{UserID: uid, SourceName: cfg.SourceName, BaseURL: cfg.BaseURL}).
+				FirstOrCreate(&models.UserSourceConfig{}).Error
+		}
+		if err != nil {
+			log.Printf("ERROR: 用户 %d 的数据源配置写入失败（源 %s）：%v", uid, cfg.SourceName, err)
+			auth.Fail(c, http.StatusInternalServerError, "保存失败")
+			return
 		}
 	}
 

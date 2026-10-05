@@ -102,10 +102,16 @@ func Init() error {
 	// SQLite/PostgreSQL 用标准相关子查询（包裹一层派生表以兼容 MySQL 的同表限制）。
 	// 全新库首次启动时表尚不存在，跳过避免误报错误日志
 	if DB.Migrator().HasTable("user_roles") {
+		var dedupe *gorm.DB
 		if DB.Dialector.Name() == "mysql" {
-			DB.Exec(`DELETE t1 FROM user_roles t1 INNER JOIN user_roles t2 WHERE t1.id > t2.id AND t1.user_id = t2.user_id AND t1.role_id = t2.role_id`)
+			dedupe = DB.Exec(`DELETE t1 FROM user_roles t1 INNER JOIN user_roles t2 WHERE t1.id > t2.id AND t1.user_id = t2.user_id AND t1.role_id = t2.role_id`)
 		} else {
-			DB.Exec(`DELETE FROM user_roles WHERE id NOT IN (SELECT min_id FROM (SELECT MIN(id) AS min_id FROM user_roles GROUP BY user_id, role_id) t)`)
+			dedupe = DB.Exec(`DELETE FROM user_roles WHERE id NOT IN (SELECT min_id FROM (SELECT MIN(id) AS min_id FROM user_roles GROUP BY user_id, role_id) t)`)
+		}
+		// 这里失败的真症状在下一行：唯一索引建不起来、AutoMigrate 报错、服务拒绝启动，
+		// 而那条错误说的是「索引冲突」，不会提「清理没跑成」——不记这一句就得从终点倒推。
+		if dedupe.Error != nil {
+			log.Printf("ERROR: user_roles 重复行清理失败（唯一索引还没建，接下来的 AutoMigrate 大概会因此报错）：%v", dedupe.Error)
 		}
 	}
 

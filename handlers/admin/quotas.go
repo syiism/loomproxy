@@ -570,12 +570,20 @@ func UpdateUserQuota(c *gin.Context) {
 	}
 
 	for _, o := range req.Overrides {
+		// 同形状第三处（待办清单 P88）：覆盖值没写进去仍回「已更新」，
+		// 而限额判定读的就是这张表——管理员会以为自己刚给这个人放开/收紧过额度。
+		q := db.DB.Where("user_id = ? AND group_code = ?", user.ID, o.GroupCode)
+		var err error
 		if o.Limit == 0 {
-			db.DB.Where("user_id = ? AND group_code = ?", user.ID, o.GroupCode).Delete(&models.UserQuotaOverride{})
+			err = q.Delete(&models.UserQuotaOverride{}).Error
 		} else {
-			db.DB.Where("user_id = ? AND group_code = ?", user.ID, o.GroupCode).
-				Assign(models.UserQuotaOverride{UserID: user.ID, GroupCode: o.GroupCode, Limit: o.Limit}).
-				FirstOrCreate(&models.UserQuotaOverride{})
+			err = q.Assign(models.UserQuotaOverride{UserID: user.ID, GroupCode: o.GroupCode, Limit: o.Limit}).
+				FirstOrCreate(&models.UserQuotaOverride{}).Error
+		}
+		if err != nil {
+			log.Printf("ERROR: 用户 %d 的额度覆盖写入失败（组 %s / 限额 %d）：%v", user.ID, o.GroupCode, o.Limit, err)
+			auth.Fail(c, http.StatusInternalServerError, "保存失败")
+			return
 		}
 	}
 	auth.Ok(c, gin.H{"message": "额度覆盖已更新"})

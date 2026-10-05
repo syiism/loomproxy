@@ -8,6 +8,7 @@ package gate
 
 import (
 	"bufio"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -98,6 +99,23 @@ func CostCacheKey(sourceCode, action string) string {
 // InvalidateCostCache 让某个「数据源 × 动作」的计费配置立即失效（改价、改开关之后调用）。
 func InvalidateCostCache(sourceCode, action string) {
 	utils.DefaultCache().Del(CostCacheKey(sourceCode, action))
+}
+
+// recordUsage 写一行「今日消耗」流水——它是 UsedToday 的**读对象**，不是留档。
+// 所以写失败绝不能静默：请求已经放行、监控记的是成功、面板显示的量偏小，
+// 唯一的症状是「这个人的额度怎么永远用不完」，而那句话在日志里没有任何对应行。
+// 两处扣减（中间件与聚合扇出）共用这一个出口，形状与文案只有一份。
+func recordUsage(userID uint, sourceName, action string, cost int64) {
+	if err := db.DB.Create(&models.QuotaUsageLog{
+		UserID:    userID,
+		GroupCode: sourceName,
+		Interface: strings.ToLower(action),
+		Cost:      cost,
+	}).Error; err != nil {
+		log.Printf("ERROR: 额度流水写入失败（用户 %d / 源 %s / 接口 %s / %d 点）：%v"+
+			"——这格用量今天没扣上，UsedToday 会偏小",
+			userID, sourceName, action, cost, err)
+	}
 }
 
 // getCachedCost 从缓存读取 QuotaCost，未命中时查库并填充缓存
@@ -208,12 +226,7 @@ func BillingMiddleware(sourceName, action string) gin.HandlerFunc {
 		// 冷却期内同一篇内容不重复扣（待办清单 P25）：请求照常放行、明细照常记，
 		// 只是不再写第二条流水。标识取不到时 alreadyDeducted 返回 false，等于按请求扣。
 		if cw.succeeded() && !alreadyDeducted(c, user.ID, sourceName, action) {
-			db.DB.Create(&models.QuotaUsageLog{
-				UserID:    user.ID,
-				GroupCode: sourceName,
-				Interface: strings.ToLower(action),
-				Cost:      cost.Cost,
-			})
+			recordUsage(user.ID, sourceName, action, cost.Cost)
 		}
 	}
 }
@@ -264,10 +277,5 @@ func DeductAggregateTarget(c *gin.Context, user *models.User, sourceName, action
 	if alreadyDeducted(c, user.ID, sourceName, action) {
 		return
 	}
-	db.DB.Create(&models.QuotaUsageLog{
-		UserID:    user.ID,
-		GroupCode: sourceName,
-		Interface: strings.ToLower(action),
-		Cost:      cost,
-	})
+	recordUsage(user.ID, sourceName, action, cost)
 }

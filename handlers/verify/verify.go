@@ -124,7 +124,11 @@ var lastSweep atomic.Int64
 
 // CleanupExpired 删除已过期验证码行（Issue 时对同目标顺带清理；全表清理按 1h 节流）
 func CleanupExpired() {
-	db.DB.Where("expires_at < ?", time.Now()).Delete(&models.VerificationCode{})
+	// 清不掉的后果是过期行一直留着（表只会涨），而下一次清理要等 1 小时后——所以必须出声，
+	// 否则「这张表为什么比去年大」没有答案。
+	if err := db.DB.Where("expires_at < ?", time.Now()).Delete(&models.VerificationCode{}).Error; err != nil {
+		log.Printf("ERROR: 过期验证码清理失败（1 小时后才会再试一次）：%v", err)
+	}
 	lastSweep.Store(time.Now().Unix())
 }
 
@@ -223,7 +227,12 @@ func Check(scene, target, code string) (*models.VerificationCode, error) {
 		return nil, ErrTooManyAttempts
 	}
 	if models.HashRedemptionCode(strings.TrimSpace(code)) != row.CodeHash {
-		db.DB.Model(&row).UpdateColumn("attempts", row.Attempts+1)
+		// 这一列是防爆破的计数器：写不进去时本次请求仍按 `row.Attempts+1` 判（下面两行），
+		// 但下一次读到的还是那个旧值——计数器从此不再前进，锁死不了任何人。
+		// 所以必须出声；要不要改成"写不进就当作已到顶"（fail-closed）是语义选择，已登成待拍（待办清单 P88）。
+		if err := db.DB.Model(&row).UpdateColumn("attempts", row.Attempts+1).Error; err != nil {
+			log.Printf("ERROR: 验证码失败次数没记进库（目标场景已写入过次数，计数器停在 %d）：%v——防爆破对此码不再前进", row.Attempts, err)
+		}
 		if row.Attempts+1 >= maxAttempts() {
 			return nil, ErrTooManyAttempts
 		}

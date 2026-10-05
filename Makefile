@@ -54,6 +54,7 @@ vet:
 	@$(MAKE) --no-print-directory param-assert-check
 	@$(MAKE) --no-print-directory deploy-atomic-check
 	@$(MAKE) --no-print-directory pagination-single-source-check
+	@$(MAKE) --no-print-directory ledger-write-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -109,6 +110,14 @@ deploy-atomic-check:
 # 而旧写法丢掉 Atoi 的错误，越界页码会得到 MaxInt64 并让 offset 溢出成负数（待办清单 P86）
 pagination-single-source-check:
 	@./scripts/check-pagination-single-source.sh
+
+# 判定表与审计表的写入必须读 .Error（待办清单 P88）：这类写入失败**不改对外响应**——
+# 请求照常 200、监控记成功，唯一的症状是"额度扣不完 / 用户以为配置改好了 / 过期行只涨不清"。
+# §10 早就写了"审计类写入不许吞错"，但那是句话，于是本轮扫出 `quota_usage_logs` 两处、
+# `user_source_configs` 两处、`user_roles` 去重一处、过期验证码清理一处都是裸写。
+# 固化成扫描器的理由与 P61 同一条：同一个形状被修过第二次，就别再靠人记得住。
+ledger-write-check:
+	@./scripts/check-ledger-write-checked.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

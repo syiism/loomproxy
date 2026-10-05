@@ -866,12 +866,20 @@ func UpdatePlatformSourceConfigs(c *gin.Context) {
 	}
 
 	for _, cfg := range req.Configs {
+		// 与用户侧的 `/user/source-configs` 同形状（待办清单 P88）：平台默认地址写失败却回「已更新」，
+		// 后果比用户侧更大——它决定所有没自己配地址的人打到哪个域。
+		q := db.DB.Where("source_name = ?", cfg.SourceName)
+		var err error
 		if cfg.BaseURL == "" {
-			db.DB.Where("source_name = ?", cfg.SourceName).Delete(&models.PlatformSourceConfig{})
+			err = q.Delete(&models.PlatformSourceConfig{}).Error
 		} else {
-			db.DB.Where("source_name = ?", cfg.SourceName).
-				Assign(models.PlatformSourceConfig{SourceName: cfg.SourceName, BaseURL: cfg.BaseURL}).
-				FirstOrCreate(&models.PlatformSourceConfig{})
+			err = q.Assign(models.PlatformSourceConfig{SourceName: cfg.SourceName, BaseURL: cfg.BaseURL}).
+				FirstOrCreate(&models.PlatformSourceConfig{}).Error
+		}
+		if err != nil {
+			log.Printf("ERROR: 平台默认地址写入失败（源 %s）：%v", cfg.SourceName, err)
+			auth.Fail(c, http.StatusInternalServerError, "保存失败")
+			return
 		}
 	}
 	auth.Ok(c, gin.H{"message": "已更新"})
