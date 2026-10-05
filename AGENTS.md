@@ -196,7 +196,11 @@
 - **下发位置是部署事实，不做设置项**：书源 JSON 走静态托管 `GET /data/shuyuan/bookSource.json`（免鉴权、原样直出），
   `GET /user/import-config` 只回路径与 `ready`（判据是 `json.Valid`）；绝对地址由前端 `window.location.origin` 拼，
   不信 `X-Forwarded-Host`。旧的 `legado_import_url` 已进 seed 废弃键清单、启动硬删。
-- **审计类写入不许吞错**：只为留档而写的表（如 `redemption_logs`）插入失败必须打服务端日志；
+- **写入不许吞错，判据是「这张表是谁的读对象」**：不只留档表（`redemption_logs`）——
+  **判定输入表**更严。`quota_usage_logs` 是 `UsedToday` 的读对象，写失败等于"这次没扣额度"，
+  而请求 200、监控成功、面板偏小，没有任何调用方会报错（待办清单 P88）。
+  **已由 `make vet` 的 `ledger-write-check` 扫**：8 张判定/审计表的字面量写入口 + 任何
+  `Updates/UpdateColumn(s)`，收尾行没有 `.Error` 即构建红。
   列宽按**用户输入的最坏形态**定，不是按我们自己生成的形态定。SQLite 不检查列宽，这类只在 MySQL 暴露。
   **镜像的那一半**（待办清单 P67）：面向用户的错误文案可以也应该是固定句，
   但**同一份原因必须落在服务端日志里**——"给用户的不泄"与"给运维的有声"是两份信息，只做其一仍是吞错。
