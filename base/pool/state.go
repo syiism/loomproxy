@@ -17,7 +17,14 @@ import (
 	"loomproxy/models"
 )
 
-// Config 号池运行参数（零值字段取 DefaultConfig 的对应值）
+// Config 号池运行参数（零值字段取 DefaultConfig 的对应值）。
+//
+// **一条歧义要写明**（待办清单 P85）：`0` 在下面这些字段里的意思是"没写"，不是"要 0 个"——
+// `ColdSpares` / `MaxHot` / `MaxDead` / `RenewBefore` / `Interval` / `HookTimeout` 都会把 0 回填成
+// 默认档（`MaxDead` 想留 0 个目前只能靠 `POOL_MAX_DEAD=0` 且源侧留空）。
+// 而 `MaxDevices` 的 0 **是一个值**（0=不限），`TargetDevices` 的 0 另有回退链（0 → MaxDevices → 1）——
+// 同一个结构体里两种 0 并存。现网没有活症状（qm_device 被名额夹回 0 冷备、fq 摊薄型不看 ColdSpares，
+// 两者实测 cold=0），但下一个想写"显式 0"的源会踩。要不要把 API 改成能表达"显式 0"，已登记成决策项。
 type Config struct {
 	ColdSpares      int           // 冷备号数量（未领取、不过期）
 	MaxHot          int           // 热号上限（错误驱动扩容的封顶）
