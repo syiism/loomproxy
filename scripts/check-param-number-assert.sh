@@ -21,7 +21,7 @@
 #      于是将来任何按 string 读它的代码都会读到伪造值。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 NUMERIC='(float64|float32|int|int8|int16|int32|int64|uint|uint64|json\.Number)'
 

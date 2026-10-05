@@ -18,7 +18,7 @@
 #      清单写了不存在的名字，扫描器就对着一个不存在的形状空转（绿灯毫无意义）。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 WATCHED=(QuotaUsageLog RedemptionLog UserSourceConfig VerificationCode ApiCallLog AuthSession PlatformSourceConfig UserQuotaOverride)
 

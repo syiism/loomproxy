@@ -16,7 +16,7 @@
 #      留豁免位就是给下一次漏掉留门。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 python3 - <<'PY'
 import re, subprocess, sys

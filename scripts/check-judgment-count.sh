@@ -10,7 +10,7 @@
 #   「条目格式」章节里那行模板长得很像条目，靠上面这条位置规则天然排除。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 python3 - <<'PY'
 import re, sys

@@ -15,7 +15,7 @@
 #                              它那处调用点由分支侧待办 S51 迁移；调用点清零后这个别名就删掉）
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 # 只扫 .go，排除测试（测试里为了验证口径会故意造时区）、前端产物、以及携带形态的源目录
 files=$(find . -name '*.go' -not -name '*_test.go' -not -path './web/*' -not -path './sources/*' | sort)

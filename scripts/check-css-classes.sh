@@ -15,7 +15,7 @@
 # 用法：make vet 会自动跑；单独跑 ./scripts/check-css-classes.sh
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 STYLES='web/src/styles.css'
 [ -f "$STYLES" ] || { echo "找不到 $STYLES（前端目录挪了？同步本脚本）"; exit 1; }

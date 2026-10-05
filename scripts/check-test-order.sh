@@ -16,7 +16,7 @@
 # 用法：make vet 会自动跑；单独跑 ./scripts/check-test-order.sh
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 python3 - <<'PYEOF'
 import glob, re, sys

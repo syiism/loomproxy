@@ -40,6 +40,10 @@ go-build:
 test:
 	go test ./... -race -count=1 -timeout 20m
 
+# 携带分支合并前预检：骨架门禁对分支树跑一遍，只报分支自有文件的命中（S50 方法固化）
+precheck-branch:
+	@./scripts/precheck-branch.sh $(TREE)
+
 vet:
 	go vet ./...
 	@$(MAKE) --no-print-directory fmt-check

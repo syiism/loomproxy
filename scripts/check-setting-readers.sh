@@ -20,7 +20,7 @@
 # 豁免是可选的、可审计的，而**默认是红**。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 # —— 第二条：整数设置的读取口只有一处 ——
 if int_hits=$(grep -rnE 'Atoi\(db\.GetSetting\(|func settingInt\(' --include='*.go' . \

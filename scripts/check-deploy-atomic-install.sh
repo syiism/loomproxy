@@ -8,7 +8,7 @@
 # 装完复算」，但 deploy.sh 自己没做到——**规范写在文档里而工具不执行它，等于没有规范**（待办清单 P79）。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
 SCRIPT=scripts/deploy.sh
 bad=()
