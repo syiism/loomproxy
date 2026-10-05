@@ -55,6 +55,12 @@ vet:
 	@$(MAKE) --no-print-directory deploy-atomic-check
 	@$(MAKE) --no-print-directory pagination-single-source-check
 	@$(MAKE) --no-print-directory ledger-write-check
+	@$(MAKE) --no-print-directory ticker-stop-check
+
+# ticker 必须 Stop：这条形状被处理过两次（P80 给号池巡检协程补 defer Stop；第三十遍发现
+# app.prewarmCache 是全仓 8 个 ticker 里唯一漏的那个），第三次不再靠人想起来
+ticker-stop-check:
+	@./scripts/check-ticker-stopped.sh
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:

@@ -611,6 +611,7 @@ func prewarmCache(ctx context.Context, cancel context.CancelFunc) {
 		return
 	}
 	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 	deadline := time.After(30 * time.Second)
 
 	for {

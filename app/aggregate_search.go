@@ -170,11 +170,14 @@ func runAggregateTarget(c *gin.Context, name, action string, uid uint, caller *m
 			return nil, reason, nil
 		}
 		// 2) 额度判定：与计费中间件同一套原语，见 gate.AggregateTargetVerdict
-		allowed, c, reason := gate.AggregateTargetVerdict(caller, name, action)
+		//    （第二个返回值原来写成 `allowed, c, reason :=`，于是这个块里 `c` 从 *gin.Context
+		//     悄悄变成 int64；下面那句 `DeductAggregateTarget(c, ...)` 之所以还对，靠的是"它在块外"
+		//     这个作用域细节而不是名字。待办清单 P89）
+		allowed, targetCost, reason := gate.AggregateTargetVerdict(caller, name, action)
 		if !allowed {
 			return nil, reason, nil
 		}
-		cost = c
+		cost = targetCost
 	}
 
 	// 3) 该源的处理器与它的必填参数（声明位来自注册表，不靠约定）
