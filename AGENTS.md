@@ -234,7 +234,7 @@
 
 - 处理器间传参用 `map[string]interface{}`；SSRF 的 DNS 结果永久缓存；配额计费按请求（含上游缓存命中）。
 - `docs/归档/` 里的激进方案（unsafe 字段映射、工作窃取调度等）不落地。
-- 无 CI：构建纪律靠 Makefile，部署靠脚本，分支纪律靠本地基线 tag 的三点 diff。`main` 可由维护者推送，携带数据源的 `sources/*` 分支不推远端。
+- 无 CI：构建纪律靠 Makefile，部署靠脚本，分支纪律靠基线 tag 的三点 diff（tag 已推 gitee）。`main` 与骨架 tag 可由维护者推送；携带数据源的 `sources/*` 分支只进**私有远端**（git.syiism.cc.cd），不进公开远端（gitee/github）。
 - 详情：[`docs/规范/已知取舍.md`](docs/规范/已知取舍.md)
 
 ## 13. 文档与知识库的分工
