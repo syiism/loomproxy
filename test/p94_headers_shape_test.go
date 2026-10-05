@@ -41,18 +41,26 @@ func TestVerifyHeadersBadShapeRejectedAtWrite(t *testing.T) {
 		t.Fatalf("verify_http_headers 的 type = %q, want json_object（P94 的判据挂在档位上）", row.Type)
 	}
 
+	// 每个坏形状里都塞一个**独有标记**：这样"响应不许回显原值"这条断言测的是回显，
+	// 而不是撞上新文案里那句合法示例（第一版我就这么写红了——示例含 "Bearer"）。
+	const marker = "SECRET-MARKER-9f3"
 	bad := []struct {
 		name  string
 		value string
 	}{
-		{"数组包对象", `[{"authorization":"Bearer x"}]`},
-		{"裸字符串", `"Bearer x"`},
-		{"值写成数字", `{"authorization":123}`},
-		{"值写成嵌套对象", `{"authorization":{"v":"x"}}`},
+		{"数组包对象", `[{"authorization":"` + marker + `"}]`},
+		{"裸字符串", `"` + marker + `"`},
+		{"值写成数字", `{"authorization":123,"note":"` + marker + `"}`},
+		{"值写成嵌套对象", `{"authorization":{"v":"` + marker + `"}}`},
 	}
+	var logbuf bytes.Buffer
+	oldOut := log.Writer()
+	defer log.SetOutput(oldOut)
 	for _, b := range bad {
+		log.SetOutput(&logbuf)
 		status, env := doJSON(t, srv, http.MethodPut, "/admin/settings/verify_http_headers",
 			map[string]interface{}{"value": b.value}, admin)
+		log.SetOutput(oldOut)
 		if status != http.StatusBadRequest {
 			t.Errorf("%s: PUT 返回 %d（%s），want 400——这一档必须当场拒，而不是留到发码那天", b.name, status, env.Msg)
 			continue
@@ -60,8 +68,23 @@ func TestVerifyHeadersBadShapeRejectedAtWrite(t *testing.T) {
 		if !strings.Contains(env.Msg, "字符串到字符串") {
 			t.Errorf("%s: 拒的话没说清要什么形状: msg=%q", b.name, env.Msg)
 		}
+		// 这一键在 P62 的「只写不回显」名单里：400 的 msg 不许把管理员刚贴的值抄进响应——
+		// 响应会被面板渲染进 DOM，那等于自己开一个绕开脱敏的口子（本轮改前就是这样，探针当场看到的）。
+		if strings.Contains(env.Msg, marker) {
+			t.Errorf("%s: 400 回显了贴进去的值（含标记 %s）: msg=%s", b.name, marker, env.Msg)
+		}
 		if got := dbGetSetting(t, "verify_http_headers"); got != good {
 			t.Errorf("%s: 坏提交把库里的原值顶掉了（现在 = %q）", b.name, got)
+		}
+		// P67 的镜像那一半：对外的句子不泄，给运维的归因必须有声。
+		// 只断"有一条带形状的 ERROR"，不断字面全等——日志文案是可以改的，这条测的是"有没有出声"。
+		line := logbuf.String()
+		logbuf.Reset()
+		if !strings.Contains(line, "不是字符串到字符串的 JSON 对象") {
+			t.Errorf("%s: 服务端没有归因日志（P67 镜像的那一半）；捕获到：%q", b.name, line)
+		}
+		if strings.Contains(line, marker) {
+			t.Errorf("%s: 连日志都把值带出去了", b.name)
 		}
 	}
 

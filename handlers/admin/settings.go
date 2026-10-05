@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -69,8 +70,12 @@ func normalizeJSONObjectValue(v string) (string, error) {
 	}
 	var kv map[string]string
 	if err := json.Unmarshal([]byte(normalized), &kv); err != nil {
-		return "", fmt.Errorf("必须是字符串到字符串的 JSON 对象（如 {\"authorization\":\"Bearer xx\"}）："+
-			"当前值 %s 解不开（%s）——数组、裸字符串、值写成数字/布尔/嵌套，发送端都会拿不到请求头", normalized, err.Error())
+		// 刻意**不回显原值**：这一档当前只用在 `verify_http_headers` 上，而它是 P62 名单里的敏感键——
+		// 把管理员贴进去的令牌抄进 400 响应，等于自己开一个绕开"只写不回显"的口子（响应会被面板渲染进 DOM）。
+		// 按 P67 那对镜像：对外的句子不泄，给运维的归因必须有声——解析器原文进日志，不进响应。
+		log.Printf("ERROR: 设置项值不是字符串到字符串的 JSON 对象，已拒绝保存：%v", err)
+		return "", fmt.Errorf("必须是字符串到字符串的 JSON 对象（如 {\"authorization\":\"Bearer xx\"}）：" +
+			"数组、裸字符串、值写成数字/布尔/嵌套都会被发送端丢掉请求头；本次未保存")
 	}
 	return normalized, nil
 }
