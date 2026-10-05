@@ -74,7 +74,9 @@
   给「不因墙钟过期、燃烧看请求量」的号套默认形态，等于把所有请求打到同一台设备上。
 - **两条后台路径的 panic 兜底 + 临界区一律 defer 解锁**（P77/P78）：`Start`/`Maintain` 各
   `defer p.guardPanic(...)`（它们直调源写的 `Provider.Create/Refresh/Claim`，而这里没有 gin Recovery），
-  被它们走到的临界区一律 `p.locked(fn)`；启动装填 `initLedger` **全程持锁**——`go pool.StartAll()` 排在
+  被它们走到的临界区一律 `p.locked(fn)`——**「临界区一律 defer 解锁」是全仓规则，不只是号池**（P93：
+  尾解锁被 panic 跳过 = 锁被永久持有，症状从"少一行读数"变成"下一个请求卡死"；**已由 `make vet` 的
+  `lock-defer-check` 扫**，多段临界区与循环体各包闭包，就地加 defer 会把锁扩到网络请求上）；启动装填 `initLedger` **全程持锁**——`go pool.StartAll()` 排在
   `http.Server` 之前，端口开着而燃烧型还在逐行探活，不持锁等于让并发 `Acquire` 读半装填的切片。
 - 嵌套凭证（会话 cookie 一类）走 `Device.Payload` / `pool_devices.payload`，框架不解析、只搬运
   （回写用 `Pool.UpdatePayload`）；`Attrs` 是扁平 `map[string]string`——**塞嵌套在 Go 里就编译不过**，
