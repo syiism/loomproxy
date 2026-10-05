@@ -21,21 +21,65 @@ import (
 	"loomproxy/models"
 )
 
-// newQueryCounter 挂一次查询计数回调，返回"跑一段代码、告诉你它发了几条查询"的闭包。
+// newQueryCounter 挂一次查询计数回调，返回"跑一段代码、告诉你它发了几条查询、都是哪些表"的闭包。
+// **只数这一页的读对象**：第一版数的是"这段时间里的所有查询"，而回调注册在 `db.DB` 上是**全局**的——
+// 整套件里任何一条后台查询（号池巡检、监控回填、命名缓存体检）都会落进这个窗口。
+// 本轮就在 `make build` 的测试段被这样污染过一次：25 行那页报 8 条、3 行那页 7 条，
+// 而单独跑这条用例 3/3 全绿——多出来那条根本不是这一页发的。
+// 判据：**计数器的口径必须与断言的性质同宽**——断的是"这一页的查询不随行数变"，就只数这一页碰的表。
+// 同时把数到的表名带进失败信息：下一次再红，第一眼就能看出是谁的查询。
 // **只注册一次**（第一版每条用例各注册一次，GORM 会报 duplicated callback 警告——
 // 数还是数对了，但读数里混着警告就不干净）；计数器每次调用前归零。
-func newQueryCounter(t *testing.T) func(func()) int {
+func newQueryCounter(t *testing.T, tables ...string) func(func()) (int, string) {
 	t.Helper()
+	want := make(map[string]bool, len(tables))
+	for _, x := range tables {
+		want[x] = true
+	}
 	n := 0
-	if err := db.DB.Callback().Query().Register("test/count-queries", func(tx *gorm.DB) { n++ }); err != nil {
+	var seen []string
+	if err := db.DB.Callback().Query().Register("test/count-queries", func(tx *gorm.DB) {
+		tbl := tx.Statement.Table
+		if tbl == "" && tx.Statement.Schema != nil {
+			tbl = tx.Statement.Schema.Table
+		}
+		if want[tbl] {
+			n++
+			seen = append(seen, tbl)
+		}
+	}); err != nil {
 		t.Fatalf("注册计数回调失败: %v", err)
 	}
 	t.Cleanup(func() { _ = db.DB.Callback().Query().Remove("test/count-queries") })
-	return func(fn func()) int {
-		n = 0
+	return func(fn func()) (int, string) {
+		n, seen = 0, nil
 		fn()
-		return n
+		return n, tallyTables(seen)
 	}
+}
+
+// tallyTables 把数到的表名压成「表×次数」——失败信息要看得懂，而不是把 30 个词摊开成一面墙。
+func tallyTables(list []string) string {
+	if len(list) == 0 {
+		return "（一条都没数到）"
+	}
+	order := make([]string, 0, len(list))
+	count := make(map[string]int, len(list))
+	for _, x := range list {
+		if _, ok := count[x]; !ok {
+			order = append(order, x)
+		}
+		count[x]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		if count[name] == 1 {
+			parts = append(parts, name)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s×%d", name, count[name]))
+	}
+	return strings.Join(parts, " ")
 }
 
 // seedRedeemBatch 造 n 张已兑换的卡密（每张一个独立兑换者；每第 5 张指向一个不存在的套餐）。
@@ -79,16 +123,17 @@ func TestRedeemListQueriesDoNotGrowWithRows(t *testing.T) {
 	}
 	const ghostPlan = uint(99999) // 指向一个不存在的套餐：旧写法会为它**每行重查一次**
 
-	// 两批行数不同的卡密：真正要钉的性质是「查询条数不随行数变」，不是"某个绝对条数"——
-	// 一次请求的固定开销（鉴权、设置读取、Count、列表、两次 IN）本来就有几条，写死数字只是猜。
+	// 两批行数不同的卡密：真正要钉的性质是「这一页的查询条数不随行数变」，不是"某个绝对条数"——
+	// 计数只数这一页的三张读对象（列表两次 + 套餐名 IN + 兑换者名 IN），
+	// 鉴权与设置那些固定开销不在口径内（它们两边一样，且不属于这一页的形状）。
 	byID := seedRedeemBatch(t, vipID, ghostPlan, "p87a", 25)
 	seedRedeemBatch(t, vipID, ghostPlan, "p87b", 3)
 
-	countQueries := newQueryCounter(t)
-	countFor := func(batch string) (int, []interface{}, map[uint]string) {
+	countQueries := newQueryCounter(t, "redemption_codes", "quota_plans", "users")
+	countFor := func(batch string) (int, string, []interface{}, map[uint]string) {
 		var status int
 		var env apiEnvelope
-		queries := countQueries(func() {
+		queries, tables := countQueries(func() {
 			status, env = doJSON(t, srv, http.MethodGet, "/admin/redeem-codes?batch_no="+batch+"&page_size=100", nil, admin)
 		})
 		if status != http.StatusOK || env.Code != 0 {
@@ -98,19 +143,25 @@ func TestRedeemListQueriesDoNotGrowWithRows(t *testing.T) {
 		if queries == 0 {
 			t.Fatal("一条查询都没数到——计数回调没生效，条数断言是空转")
 		}
-		return queries, raw, byID
+		return queries, tables, raw, byID
 	}
 
-	qBig, rawBig, names := countFor("p87a")
-	qSmall, rawSmall, _ := countFor("p87b")
+	qBig, tBig, rawBig, names := countFor("p87a")
+	qSmall, tSmall, rawSmall, _ := countFor("p87b")
+	t.Logf("这一页数到的查询：25 行 = %d 条 [%s]；3 行 = %d 条 [%s]", qBig, tBig, qSmall, tSmall)
 	if len(rawBig) != 25 || len(rawSmall) != 3 {
 		t.Fatalf("两批样本 = %d / %d 条, want 25 / 3——前提不成立，下面的比对是空转", len(rawBig), len(rawSmall))
 	}
 	if qBig != qSmall {
-		t.Errorf("25 行的一页发了 %d 条查询、3 行的一页 %d 条——查询条数在随行数增长（N+1）", qBig, qSmall)
+		t.Errorf("25 行的一页发了 %d 条查询、3 行的一页 %d 条——查询条数在随行数增长（N+1）。"+
+			"两边各数到：big=[%s] small=[%s]", qBig, qSmall, tBig, tSmall)
 	}
-	if qBig > 12 {
-		t.Errorf("一次列表请求发了 %d 条查询，want ≤12——固定开销也不该涨到这个量级", qBig)
+	// 上限按**这个口径**给，数字是当场数出来的：实测 5 条 =
+	// 鉴权 `users` 1 + 列表 `redemption_codes` 2（Count 与 Find）+ 两次名称 IN 2；6 是余量。
+	// 变异回 P87 之前的逐行重查（每行一条 `First`）实测成 **25 行 = 30 条、3 行 = 8 条**，
+	// 两条断言同时红——这条上限就是为那一支存在的。
+	if qBig > 6 {
+		t.Errorf("这一页发了 %d 条查询，want ≤6（口径=%s）——固定开销不该涨到这个量级，多半是逐行重查回来了", qBig, tBig)
 	}
 	_ = names
 

@@ -80,7 +80,7 @@ func TestGrantIsTheLimitRow(t *testing.T) {
 
 	// 面板加回一行 = 重新授权（限额由调用方给）
 	status, env = doJSON(t, srv, http.MethodPost, "/admin/quotas/limits", map[string]interface{}{
-		"plan_id": freePlan, "scope": "source", "target": "fake_b", "limit": 50, "period": "day",
+		"plan_id": freePlan, "scope": "source", "target": "fake_b", "limit": 50,
 	}, authHeader(admin))
 	if status != http.StatusOK || env.Code != 0 {
 		t.Fatalf("新增限额行失败（status=%d msg=%s）", status, env.Msg)
@@ -105,7 +105,7 @@ func TestGrantIsTheLimitRow(t *testing.T) {
 	}
 	// 同一目标再加一次必须撞 409，不能长出第二行
 	if status, _ := doJSON(t, srv, http.MethodPost, "/admin/quotas/limits", map[string]interface{}{
-		"plan_id": freePlan, "scope": "source", "target": "fake_b", "limit": 9, "period": "day",
+		"plan_id": freePlan, "scope": "source", "target": "fake_b", "limit": 9,
 	}, authHeader(admin)); status != http.StatusConflict {
 		t.Errorf("重复授权 status = %d, want 409", status)
 	}
@@ -216,7 +216,7 @@ func TestSourceLimitChangeInvalidatesDatasourcesCache(t *testing.T) {
 	}
 
 	status, env := doJSON(t, srv, http.MethodPost, "/admin/quotas/limits", map[string]interface{}{
-		"plan_id": freePlan, "scope": "source", "target": "fake_b", "limit": -1, "period": "day",
+		"plan_id": freePlan, "scope": "source", "target": "fake_b", "limit": -1,
 	}, authHeader(admin))
 	if status != http.StatusOK || env.Code != 0 {
 		t.Fatalf("新增限额行失败（status=%d msg=%s）", status, env.Msg)
@@ -232,7 +232,7 @@ func TestSourceLimitRejectsUnknownTarget(t *testing.T) {
 	admin := adminToken(t, srv)
 
 	status, env := doJSON(t, srv, http.MethodPost, "/admin/quotas/limits", map[string]interface{}{
-		"plan_id": planIDByCode(t, "free"), "scope": "source", "target": "fake_不存在", "limit": 10, "period": "day",
+		"plan_id": planIDByCode(t, "free"), "scope": "source", "target": "fake_不存在", "limit": 10,
 	}, authHeader(admin))
 	if status != http.StatusBadRequest {
 		t.Fatalf("未知数据源码的限额行 status = %d, want 400（msg=%s）", status, env.Msg)

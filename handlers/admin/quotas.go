@@ -277,8 +277,9 @@ func CreateQuotaLimit(c *gin.Context) {
 }
 
 type updateQuotaLimitRequest struct {
-	Limit  *int64  `json:"limit"`
-	Period *string `json:"period"`
+	Limit *int64 `json:"limit"`
+	// 没有 `period` 字段是刻意的（待办清单 P70②）：这一列没有任何判定读它，
+	// 收下一个被忽略的字段就是面板那个假控件的 API 版本——调用者以为改了，库里也留了值，谁都不动。
 }
 
 // UpdateQuotaLimit 更新额度限制

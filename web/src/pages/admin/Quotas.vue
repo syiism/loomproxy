@@ -290,7 +290,7 @@ const confirmDeletePlan = async () => {
 
 const openLimits = async (p) => {
   limitsPlan.value = p
-  limitForm.value = { scope: 'source', target: '', limit: -1, period: 'day' }
+  limitForm.value = { scope: 'source', target: '', limit: -1 }
   editingLimit.value = null
   deleteLimitTarget.value = null
   await loadLimits()
