@@ -86,7 +86,10 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 		userID = uid
 	}
 
-	// 匿名用户与登录用户按 plan 类型分 key 缓存，避免同套餐用户重复缓存
+	// 缓存键**按用户分**（下面把 uid 放进键的原料里），不是"同套餐共享"——那两句旧注释与代码相反，
+	// 谁照它们去"简化"掉 uid，就会把 A 用户按套餐裁剪过的列表发给 B 用户（待办清单 P84 那一族：
+	// 键少一段维度不是命中率低，是发错人）。用例钉子：`test/datasources_cache_key_test.go`。
+	// 匿名与登录视图共用 `datasource:` 段，好让 `InvalidateDatasourcesCache` 一次清干净。
 	var cachePrefix string
 	if userID > 0 {
 		cachePrefix = "datasource:auth"
@@ -94,8 +97,9 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 		cachePrefix = "datasource:anon"
 	}
 
-	// 去掉 uid 参数，同套餐用户共享缓存；键格式为「前缀:散列」，
-	// 前缀须可被 DelPrefix 识别（管理端写操作后批量失效，见 InvalidateDatasourcesCache）
+	// 键格式为「前缀:散列(原料)」，原料里必须有「这条响应属于谁」那一段：
+	// 本 handler 的响应是按套餐裁剪过的，而**套餐是在查完缓存之后才解析的**——
+	// 所以身份必须在键里，不能等到读出来之后再判。
 	cleanParams := make(map[string]interface{}, 1)
 	cleanParams["uid"] = userID
 	cacheKey := cachePrefix + ":" + utils.CacheKey(cachePrefix, cleanParams)
