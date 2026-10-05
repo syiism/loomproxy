@@ -49,7 +49,14 @@ var tzPlatform *time.Location
 
 func PlatformZone() *time.Location {
 	tzOnce.Do(func() {
-		tzPlatform = time.FixedZone("CST", conf.Config.TZOffsetHours*3600)
+		// conf.Config 为 nil（conf.Load 之前的纯函数调用面，如 uxx 的 ParseLedger 进单测）时
+		// 按默认 +8 兜底——与 TZ_OFFSET_HOURS 的默认值语义一致；不守卫的话唯一读取口自己先 panic
+		//（分支侧 S52 收口时实测，用例 TestPlatformZoneSafeWithoutConf 钉住）。
+		hours := 8
+		if conf.Config != nil {
+			hours = conf.Config.TZOffsetHours
+		}
+		tzPlatform = time.FixedZone("CST", hours*3600)
 	})
 	return tzPlatform
 }
