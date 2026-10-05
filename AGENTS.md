@@ -176,6 +176,9 @@
 - 响应统一 `{code,msg,data}`；对下游错误文案必须脱敏。**出口有两条，都要过 `sanitizeUpstreamMsg`**：
   `handleError`（handler 报错）与 `scrubInBandMsg`（带内错误正文，`ContentType=="error"` 的 `message`，P23①）。
   只收口错误文案，正文不扫。
+- **数字 query 参数只走 `utils.Paginate`**（单一处夹，页长 100 / 页码 1e6）：
+  `Atoi` 超范围时返回错误**但也返回 `MaxInt64`**，丢 err 就是收下它，负 offset 会被 GORM 整段丢掉
+  （第一页的数据配一个不存在的页码）；已由 `make vet` 拦回潮（待办清单 P86）。
 - 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露；**已由 `make vet` 扫**，见 `scripts/check-sql-reserved.sh`），条件里的列名一律用 GORM map 形式让它按方言加引号——**不要在 SQL 里写死反引号**（反引号是 MySQL/SQLite 方言，PostgreSQL 只认双引号，而读设置失败被吞成空串，症状是「设置全没生效」）。
 - 设置项的 `type` 是行为声明不是展示标签（`string`/`bool`/`number`/`json`）：**四种类型在写入端都校验值形态**
   （`json` 双侧校验、`bool` 只收 `true`/`false` 且归一存储、`number` 必须是整数；**0 与负数合法**，
