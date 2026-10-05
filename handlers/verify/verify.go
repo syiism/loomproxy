@@ -165,14 +165,18 @@ func Issue(ip, scene, target string) (time.Time, error) {
 	// 失败与"本来就没要做的事"长成同一个值」那一族的镜像）：前者按"没发过"走，合法；
 	// 后者**失败关闭并出声**。改前三处读库都不取结果，于是一次数据库抖动就把三道闸一起读成 0——
 	// 冷却没了、日上限也没了，而发码是要花钱的通道，P40 那族防爆破防的正是这个。
+	// 判 `errors.Is` 而不是 `switch err { case gorm.ErrRecordNotFound }`：后者是 `==` 语义，
+	// GORM 现在返回的是原句所以能命中，但任何一层包装（驱动、插件、以后的一次重构）都会让它掉进 default，
+	// 而 default 是"拒绝发码"——症状会从"发不出去"变成"偶尔发不出去"，比直接错更难查（待办清单 P101）。
 	var latest models.VerificationCode
-	switch err := db.DB.Where("scene = ? AND target = ?", scene, target).
-		Order("id DESC").First(&latest).Error; err {
-	case nil:
+	err := db.DB.Where("scene = ? AND target = ?", scene, target).
+		Order("id DESC").First(&latest).Error
+	switch {
+	case err == nil:
 		if wait := latest.CreatedAt.Add(interval()).Sub(now); wait > 0 {
 			return time.Time{}, fmt.Errorf("%w（约 %d 秒后可重试）", ErrSendTooFrequent, int(wait.Seconds())+1)
 		}
-	case gorm.ErrRecordNotFound:
+	case errors.Is(err, gorm.ErrRecordNotFound):
 		// 这个目标没发过码，直走
 	default:
 		log.Printf("ERROR: 验证码冷却查询失败，本次拒绝发码（失败关闭）：%v", err)
