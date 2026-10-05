@@ -118,9 +118,13 @@ func settingIntFloor(key string, def int, floor int, reason string) int {
 	return def
 }
 
-// settingNotices 记录每个设置键上一次出声时的样子（原因 + 填的值），同一种替换只说一次。
-// 键的个数就是设置项里被这么读的键的个数，不回收。
-var settingNotices sync.Map // key -> string
+// settingNotices 记「哪一种替换已经喊过了」，同一种替换只说一次。
+//
+// 形状在 P99 之前是 `key -> 上一次的样子`（每个键只留最后一条），那在一个键有**两步回落链**时
+// 会永远重复喊：注册先「角色码不存在」再「回落目标 user 也不存在」，两个 sig 交替覆盖同一个键位，
+// 于是每一次注册两条都算"和上次不一样"——承诺的"只说一次"就这么漏了，而且是**每次请求两条**的那种漏。
+// 现在按 (键, 原因, 填的值) 三元组去重。不回收；基数是"管理员填过的不同坏值"，不是调用量。
+var settingNotices sync.Map // "键\x00原因\x00填的值" -> bool
 
 // NoticeReplacedSetting 在"配置里填的值没生效、系统按兜底值走"时说一次话。
 //
@@ -129,11 +133,11 @@ var settingNotices sync.Map // key -> string
 // 去重（同 P36 号池 `ErrCapacityReached` 的判据）是必需的：读配置在热路径上，
 // 每请求一条日志会把真正该看的读数泡坏。
 func NoticeReplacedSetting(key, raw string, effective string, reason string) {
-	sig := reason + "\x00" + raw
-	if v, ok := settingNotices.Load(key); ok && v.(string) == sig {
+	sig := key + "\x00" + reason + "\x00" + raw
+	if _, ok := settingNotices.Load(sig); ok {
 		return
 	}
-	settingNotices.Store(key, sig)
+	settingNotices.Store(sig, true)
 	log.Printf("ERROR: 设置 %s 填的值没生效（%s）：填的是 %q，实际按 %q 走", key, reason, raw, effective)
 }
 

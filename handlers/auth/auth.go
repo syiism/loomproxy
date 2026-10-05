@@ -216,10 +216,25 @@ func Register(c *gin.Context) {
 		return
 	}
 
+	// 默认角色的回落与下面那个默认套餐的回落是**同一个形状**，但套餐那一半在 P48/P53 那轮补了出声，
+	// 这一半一直没跟上（待办清单 P99：同一个判据各写一份，修好一处时另一处没人知道）。
+	// 静默回落的代价不是"没角色"那么轻：`Roles: []Role{{}}` 带着零值主键进 many2many，
+	// GORM 会去**插一行新角色**（Name/Code 都是空串，而这两列是 `uniqueIndex`+NOT NULL——空串合法），
+	// 于是第一次注册留下一个谁也对不上的幽灵角色，第二次起唯一索引把注册本身打回 500。
+	// 回落目标也不存在时给**空角色列表**：那是失败关闭（按 code 的判定一律查不到，与 `planID=0` 同理），
+	// 比"进得来却绑了个不存在的东西"更难被发现。每一次替换都出声，走 `db.NoticeReplacedSetting`。
 	defaultRoleCode := getSettingStr("default_role", "user")
 	var defaultRole models.Role
-	if err := db.DB.Where("code = ?", defaultRoleCode).First(&defaultRole).Error; err != nil {
-		db.DB.Where("code = ?", "user").First(&defaultRole)
+	roleFound := db.DB.Where("code = ?", defaultRoleCode).First(&defaultRole).Error == nil
+	if !roleFound {
+		db.NoticeReplacedSetting("default_role", defaultRoleCode, "user", "角色码不存在")
+		roleFound = db.DB.Where("code = ?", "user").First(&defaultRole).Error == nil
+	}
+	var defaultRoles []models.Role
+	if roleFound {
+		defaultRoles = []models.Role{defaultRole}
+	} else {
+		db.NoticeReplacedSetting("default_role", "user", "（无角色）", "回落目标 user 也不存在")
 	}
 
 	// 默认套餐读设置项（面板「新用户默认套餐」，它还在 `protectedSettingKeys` 里被列为不许删）。
@@ -251,7 +266,7 @@ func Register(c *gin.Context) {
 		Nickname: req.Nickname,
 		Status:   1,
 		PlanID:   defaultPlanID,
-		Roles:    []models.Role{defaultRole},
+		Roles:    defaultRoles,
 	}
 	if err := user.SetPassword(req.Password); err != nil {
 		fail(c, http.StatusInternalServerError, "密码加密失败")

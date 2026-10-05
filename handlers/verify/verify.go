@@ -20,6 +20,8 @@ import (
 	"loomproxy/db"
 	"loomproxy/models"
 	"loomproxy/utils"
+
+	"gorm.io/gorm"
 )
 
 // 内置场景。新增场景：加常量 + 在 targetValidated 中补充目标格式校验 + 业务侧接入 Check/Consume。
@@ -35,10 +37,14 @@ var (
 	ErrTargetInvalid   = errors.New("目标格式不正确")
 	ErrSendTooFrequent = errors.New("验证码发送过于频繁，请稍后再试")
 	ErrSendLimitDaily  = errors.New("今日验证码发送次数已达上限，请明日再试")
-	ErrNotFound        = errors.New("请先获取验证码")
-	ErrExpired         = errors.New("验证码已过期，请重新获取")
-	ErrTooManyAttempts = errors.New("错误次数过多，该验证码已作废，请重新获取")
-	ErrMismatch        = errors.New("验证码错误")
+	// ErrStorageUnavailable 是**限频闸门自己读不动**时的那句（待办清单 P99）：
+	// 冷却与两道日上限都靠读 `verification_codes` 算出来，读失败不等于"没发过"。
+	// 给用户的话不能说"次数已达上限"（那是假话），也不能带驱动原文（P90 那条），所以是这一句。
+	ErrStorageUnavailable = errors.New("暂时无法处理该请求，请稍后再试")
+	ErrNotFound           = errors.New("请先获取验证码")
+	ErrExpired            = errors.New("验证码已过期，请重新获取")
+	ErrTooManyAttempts    = errors.New("错误次数过多，该验证码已作废，请重新获取")
+	ErrMismatch           = errors.New("验证码错误")
 )
 
 // Setting keys（seed 预置，管理后台「系统设置」可改；db.GetSetting 10s 缓存）
@@ -154,19 +160,35 @@ func Issue(ip, scene, target string) (time.Time, error) {
 	now := time.Now()
 	dayStart := utils.DayStart(1)
 
-	// 限频三重：同目标冷却 / 同目标每日 / 同 IP 每日（按行统计，量小直查库）
+	// 限频三重：同目标冷却 / 同目标每日 / 同 IP 每日（按行统计，量小直查库）。
+	// 「查不到行」与「查询失败」是两件事（待办清单 P99；判据页「辅助函数只返回计数或布尔：
+	// 失败与"本来就没要做的事"长成同一个值」那一族的镜像）：前者按"没发过"走，合法；
+	// 后者**失败关闭并出声**。改前三处读库都不取结果，于是一次数据库抖动就把三道闸一起读成 0——
+	// 冷却没了、日上限也没了，而发码是要花钱的通道，P40 那族防爆破防的正是这个。
 	var latest models.VerificationCode
-	if err := db.DB.Where("scene = ? AND target = ?", scene, target).
-		Order("id DESC").First(&latest).Error; err == nil {
+	switch err := db.DB.Where("scene = ? AND target = ?", scene, target).
+		Order("id DESC").First(&latest).Error; err {
+	case nil:
 		if wait := latest.CreatedAt.Add(interval()).Sub(now); wait > 0 {
 			return time.Time{}, fmt.Errorf("%w（约 %d 秒后可重试）", ErrSendTooFrequent, int(wait.Seconds())+1)
 		}
+	case gorm.ErrRecordNotFound:
+		// 这个目标没发过码，直走
+	default:
+		log.Printf("ERROR: 验证码冷却查询失败，本次拒绝发码（失败关闭）：%v", err)
+		return time.Time{}, ErrStorageUnavailable
 	}
 	var targetCount, ipCount int64
-	db.DB.Model(&models.VerificationCode{}).
-		Where("target = ? AND created_at >= ?", target, dayStart).Count(&targetCount)
-	db.DB.Model(&models.VerificationCode{}).
-		Where("ip = ? AND created_at >= ?", ip, dayStart).Count(&ipCount)
+	if err := db.DB.Model(&models.VerificationCode{}).
+		Where("target = ? AND created_at >= ?", target, dayStart).Count(&targetCount).Error; err != nil {
+		log.Printf("ERROR: 同目标当日发码数查询失败，本次拒绝发码（失败关闭）：%v", err)
+		return time.Time{}, ErrStorageUnavailable
+	}
+	if err := db.DB.Model(&models.VerificationCode{}).
+		Where("ip = ? AND created_at >= ?", ip, dayStart).Count(&ipCount).Error; err != nil {
+		log.Printf("ERROR: 同 IP 当日发码数查询失败，本次拒绝发码（失败关闭）：%v", err)
+		return time.Time{}, ErrStorageUnavailable
+	}
 	if targetCount >= int64(dailyLimit()) || ipCount >= int64(dailyLimit()) {
 		return time.Time{}, ErrSendLimitDaily
 	}

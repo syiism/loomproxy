@@ -48,6 +48,10 @@ func RegisterRoutes(r *gin.Engine) {
 				fail(c, http.StatusTooManyRequests, err.Error())
 			case errors.Is(err, ErrSceneUnknown), errors.Is(err, ErrSceneDisabled), errors.Is(err, ErrTargetInvalid):
 				fail(c, http.StatusBadRequest, err.Error())
+			case errors.Is(err, ErrStorageUnavailable):
+				// 闸门读不动（P99）：这是服务端的状态，不是用户的错，所以 503 而不是 400——
+				// 400 会让人以为"换个邮箱再试"，而那正是冷却失效时最不该鼓励的事
+				fail(c, http.StatusServiceUnavailable, err.Error())
 			default:
 				// 发送失败等带包装信息的错误统一 400（msg 已面向用户脱敏）
 				fail(c, http.StatusBadRequest, err.Error())
