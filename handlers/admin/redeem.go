@@ -12,6 +12,7 @@ import (
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // 卡密字符集：Crockford Base32 去歧义（无 I/L/O/U）
@@ -104,14 +105,7 @@ func CreateRedeemCodes(c *gin.Context) {
 
 // ListRedeemCodes 卡密分页查询（展示完整码），支持批次/状态/套餐过滤
 func ListRedeemCodes(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := utils.Paginate(c.DefaultQuery("page", "1"), c.DefaultQuery("page_size", "20"), 20)
 	q := db.DB.Model(&models.RedemptionCode{})
 	if v := c.Query("batch_no"); v != "" {
 		q = q.Where("batch_no = ?", v)

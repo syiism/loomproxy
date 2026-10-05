@@ -13,7 +13,6 @@ package admin
 import (
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // DeviceActivityRow 一名用户的设备/密钥分布
@@ -108,14 +108,7 @@ func sortDeviceRows(rows []DeviceActivityRow, key, dir string) {
 
 // ListDeviceActivity GET /admin/devices —— 跨用户的设备/密钥分布，可按任一聚合列排序
 func ListDeviceActivity(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := utils.Paginate(c.DefaultQuery("page", "1"), c.DefaultQuery("page_size", "20"), 20)
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	sortKey := c.Query("sort")
 	if !deviceSortAllowed[sortKey] {

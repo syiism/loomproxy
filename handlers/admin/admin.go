@@ -163,14 +163,7 @@ func expireWithinDays(raw string) int {
 //     `last_login_at IS NULL` 是**从未登录**，`content_consent IS NULL` 是**未表态=同意**（P37 的默认档）。
 //     这三条都是 NULL 有业务含义的地方，漏一条就是一个静默的错读数。
 func ListUsers(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := utils.Paginate(c.DefaultQuery("page", "1"), c.DefaultQuery("page_size", "20"), 20)
 
 	q := db.DB.Model(&models.User{})
 

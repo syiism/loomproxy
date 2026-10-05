@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -124,14 +123,7 @@ func ResetMonitor(c *gin.Context) {
 
 // GetMonitorHistory 分页查询历史调用明细（api_call_logs，最新在前）
 func GetMonitorHistory(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := utils.Paginate(c.DefaultQuery("page", "1"), c.DefaultQuery("page_size", "20"), 20)
 	q := db.DB.Model(&models.ApiCallLog{})
 	if src := c.Query("source"); src != "" {
 		q = q.Where("source = ?", src)

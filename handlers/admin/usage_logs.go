@@ -1,25 +1,17 @@
 package admin
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // ListUsageLogs 额度使用流水（只读，按 id 倒序分页）
 func ListUsageLogs(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := utils.Paginate(c.DefaultQuery("page", "1"), c.DefaultQuery("page_size", "20"), 20)
 
 	q := db.DB.Model(&models.QuotaUsageLog{})
 	if username := c.Query("username"); username != "" {

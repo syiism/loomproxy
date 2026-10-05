@@ -53,6 +53,7 @@ vet:
 	@$(MAKE) --no-print-directory tz-check
 	@$(MAKE) --no-print-directory param-assert-check
 	@$(MAKE) --no-print-directory deploy-atomic-check
+	@$(MAKE) --no-print-directory pagination-single-source-check
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
@@ -103,6 +104,11 @@ param-assert-check:
 # （现网 14 天三次同款崩溃循环，其中两次没有任何应用日志）——见待办清单 P79
 deploy-atomic-check:
 	@./scripts/check-deploy-atomic-install.sh
+
+# 分页夹只许一处定义：以前六个端点各抄一遍 `<1 || >100`，值今天一致但第七处可以静默不写；
+# 而旧写法丢掉 Atoi 的错误，越界页码会得到 MaxInt64 并让 offset 溢出成负数（待办清单 P86）
+pagination-single-source-check:
+	@./scripts/check-pagination-single-source.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。
