@@ -27,8 +27,10 @@ type RecentCall struct {
 	Status   int       `json:"status"`
 	// InBandError 带内失败（P22）：HTTP 200 但正文是 ContentType=="error" 的错误载荷。
 	// 监控读数把它计入失败；HTTP 状态、IP 封禁计数与额度计费不受它影响。
-	InBandError bool  `json:"in_band_error,omitempty"`
-	LatencyMs   int64 `json:"latency_ms"`
+	InBandError bool `json:"in_band_error,omitempty"`
+	// InBandReason 带内失败成因（P22②-b 的 ②-b1），源在错误正文里给 reason 键时才有值
+	InBandReason string `json:"in_band_reason,omitempty"`
+	LatencyMs    int64  `json:"latency_ms"`
 	// 内容维度（由 legado.ObserveCall 从规范化响应回填；没抽到就是空串）
 	Keyword      string `json:"keyword,omitempty"`
 	BookName     string `json:"book_name,omitempty"`
@@ -82,9 +84,23 @@ func SetMetricsFlusher(f func([]RecentCall)) {
 // username 为调用者用户名（用户密钥调用也带归属用户名；匿名与静态 env 键传空串）；ip 为调用者客户端 IP；
 // subject 是本次调用的内容维度（搜索词/书名/章节/媒介/结果数），可为 nil——那时各维度留空）
 func RecordCall(source, action, username, ip string, status int, latency time.Duration, subject *CallSubject) {
-	ms := latency.Milliseconds()
-	now := time.Now()
+	evicted, flusher := recordCallLocked(source, action, username, ip, status, latency.Milliseconds(), time.Now(), subject)
+	if flusher != nil && len(evicted) > 0 {
+		flushWG.Add(1)
+		go func() {
+			defer flushWG.Done()
+			flusher(evicted)
+		}()
+	}
+}
+
+// recordCallLocked 是监控读数的唯一临界区：锁一律 defer 释放（待办清单 P78 同一条判据的另一处）。
+// 原来这里把 `Unlock()` 写在函数尾部，而这段里 panic 过一次（subject 为 nil 时读字段）——
+// panic 把尾部那句解锁一起跳过了，于是**监控锁被永久持有**：症状不是"这条读数没了"，
+// 而是下一个进数据面的请求直接卡死。拆成独立函数还有一个好处：落库协程只在解锁之后才被派出。
+func recordCallLocked(source, action, username, ip string, status int, ms int64, now time.Time, subject *CallSubject) ([]RecentCall, func([]RecentCall)) {
 	metricsState.Lock()
+	defer metricsState.Unlock()
 	am := metricsState.actions[source]
 	if am == nil {
 		am = make(map[string]*ActionMetrics)
@@ -122,6 +138,7 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 		LatencyMs:   ms,
 	}
 	if subject != nil {
+		rc.InBandReason = subject.InBandReason
 		rc.Keyword = subject.Keyword
 		rc.BookName = subject.BookName
 		rc.ChapterTitle = subject.ChapterTitle
@@ -148,14 +165,7 @@ func RecordCall(source, action, username, ip string, status int, latency time.Du
 			fam[rc.Action]++
 		}
 	}
-	metricsState.Unlock()
-	if flusher != nil && len(evicted) > 0 {
-		flushWG.Add(1)
-		go func() {
-			defer flushWG.Done()
-			flusher(evicted)
-		}()
-	}
+	return evicted, flusher
 }
 
 // CallsRecordedSince 返回内存环形缓冲中时间不早于 t 的调用条数

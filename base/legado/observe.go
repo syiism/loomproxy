@@ -120,6 +120,9 @@ func observeContent(source string, subj *base.CallSubject, contentType string, d
 	// 让监控的成功率/覆盖率读数能把它数成失败。不动响应本身——那是产品口径（P22②）。
 	if strings.EqualFold(contentType, "error") {
 		subj.InBandError = true
+		// 成因分类（P22②-b 的 ②-b1）：源在 Data 里给 reason 键时照抄，没给就留空——
+		// 空是合法状态（今天的源都还不认这个键），读数按空值处理，不猜
+		subj.InBandReason = base.ParamString(data, "reason")
 	}
 	media := base.MediaFromContentType(contentType)
 	if media == "" {

@@ -11,6 +11,7 @@ package auth
 //     免费档没什么可称呼，放开只会让面板上一片自起名。
 
 import (
+	"log"
 	"net/http"
 	"unicode"
 
@@ -68,7 +69,8 @@ func dropEdges(r []rune) []rune {
 func UpdateDisplayAlias(c *gin.Context) {
 	var req displayAliasRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 	if req.Kind != models.DisplayKindPlan && req.Kind != models.DisplayKindRole {

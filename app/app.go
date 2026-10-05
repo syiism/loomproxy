@@ -182,6 +182,16 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 		}
 
 		handlerFunc := func(c *gin.Context) {
+			// 维护模式（待办清单 P53② 接线）：数据面路由在维护中一律 503，管理员除外。
+			// 设置走 db.SettingBool（10 秒缓存，关着时热路径零成本）；开着才查角色，查不到人按拦处理。
+			if source != "" && maintenanceBlocked(c) {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"code": conf.Config.ErrorCode,
+					"msg":  "系统维护中，请稍后再试",
+				})
+				c.Abort()
+				return
+			}
 			// 内容维度载体：进 handler 前挂上（monitor 中间件在 c.Next() 之后才读它），
 			// handler 返回后由 legado.ObserveCall 按标准信封回填
 			subject := &base.CallSubject{}
@@ -822,4 +832,30 @@ func Run(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// maintenanceBlocked 维护模式是否拦这次请求（P53②）：开着时匿名与非管理员一律拦，管理员放行。
+// 角色查询与 handlers/auth 的 AdminRequired 同一条判据（users_roles 的 admin 码），
+// 不导入 handlers/auth 是为了不把 app 拉进 handlers 的依赖图。
+func maintenanceBlocked(c *gin.Context) bool {
+	if !db.SettingBool("maintenance_mode", false) {
+		return false
+	}
+	uid, ok := c.Get("user_id")
+	if !ok {
+		return true
+	}
+	var codes []string
+	if err := db.DB.Table("user_roles").
+		Joins("JOIN roles ON roles.id = user_roles.role_id").
+		Where("user_roles.user_id = ?", uid).
+		Pluck("roles.code", &codes).Error; err != nil {
+		return true // 查不到角色按拦处理（失败关闭）
+	}
+	for _, code := range codes {
+		if code == "admin" {
+			return false
+		}
+	}
+	return true
 }

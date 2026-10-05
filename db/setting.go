@@ -136,3 +136,10 @@ func NoticeReplacedSetting(key, raw string, effective string, reason string) {
 	settingNotices.Store(key, sig)
 	log.Printf("ERROR: 设置 %s 填的值没生效（%s）：填的是 %q，实际按 %q 走", key, reason, raw, effective)
 }
+
+// SensitiveSettingKeys 只写不回显的设置键（待办清单 P62）：值里躺着对外通道的真实令牌，
+// 面板与管理 API 一律不回显（读响应里是空串）；写入端留空 = 保持原值不变（防「看一眼再保存」把掩码存回去）。
+// 新增敏感键进这张表，面板经 GET /admin/settings 的 sensitive_keys 拿到名单渲染密钥控件。
+var SensitiveSettingKeys = map[string]bool{
+	"verify_http_headers": true, // 对接发码通道的请求头，内含真实访问令牌
+}

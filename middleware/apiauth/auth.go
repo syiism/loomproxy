@@ -29,6 +29,10 @@ func init() {
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !conf.Config.AuthEnabled {
+			// 可选鉴权（待办清单 P64）：网关关着也解析凭证，解析成功就把身份挂上——
+			// /endpoints 这类自读 user_id 的端点过去把「网关关了」当「没登录」，
+			// 带着合法 JWT 也拿 401。解析失败按匿名放行：不强制是这条开关的全部语义。
+			_ = utils.VerifyAuth(c)
 			c.Next()
 			return
 		}

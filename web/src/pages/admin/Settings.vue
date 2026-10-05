@@ -44,6 +44,16 @@
                 </span>
                 <button type="button" class="btn-ghost btn-sm" @click="$router.push('/admin/datasources')">到「数据源管理」逐源开关</button>
               </div>
+              <div v-else-if="f.widget === 'secret'" class="min-w-0">
+                <textarea
+                  v-model="form[f.key]"
+                  class="input font-mono leading-relaxed"
+                  :rows="f.rows || 5"
+                  :disabled="fieldDisabled(f)"
+                  :placeholder="sensitive.has(f.key) ? '已设置（内容不回显）——留空保存则保持不变' : ''"
+                  spellcheck="false"
+                ></textarea>
+              </div>
               <template v-else-if="f.widget === 'json'">
                 <textarea
                   v-model="form[f.key]"
@@ -182,7 +192,6 @@ const GROUPS = [
     title: '站点基础',
     desc: '站点身份与对用户可见的公告、书源入口。',
     fields: [
-      { key: 'site_name', label: '站点名称', widget: 'text' },
       { key: 'maintenance_mode', label: '维护模式', widget: 'switch' },
       { key: 'announcement', label: '站内公告', widget: 'textarea', rows: 4 },
       { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources_ro' },
@@ -216,7 +225,7 @@ const GROUPS = [
       { key: 'verify_provider', label: '通道', widget: 'select', options: ['mock', 'http'] },
       { key: 'verify_http_url', label: '请求地址', widget: 'textarea', rows: 2, gate: 'providerHttp' },
       { key: 'verify_http_method', label: '请求方法', widget: 'text', gate: 'providerHttp' },
-      { key: 'verify_http_headers', label: '请求头（JSON）', widget: 'json', rows: 4, gate: 'providerHttp' },
+      { key: 'verify_http_headers', label: '请求头（JSON，不回显）', widget: 'secret', rows: 4, gate: 'providerHttp' },
       { key: 'verify_http_body', label: '请求体模板（JSON）', widget: 'json', rows: 6, gate: 'providerHttp' },
       { key: 'verify_http_success_keyword', label: '成功判定关键字', widget: 'text', gate: 'providerHttp' },
     ],
@@ -247,6 +256,7 @@ const deleteTarget = ref(null)
 
 // 卡片级编辑态：form 为当前值（switch 存布尔、其余存字符串），snapshot 为加载时的字符串原值
 const settingsMap = ref({})
+const sensitive = ref(new Set())
 const form = ref({})
 const snapshot = ref({})
 const savingGroup = ref('')
@@ -315,15 +325,19 @@ const load = async () => {
   loading.value = true
   error.value = ''
   try {
-    list.value = (await adminApi.listSettings()) || []
+    const resp = (await adminApi.listSettings()) || {}
+    list.value = resp.items || []
+    sensitive.value = new Set(resp.sensitive_keys || [])
     const map = {}
     const f = {}
     const snap = {}
     for (const s of list.value) {
       map[s.key] = s
       if (MANAGED_KEYS.has(s.key)) {
-        f[s.key] = s.type === 'bool' ? s.value === 'true' : s.value
-        snap[s.key] = s.value
+        // 敏感键（P62）只写不回显：控件永远空着，保存留空 = 后端保持原值
+        const masked = sensitive.value.has(s.key)
+        f[s.key] = masked ? '' : (s.type === 'bool' ? s.value === 'true' : s.value)
+        snap[s.key] = masked ? '' : s.value
       }
     }
     settingsMap.value = map
@@ -341,6 +355,8 @@ const load = async () => {
 const saveGroup = async (g) => {
   if (savingGroup.value) return
   const changes = g.fields.filter(f => settingsMap.value[f.key] && serialize(form.value[f.key]) !== snapshot.value[f.key])
+    // 敏感键（P62）：留空 = 保持原值，不发 PUT（后端同口径兜底）
+    .filter(f => !(sensitive.value.has(f.key) && !String(form.value[f.key] || '').trim()))
   if (changes.length === 0) return
   // JSON 型先本地过一遍：坏值不发请求，免得整卡只有这一项被后端拒掉后界面与库对不上
   for (const f of changes.filter(f => f.widget === 'json')) {

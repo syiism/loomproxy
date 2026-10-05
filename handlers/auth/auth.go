@@ -382,7 +382,8 @@ func Login(c *gin.Context) {
 
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 
@@ -502,7 +503,8 @@ type updateMeRequest struct {
 func UpdateMe(c *gin.Context) {
 	var req updateMeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 
@@ -638,7 +640,8 @@ type privacyConsentRequest struct {
 func UpdatePrivacyConsent(c *gin.Context) {
 	var req privacyConsentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 	if req.ContentConsent == nil {
@@ -665,7 +668,8 @@ func UpdatePrivacyConsent(c *gin.Context) {
 func ChangePassword(c *gin.Context) {
 	var req changePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 

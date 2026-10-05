@@ -17,9 +17,11 @@ type ApiCallLog struct {
 	Status   int    `json:"status"`                      // HTTP 状态码
 	// 带内失败（P22）：HTTP 200 但正文是 ContentType=="error" 的错误载荷。
 	// 列 NOT NULL 默认 false——成功/失败口径在 SQL 里直接用它，NULL 会把旧行读成第三种状态。
-	InBandError bool      `gorm:"not null;default:false" json:"in_band_error"`
-	LatencyMs   int64     `json:"latency_ms"`              // 耗时（毫秒）
-	CreatedAt   time.Time `gorm:"index" json:"created_at"` // 调用时间
+	InBandError bool `gorm:"not null;default:false" json:"in_band_error"`
+	// InBandReason 带内失败成因（P22②-b 的 ②-b1），源在错误正文里给 reason 键时才有值，空=源没给
+	InBandReason string    `gorm:"size:32" json:"in_band_reason"`
+	LatencyMs    int64     `json:"latency_ms"`              // 耗时（毫秒）
+	CreatedAt    time.Time `gorm:"index" json:"created_at"` // 调用时间
 	// 内容维度：由 base/legado 从规范化响应回填，没抽到就是空串（不建 index——
 	// 面板是 contains LIKE 筛选，B-tree 用不上，只换来写放大）
 	Keyword      string `gorm:"size:128" json:"keyword"`       // 搜索词

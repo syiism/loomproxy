@@ -88,7 +88,8 @@ func UpdateSourceConfigs(c *gin.Context) {
 
 	var req updateSourceConfigsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		auth.Fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		auth.Fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 

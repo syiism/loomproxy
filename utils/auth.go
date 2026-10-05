@@ -53,6 +53,12 @@ type Credential struct {
 
 func VerifyAuth(c *gin.Context) error {
 	if !conf.Config.AuthEnabled {
+		// 网关关着时仍解析凭证（可选鉴权，待办清单 P64）：解析成功就把身份挂上——
+		// /endpoints 这类自读 user_id 的端点过去把「网关关了」当成「没登录」，
+		// 带着合法 JWT 也拿 401。解析失败按匿名放行：AuthEnabled=false 的语义就是「不强制」，
+		// 不该因为一张坏票把请求拦下来。
+		_ = resolveJWT(c)
+		_ = resolveAPIKey(c)
 		return nil
 	}
 

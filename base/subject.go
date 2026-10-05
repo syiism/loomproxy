@@ -32,6 +32,12 @@ type CallSubject struct {
 	// 不标出来的话，失败的正文请求就以「成功 + 内容维度全空」的形状混进明细，
 	// 成功率、覆盖率、榜三处读数一起说谎。只标观测，不改响应、不动计费。
 	InBandError bool `json:"-"`
+	// InBandReason 带内失败的成因分类（P22②-b 的 ②-b1「分类观测」）：源在错误正文里给
+	// 机器可读的 reason 键时才有值（建议枚举见分支 S20：upstream_network/upstream_status/
+	// pool_unavailable/parse_empty/unauthorized），骨架只搬运不解释。
+	// **今天现网读到的必然是空串**——还没有源报这个键，②-b 那次定案靠的是读日志定性；
+	// 这一列是「下次不再定性」的基础设施，空是"源没给"而不是"没坏"。
+	InBandReason string `json:"-"`
 	// 内部标识：只用于查命名缓存，不对外暴露（面板展示的是名称）
 	BookKey    string `json:"-"`
 	ChapterKey string `json:"-"`

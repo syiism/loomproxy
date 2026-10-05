@@ -49,6 +49,7 @@ func persistCallLogs(calls []base.RecentCall) {
 			Action:       rc.Action,
 			Status:       rc.Status,
 			InBandError:  rc.InBandError,
+			InBandReason: rc.InBandReason,
 			LatencyMs:    rc.LatencyMs,
 			CreatedAt:    rc.Time,
 			Keyword:      rc.Keyword,

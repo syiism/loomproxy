@@ -35,7 +35,6 @@ func seedRoles(db *gorm.DB) error {
 
 func seedSettings(db *gorm.DB) error {
 	settings := []models.SystemSetting{
-		{Key: "site_name", Value: "LoomProxy", Type: "string", Description: "站点名称"},
 		{Key: "register_enabled", Value: "true", Type: "bool", Description: "是否允许注册"},
 		{Key: "default_role", Value: "user", Type: "string", Description: "新用户默认角色"},
 		{Key: "default_quota_plan", Value: "free", Type: "string", Description: "新用户默认额度套餐"},
@@ -70,8 +69,10 @@ func seedSettings(db *gorm.DB) error {
 	// rank_public_enabled（bool 总开关）被 rank_public_sources（按源白名单）取代；
 	// legado_import_url（管理员手填书源直链）被静态托管 /data/shuyuan/bookSource.json 取代——
 	// 下发位置是部署事实，不该是一个可能被填错、又没人校验的设置项。
-	// site_name 没有任何后端读取方（P53② 巡检数出来的），面板控件一并摘掉，键随之硬删
-for _, gone := range []string{"rank_public_enabled", "legado_import_url", "site_name"} {
+	// site_name 没有任何后端读取方（P53② 巡检数出来的），面板控件一并摘掉、键随之硬删。
+	// **废弃键必须同时从上面那份 settings 里删掉**：这段跑在播种之前，
+	// 两处都留着就是「每次启动先删再种回来」——P34② 那条「摘出 AutoMigrate 否则 DROP 后复活」的同一形状。
+	for _, gone := range []string{"rank_public_enabled", "legado_import_url", "site_name"} {
 		var n int64
 		goneCond := map[string]interface{}{"key": gone}
 		db.Model(&models.SystemSetting{}).Unscoped().Where(goneCond).Count(&n)
