@@ -15,11 +15,18 @@ import (
 	"loomproxy/models"
 )
 
-func TestCallLogRetentionDisabledByDefault(t *testing.T) {
+// TestCallLogRetentionDisabledWhenZero 保留窗口为 0 时：既不删明细，也不写归档表。
+//
+// 名字里的 "ByDefault" 去掉了（待办清单 P98 巡检发现的假绿灯）：这一句读的是**测试脚手架**的
+// `conf.Config`（`setupTestConf` 的结构体字面量没写这个字段，于是它是 Go 零值 0），
+// 不是产品默认值——把 `conf.go` 里 `envInt("MONITOR_RETENTION_DAYS", 0)` 改成 7，这条照样绿。
+// 产品默认那一钉现在在 `test/conf_env_notice_test.go` 的 TestEnvDocumentedDefaults 上，
+// 那条走的是解析器本身，改默认就会红。
+func TestCallLogRetentionDisabledWhenZero(t *testing.T) {
 	srv := newTestServer(t)
 	_ = srv
 	if conf.Config.MonitorRetentionDays != 0 {
-		t.Fatalf("MONITOR_RETENTION_DAYS 默认应为 0（永久），实为 %d", conf.Config.MonitorRetentionDays)
+		t.Fatalf("这条用例的前提是脚手架里保留窗口为 0（实为 %d）；要验产品默认去看 conf_env_notice_test.go", conf.Config.MonitorRetentionDays)
 	}
 
 	now := time.Now()

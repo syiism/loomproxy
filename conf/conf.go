@@ -2,6 +2,7 @@ package conf
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -109,6 +110,21 @@ type ConfMgr struct {
 
 var Config *ConfMgr
 
+// badEnvNotes 攒「填了但没按填的样子被接受」的环境变量，Load 末尾一次一条 WARNING 出声。
+//
+// 判据与设置侧同形（待办清单 P60：库里存 `True` 在两个开关上读出相反结果；P48：填了没生效要出声），
+// 差别只在这条路是**进程启动期**，不在热路径上，所以不需要「同一种替换只喊一次」的去重。
+// 之前这三族都是静默回落：`MONITOR_RETENTION_DAYS=1y` 变成 0＝永久保留（把「表只进不出」打开了），
+// `AUTH_ENABLED=1` 变成 false（以为开了鉴权其实没开）——**方向上最危险的两个默认，恰好都没声音**。
+var badEnvNotes []string
+
+// noteBadEnv 记一条待出声的键。**只有 envBool/envInt/envFloat 会走到这里**，
+// 而凭证（`JWT_SECRET`、`*_PASSWORD`、`API_KEYS`）一律走 `envStr`/`envList`——它们没有「非法值」这个概念，
+// 也就不会被出声，因而原始值不会进日志。将来若把出声扩到字符串键，必须先解决回显问题（P62 同判据）。
+func noteBadEnv(key, raw, why string) {
+	badEnvNotes = append(badEnvNotes, fmt.Sprintf("%s=%q：%s", key, raw, why))
+}
+
 func envStr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -121,6 +137,7 @@ func envInt(key string, def int) int {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
+		noteBadEnv(key, v, "不是整数，按默认值使用（数字要写成 300 这样，`5m`/`1y`/带空格都不算）")
 	}
 	return def
 }
@@ -130,15 +147,28 @@ func envFloat(key string, def float64) float64 {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
 		}
+		noteBadEnv(key, v, "不是数字，按默认值使用")
 	}
 	return def
 }
 
+// envBool 的语义一个字没动（非 `true` 一律 false，含空串以外的任何写法），只是不再静默：
+// `1`/`yes`/`on`/拼错的 `ture` 都会出一条 WARNING 说明它被当成 false。
+// 之所以不当场拒（像设置项那样 400）：这是启动路径，拒绝启动等于把开发环境一起锁在外面，
+// 而「填错的人」需要的是那句出声，不是一堵墙。
 func envBool(key string, def bool) bool {
-	if v := os.Getenv(key); v != "" {
-		return strings.ToLower(v) == "true"
+	v := os.Getenv(key)
+	if v == "" {
+		return def
 	}
-	return def
+	switch strings.ToLower(v) {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	noteBadEnv(key, v, "布尔位只认 true/false，这个写法按 false 处理（要开启请写 true）")
+	return false
 }
 
 func envList(key, def string) []string {
@@ -275,6 +305,13 @@ func Load() {
 
 		RetiredSources: envList("RETIRED_SOURCES", ""),
 	}
+
+	// 先出声，再判 JWT：`AUTH_ENABLED=1` 被读成 false 的话，下面那条「默认密钥就拒绝启动」的检查
+	// 根本不会触发——不先说清「你那个 1 没被当成立即」，部署就带着「以为开了鉴权」的状态跑起来。
+	for _, note := range badEnvNotes {
+		log.Printf("WARNING: 环境变量 %s（待办清单 P98：静默回落的默认值比报错更难查）", note)
+	}
+	badEnvNotes = nil
 
 	// 生产环境（启用鉴权）强制要求修改默认 JWT_SECRET
 	if Config.AuthEnabled && Config.JWTSecret == defaultJWTSecret {
