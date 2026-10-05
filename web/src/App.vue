@@ -29,6 +29,21 @@
       </div>
     </header>
 
+    <!-- 维护模式横幅（待办清单 P95）：**没有关闭按钮**——该被看见的说明不该依赖用户主动去看，
+         关一次就等于把"这页为什么空白"的答案藏回去。文案也不写恢复时间：我们没有那个值。
+         管理员看到的是另一句（他本来就不被拦，给他看用户条会误导），并带一个停止入口。 -->
+    <div v-if="showLayout && maintenance" class="border-b border-border bg-surface-alt">
+      <div class="max-w-6xl mx-auto px-4 md:px-6 py-2.5 flex items-start gap-3">
+        <span class="font-mono text-xs uppercase tracking-wider text-text-muted shrink-0 mt-0.5">维护</span>
+        <p class="flex-1 text-sm leading-relaxed min-w-0 max-w-full">
+          <template v-if="admin">维护模式已开启 — 非管理员的数据面请求正在返回 503；管理面板与登录正常。</template>
+          <template v-else>系统维护中 — 阅读与书籍接口暂时停用，登录、账单与额度查询不受影响。</template>
+        </p>
+        <button v-if="admin" type="button" :disabled="stoppingMaintenance"
+                class="btn-ghost btn-sm shrink-0" @click="stopMaintenance">停止维护</button>
+      </div>
+    </div>
+
     <!-- 站内公告横幅：系统设置 announcement 非空时展示；关闭后记住内容，公告变更后重新展示 -->
     <div v-if="showLayout && announcement" class="border-b border-border bg-surface">
       <div class="max-w-6xl mx-auto px-4 md:px-6 py-2.5 flex items-start gap-3">
@@ -115,21 +130,42 @@ import { useRouter, useRoute } from 'vue-router'
 import UiTag from './components/UiTag.vue'
 import SidebarIcon from './components/SidebarIcon.vue'
 import { session, isAdmin, logout } from './store.js'
-import { roleTone } from './utils.js'
-import { miscApi } from './api/index.js'
+import { roleTone, toast } from './utils.js'
+import { miscApi, adminApi } from './api/index.js'
 
 // 站内公告：拉取系统设置 announcement；关闭状态按内容记忆（localStorage），内容变更后重新展示
 const announcement = ref('')
+// 维护模式横幅（待办清单 P95）：同一个请求带回的只读信号，不新开端点、不做设置项式的前端副本。
+// **必须读在公告那个「空公告就 return」之前**——公告为空是常态，那样会把维护状态一起漏掉。
+const maintenance = ref(false)
+const stoppingMaintenance = ref(false)
 
 const fetchAnnouncement = async () => {
   try {
     const data = await miscApi.announcement()
+    maintenance.value = !!(data && data.maintenance)
     const content = ((data && data.content) || '').trim()
     if (!content) { announcement.value = ''; return }
     let dismissed = ''
     try { dismissed = localStorage.getItem('announcement_dismissed') || '' } catch {}
     announcement.value = content !== dismissed ? content : ''
   } catch { /* 公告获取失败静默处理，不影响主流程 */ }
+}
+
+// 管理员那条横幅上的「停止维护」：写的是同一个设置项（面板设置页那个开关），
+// 不在横幅里再造第二个写入口径——成功就本地收敛，失败把后端的句子报出来、不改本地状态。
+const stopMaintenance = async () => {
+  if (stoppingMaintenance.value) return
+  stoppingMaintenance.value = true
+  try {
+    await adminApi.updateSetting('maintenance_mode', 'false')
+    maintenance.value = false
+    toast('维护模式已关闭', 'success')
+  } catch (e) {
+    toast(e.message || '关闭失败', 'error')
+  } finally {
+    stoppingMaintenance.value = false
+  }
 }
 
 const dismissAnnouncement = () => {

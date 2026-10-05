@@ -618,11 +618,17 @@ func CreateApp() *gin.Engine {
 	})
 
 	r.GET("/announcement", func(c *gin.Context) {
-		// 站内公告：读取系统设置 announcement（db.GetSetting 带 10s 缓存），空=无公告
+		// 站内公告：读取系统设置 announcement（db.GetSetting 带 10s 缓存），空=无公告。
+		// `maintenance` 是给前端横幅用的**只读信号**（待办清单 P95）：挂在这样一个
+		// 登录用户本来就会拉的端点上，是为了不新开端点、也不把"系统在维护"做成设置项；
+		// 它不携带任何用户数据，也不改变本端点的鉴权要求（照旧要凭证）。
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0,
 			"msg":  "ok",
-			"data": gin.H{"content": db.GetSetting("announcement")},
+			"data": gin.H{
+				"content":     db.GetSetting("announcement"),
+				"maintenance": db.SettingBool("maintenance_mode", false),
+			},
 		})
 	})
 
