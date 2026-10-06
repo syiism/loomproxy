@@ -273,6 +273,8 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 			Action:       action,
 			HandlerName:  info.Handler,
 			AuthRequired: h.AuthRequired(),
+			// 「要身份但不强制」随声明走同一条管道（P100）：命中白名单时仍解析凭证
+			IdentityOptional: h.PrefersIdentity(),
 		}
 		handlers := append(middleware.RouteChain(spec), handlerFunc)
 
@@ -533,7 +535,9 @@ func CreateApp() *gin.Engine {
 	})
 
 	// 端点列表（需认证，返回用户有权限访问的端点）
-	apiAuth, _ := middleware.Build("apiauth", middleware.Spec{})
+	// 这条与 /datasources 同类：它自己按身份过滤，所以「要身份但不强制」要显式声明——
+	// 手工 Build 不走 Spec 的填充路径，忘了传就等于没声明（P100）。
+	apiAuth, _ := middleware.Build("apiauth", middleware.Spec{AuthRequired: true, IdentityOptional: true})
 	// 这两支 401 是**端点自己的守卫**，不是网关拦的（P64 之后网关关了也会解析凭证，
 	// 匿名与坏票都会落到这里）。原来发的是裸英文单词 `"unauthorized"`，
 	// 中文界面里读不出"要登录"还是"网关没开"，而这句话现在是这条端点唯一的用户可读成因（P64 剩下的那一半）。

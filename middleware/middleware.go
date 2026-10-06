@@ -79,6 +79,9 @@ type Spec struct {
 	Action       string
 	HandlerName  string // base.Handler.GetName()，data_files 一类特例用
 	AuthRequired bool   // 取自 Handler.AuthRequired()
+	// IdentityOptional 取自 Handler.PrefersIdentity()：命中白名单时仍要 best-effort 解析凭证。
+	// 白名单免的是**强制**不是**解析**（待办清单 P100）——不传这个位，被白名单的端点就看不见身份。
+	IdentityOptional bool
 }
 
 // Def 一条中间件的注册项。

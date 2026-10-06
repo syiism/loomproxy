@@ -45,6 +45,11 @@ func NewDatasourceHandler(_ *base.APIConfig) base.Handler {
 	h.QueryParams = []string{}
 	h.Description = "列出所有可用数据源名称"
 	h.Auth = true
+	// 这份清单要按调用者的套餐裁剪，所以**命中白名单也要解析凭证**（待办清单 P100）：
+	// 文档建议运维把 /datasources 加进 AUTH_WHITELIST 来匿名分发，那条做法过去会让
+	// 所有已登录用户拿到免费版视图而毫无报错——按套餐裁剪那段代码从此走不到。
+	// 匿名仍然可以拿（免强制不变），只是拿的是匿名那一份。
+	h.IdentityOptional = true
 	return h
 }
 

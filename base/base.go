@@ -98,6 +98,7 @@ type Handler interface {
 	GetDescription() string
 	GetQueryParams() []string
 	AuthRequired() bool
+	PrefersIdentity() bool
 }
 
 type ConfigurableHandler interface {
@@ -172,7 +173,11 @@ type BaseHandler struct {
 	QueryParams []string
 	Description string
 	Auth        bool
-	Config      *APIConfig
+	// IdentityOptional 声明「要身份，但不强制」：路由命中白名单时仍 best-effort 解析凭证，
+	// 解析失败按匿名放行（待办清单 P100）。白名单免的是**强制**，不是**解析**——
+	// 没这个声明位的端点在白名单里拿不到身份，于是"按身份裁剪"的那段代码变成死代码（`/datasources` 就是这样）。
+	IdentityOptional bool
+	Config           *APIConfig
 
 	// UpstreamCacheTTL 上游响应缓存时长（0 表示不缓存）。
 	// detail/chapter 等幂等接口应设置短 TTL（秒级），content 等按章节唯一的接口保持 0。
@@ -239,6 +244,10 @@ func (h *BaseHandler) GetQueryParams() []string {
 
 func (h *BaseHandler) AuthRequired() bool {
 	return h.Auth
+}
+
+func (h *BaseHandler) PrefersIdentity() bool {
+	return h.IdentityOptional
 }
 
 func (h *BaseHandler) Handle(ctx context.Context, params map[string]interface{}) (interface{}, error) {

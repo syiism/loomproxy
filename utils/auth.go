@@ -51,7 +51,10 @@ type Credential struct {
 	EnvKey    bool
 }
 
-func VerifyAuth(c *gin.Context) error {
+// VerifyAuth 校验一次请求。wantIdentity 来自路由的 `IdentityOptional` 声明位：
+// 它决定**命中白名单时要不要顺手解析凭证**——白名单免的是强制，不是解析（待办清单 P100）。
+// 解析失败一律按匿名放行，这条不许变：那是"不强制"的全部含义。
+func VerifyAuth(c *gin.Context, wantIdentity bool) error {
 	if !conf.Config.AuthEnabled {
 		// 网关关着时仍解析凭证（可选鉴权，待办清单 P64）：解析成功就把身份挂上——
 		// /endpoints 这类自读 user_id 的端点过去把「网关关了」当成「没登录」，
@@ -64,6 +67,13 @@ func VerifyAuth(c *gin.Context) error {
 
 	path := c.Request.URL.Path
 	if IsWhitelisted(path) {
+		// 过去这里直接 return nil，凭证一个字都不解析——于是白名单把「免强制」扩成了「免解析」。
+		// 声明了要身份的端点在这一支仍走 best-effort：VIP 用户把 /datasources 加进白名单匿名分发时，
+		// 不再被降级成免费版视图（那条按套餐裁剪的代码本来只有这一处出口能走到）。
+		if wantIdentity {
+			_ = resolveJWT(c)
+			_ = resolveAPIKey(c)
+		}
 		return nil
 	}
 

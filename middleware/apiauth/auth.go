@@ -22,22 +22,22 @@ func init() {
 		Order: middleware.OrderAPIAuth,
 		// 只挂在声明了 AuthRequired 的路由上（等价原 app.go 的 if h.AuthRequired()）
 		Applies: func(s middleware.Spec) bool { return s.AuthRequired },
-		Build:   func(middleware.Spec) gin.HandlerFunc { return authMiddleware() },
+		Build:   func(s middleware.Spec) gin.HandlerFunc { return authMiddleware(s.IdentityOptional) },
 	})
 }
 
-func authMiddleware() gin.HandlerFunc {
+func authMiddleware(wantIdentity bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !conf.Config.AuthEnabled {
 			// 可选鉴权（待办清单 P64）：网关关着也解析凭证，解析成功就把身份挂上——
 			// /endpoints 这类自读 user_id 的端点过去把「网关关了」当「没登录」，
 			// 带着合法 JWT 也拿 401。解析失败按匿名放行：不强制是这条开关的全部语义。
-			_ = utils.VerifyAuth(c)
+			_ = utils.VerifyAuth(c, wantIdentity)
 			c.Next()
 			return
 		}
 
-		err := utils.VerifyAuth(c)
+		err := utils.VerifyAuth(c, wantIdentity)
 		if err != nil {
 			statusCode := http.StatusUnauthorized
 			if ae, ok := err.(*utils.AuthException); ok {

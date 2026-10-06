@@ -118,11 +118,18 @@ func TestDatasourcesViewFollowsPlanWhenIdentityParsed(t *testing.T) {
 
 // TestWhitelistedDatasourcesDropsIdentity P100 的 tripwire：现状是「路由在白名单上 → 凭证不解析」。
 // 修掉 P100 之后这条会红——那是提醒你把断言改成「白名单也解析、但解析失败仍匿名」，不是让你删掉它。
-func TestWhitelistedDatasourcesDropsIdentity(t *testing.T) {
+// TestWhitelistedDatasourcesStillParsesIdentity P100 修完之后的形状：**白名单免的是强制，不是解析**。
+// 两支各钉一件事，少一支就留着一个失效方向：
+//
+//	① 带合法 VIP 凭证 → 按套餐裁剪（`fake_b` 在）。过去这一支拿到免费版视图，
+//	   于是 `/datasources` 里"按套餐裁剪"那段代码是**死代码**——文档还明确建议运维把这条加进白名单。
+//	② 不带凭证 → 仍然 200，拿到匿名那一份。白名单"不拦匿名"的语义不许被这次修复改成"要鉴权"，
+//	   只钉 ① 会让"顺手把白名单收掉"这种过度修复照样绿。
+func TestWhitelistedDatasourcesStillParsesIdentity(t *testing.T) {
 	srv := newTestServer(t)
 	admin := adminToken(t, srv)
 	freeID, vipID := planIDByCode(t, "free"), planIDByCode(t, "vip")
-	// 不动白名单：脚手架默认就带着 /datasources
+	// 不动白名单：脚手架默认就带着 /datasources——这条用例测的正是"在白名单上"那一支
 
 	row := grantRow(t, freeID)
 	if _, env := doJSON(t, srv, http.MethodDelete, "/admin/quotas/limits/"+itoa(row.ID), nil, authHeader(admin)); env.Code != 0 {
@@ -131,10 +138,18 @@ func TestWhitelistedDatasourcesDropsIdentity(t *testing.T) {
 	vipToken := registerUser(t, srv, "p100w_vip", "p100w_vip@example.com", "pass1234")
 	setUserPlanForTest(t, "p100w_vip", vipID)
 
-	names := datasourceNamesAs(t, srv, vipToken)
-	if names["fake_b"] {
-		t.Fatalf("P100 已修：白名单路径现在会解析身份了——把这条用例改成「解析成功按套餐裁剪 / 解析失败仍匿名」，" +
-			"并回到待办清单把 P100 的状态行填上落点（不要只是删掉这条）")
+	// ② 匿名那一支，同时是**防断言空转的前提检查**：夹具没做出两种视图的话，下面的断言都是空转
+	catalog.InvalidateDatasourcesCache()
+	if names := datasourceNamesAs(t, srv, ""); names["fake_b"] {
+		t.Fatal("匿名视图含 fake_b——回收没生效，这两条断言会同时空转")
 	}
-	t.Log("现状确认：带合法 VIP 凭证请求白名单上的 /datasources，拿到的是免费版视图（身份被整体丢弃）——这就是 P100")
+	if status, env := doJSON(t, srv, http.MethodGet, "/datasources", nil, nil); status != http.StatusOK || env.Code != 0 {
+		t.Errorf("白名单被这次修复变成了要鉴权：匿名请求回 %d（%v）——白名单的语义是不拦，这条不许变", status, env.Msg)
+	}
+
+	// ① 带合法凭证那一支
+	catalog.InvalidateDatasourcesCache()
+	if names := datasourceNamesAs(t, srv, vipToken); !names["fake_b"] {
+		t.Fatal("白名单上的 /datasources 仍把身份整体丢掉：VIP 拿到的是免费版视图（P100 没修好，或声明位没接上）")
+	}
 }
