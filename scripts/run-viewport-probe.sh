@@ -42,13 +42,25 @@ EOF
 mkdir -p "$TMP/data"
 
 cleanup() {
-  [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null
-  wait "${APP_PID:-}" 2>/dev/null
+  # 第一版这里只有一个 `kill "$APP_PID"`，结果**跑一次泄漏一个服务器进程**（7 次运行 = 7 个活的
+  # loomproxy-go，而临时目录已经被 rm 掉了——cwd 显示 (deleted)，所以从目录里看不出来）。
+  # 根因是 `( cd X && bin )` 这个子 shell 不保证 exec：kill 打在子 shell 上，
+  # 真正的二进制是它的子进程，成了孤儿。修法是显式 `exec`，再加"确认死了才收尾"。
+  if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
+    kill "$APP_PID" 2>/dev/null
+    for _ in $(seq 1 20); do
+      kill -0 "$APP_PID" 2>/dev/null || break
+      sleep 0.2
+    done
+    kill -9 "$APP_PID" 2>/dev/null
+  fi
+  # 兜底：按进程名再收一次，确保这条脚本不留下活口
+  for p in $(pgrep -f "^$BIN$" 2>/dev/null); do kill -9 "$p" 2>/dev/null; done
   rm -rf "$TMP"
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
-( cd "$TMP" && "$BIN" > "$TMP/app.log" 2>&1 ) &
+( cd "$TMP" && exec "$BIN" > "$TMP/app.log" 2>&1 ) &
 APP_PID=$!
 
 BASE=""
