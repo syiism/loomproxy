@@ -55,6 +55,7 @@ vet:
 	@$(MAKE) --no-print-directory judgment-count-check
 	@$(MAKE) --no-print-directory doc-numbers-check
 	@$(MAKE) --no-print-directory todo-status-check
+	@$(MAKE) --no-print-directory docs-ref-check
 	@$(MAKE) --no-print-directory tz-check
 	@$(MAKE) --no-print-directory param-assert-check
 	@$(MAKE) --no-print-directory deploy-atomic-check
@@ -107,6 +108,14 @@ doc-numbers-check:
 # 「状态行含待拍而正文含已处理」那半句**刻意没做**——本仓合法状态行大量长那样，判它要读语义。
 todo-status-check:
 	@./scripts/check-todo-status.sh
+
+# docs 里反引号点名的标识符（`包名.标识符`）与带目录路径在本树必须还在。
+# 触发它的经验有两处，都在同一族：`admin.GetStats` 这个**从来没存在过**的名字在 P71 的现象段住了二十多遍
+# （第四十二遍 `git log -S` 查证后揪出），上一处是同族的过期引用 `test/quota_period_speaks_test.go`
+# （P70② 选了"连字段一起删"的处置，用例随之消失，而判据页还写着"已固化成它"）。
+# 范围只有两条、且**不查纯文件名**——误报量级实测过，理由写在脚本头部。
+docs-ref-check:
+	@./scripts/check-doc-refs.sh
 
 # 平台时区与日界只有一处定义（待办清单 P71）：出现 FixedZone / time.Local / 旧的 TZShanghai 调用即红。
 # 触发它的经验是本轮第十四遍数出来的七种写法——现网三种口径恰好重合，所以它不会自己报错。
