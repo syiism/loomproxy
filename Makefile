@@ -16,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check
 
 build: web vet test go-build
 
@@ -68,6 +68,13 @@ vet:
 # app.prewarmCache 是全仓 8 个 ticker 里唯一漏的那个），第三次不再靠人想起来
 ticker-stop-check:
 	@./scripts/check-ticker-stopped.sh
+
+# 按视口走一遍面板所有路由，读横向溢出（待办清单 P65 那一族的固化）。
+# 这一族**构建、用例、css-check 全都不报**——窄屏溢出只能被"真的按那个宽度看一次"发现，
+# 而"看一眼"过去每次都靠人临时想脚本，于是每次都要重新决定要不要看、看了哪几页。
+# 刻意**不进 vet/build**：它要浏览器与一份临时实例，是分钟级的东西，挂进门禁会把门禁变成等待。
+viewport-check:
+	@./scripts/run-viewport-probe.sh
 
 # gofmt 检查：列出即失败（豁免上述存量文件）
 fmt-check:
