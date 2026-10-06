@@ -147,14 +147,24 @@ for (const width of WIDTHS) {
     // 第二个信号：这一页加载时它自己发的请求里有没有 ≥400。
     // 面板的常见坏形状是"页面 200 而数据全红"，只看页面状态码看不出来
     // （`开发约定` 那句"按视口走一遍所有路由、读 scrollWidth 与 ≥400 响应"要的就是这两个数）
+    //
+    // **但这条信号有口径边界，别把它当万能红灯**：本脚本跑在**本机裸实例**上，前面没有 nginx，
+    // 所以由部署侧（前端服务器站点根）提供的静态文件必然 404 —— 那**不是缺陷**。
+    // 这一条是待办清单 P107 换来的：我第一次把 `/favicon.svg` 的 404 读成"仓库少一个文件"，
+    // 还动手把引用改成相对路径，而落在站点根正是维护者为了让"换图不必重建"做的设计。
+    // 判法：只有本服务自己认领的路径（/panel 与 API 前缀）出 4xx 才算未达标，其余出 ℹ️ 不计数。
+    const OWNED = ['^/panel', '^/auth', '^/admin', '^/quota', '^/rank', '^/datasources', '^/data', '^/verify', '^/health'];
     const httpBad = [];
+    const deploySide = [];
     const onResponse = (res) => {
       const st = res.status();
       if (st < 400) return;
       let u;
       try { u = new URL(res.url()); } catch { return; }
       if (u.origin !== new URL(BASE).origin) return;   // 外部资源不归本页管
-      httpBad.push(`${st} ${u.pathname}`);
+      const p = u.pathname;
+      const mine = OWNED.some((rx) => new RegExp(rx).test(p));
+      (mine ? httpBad : deploySide).push(`${st} ${p}`);
     };
     page.on('response', onResponse);
     try {
@@ -192,7 +202,8 @@ for (const width of WIDTHS) {
       console.log(`  ${route.padEnd(22)} ${over}${http}`);
     } else {
       const hint = r.scrolledCount ? `（${r.scrolledCount} 处出界但在可横滚容器内，算到达）` : '';
-      console.log(`  ${route.padEnd(22)} 不溢出 (scrollWidth=${r.page.scrollWidth}/${r.page.innerWidth})  「${r.text.slice(0, 24)}」${hint}`);
+      const info = deploySide.length ? `  ℹ 部署侧提供的东西本机没有：${[...new Set(deploySide)].join(' ')}` : '';
+      console.log(`  ${route.padEnd(22)} 不溢出 (scrollWidth=${r.page.scrollWidth}/${r.page.innerWidth})  「${r.text.slice(0, 24)}」${hint}${info}`);
     }
   }
   await ctx.close();
