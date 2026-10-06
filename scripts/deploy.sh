@@ -4,7 +4,7 @@
 # 用法：
 #   sudo scripts/deploy.sh                 systemd 模式（默认）：构建后安装到 DEPLOY_DIR 并 systemctl restart
 #   scripts/deploy.sh --local              原地模式：在仓库目录就地备份切换，pkill + nohup 重启（免 systemd）
-#   scripts/deploy.sh --skip-tests         跳过 vet+test（紧急发版，慎用）
+#   scripts/deploy.sh --skip-tests         跳过整串门禁（make vet + make test，紧急发版，慎用）
 #   scripts/deploy.sh -h                   帮助
 #
 # 环境变量：
@@ -85,8 +85,13 @@ log "构建前端（web/dist 供 go:embed 打包）..."
 (cd "$REPO_ROOT/web" && pnpm install --frozen-lockfile && pnpm build)
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
-	log "静态检查与测试（--skip-tests 可跳过）..."
-	(cd "$REPO_ROOT" && go vet ./... && go test ./test/ -count=1)
+	# 这一段的口径必须与 `make build` 一致（待办清单 P102，维护者 2026-10-06 拍定 A）。
+	# 以前这里写的是 `go vet ./... && go test ./test/`：少了 fmt/sql/css/nav/settings 那 15 道扫描，
+	# 少了 `-race`，也少了包内单测——而 AGENTS.md §3 说「唯一门禁是 make build」，
+	# **两条路径口径不一致时，走的那条就是实际门禁**，写文档的那条只是愿望。
+	# 跳过仍要显式说：--skip-tests 现在跳的是整串门禁，不再只是测试。
+	log "门禁（make vet + make test，与 make build 同口径；--skip-tests 可跳过）..."
+	(cd "$REPO_ROOT" && make vet && make test)
 fi
 
 log "编译二进制（CGO）..."
