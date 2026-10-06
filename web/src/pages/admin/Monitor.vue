@@ -543,7 +543,7 @@ const loadHistory = async (page) => {
     historyTotal.value = data.total || 0
     historyPage.value = data.page || 1
     nextTick(revealObserve)
-  } catch (e) { toast(e.message, 'error') }
+  } catch (e) { historyTotal.value = -1; toast(e.message, 'error') }
 }
 
 const loadSubjects = async () => {

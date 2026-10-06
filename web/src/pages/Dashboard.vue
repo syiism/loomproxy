@@ -177,6 +177,8 @@
     <section class="mt-12 md:mt-16 reveal">
       <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">{{ isAdmin ? '全站调用流水' : '调用流水' }}</h2>
       <UiSpinner v-if="logsLoading" />
+      <UiEmpty v-else-if="logs.length === 0 && logsTotal < 0" title="读数不可用"
+               text="流水没读到，不是没有记录。稍后刷新；服务端日志里有那一条 ERROR（读库失败，按空结果处理）。" />
       <UiEmpty v-else-if="logs.length === 0" title="暂无调用记录" :text="isAdmin ? '今日还没有用户调用过数据源接口。' : '成功调用数据源接口后，这里会展示每次的额度消耗。'" />
       <template v-else>
         <!-- 移动端 -->
@@ -212,7 +214,7 @@
         </div>
         <!-- 管理员视角收成「最近 5 条 + 跳转」：整表本来就是 /admin/usage-logs 的无筛选子集，
            在两页各显示一遍只会漂移（待办清单 P28·B1，收法照 P17）。普通用户仍看自己的全量分页。 -->
-        <router-link v-if="isAdmin" to="/admin/usage-logs" class="inline-block mt-3 text-xs text-text-muted hover:text-text transition-colors">共 {{ logsTotal }} 条 · 全部流水与筛选在「调用流水」页 ↗</router-link>
+        <router-link v-if="isAdmin" to="/admin/usage-logs" class="inline-block mt-3 text-xs text-text-muted hover:text-text transition-colors">{{ logsTotal < 0 ? '条数不可用（本次读取失败）' : `共 ${logsTotal} 条` }} · 全部流水与筛选在「调用流水」页 ↗</router-link>
         <UiPagination v-else :page="logsPage" :total="logsTotal" :page-size="logsPageSize" @change="goLogsPage" />
       </template>
     </section>

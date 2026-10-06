@@ -13,6 +13,8 @@
 
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
+    <UiEmpty v-else-if="list.length === 0 && total < 0" title="读数不可用"
+             text="这一页的流水没读到，不是没有记录。稍后刷新；服务端日志里有那一条 ERROR（读库失败，按空结果处理）。" />
     <UiEmpty v-else-if="list.length === 0" title="暂无流水记录" text="额度计费中间件启用后，这里将展示每次数据源调用的消耗明细。" />
     <template v-else>
       <div class="table-wrap reveal overflow-x-auto">
@@ -75,6 +77,7 @@ const load = async () => {
     pageSize.value = data.page_size || 20
     sourceCodes.value = data.source_codes || []
   } catch (e) {
+    total.value = -1 // 读失败写成"不可用"，不许留成 0（待办清单 P99 列表页那一格）
     error.value = e.message
   }
   loading.value = false

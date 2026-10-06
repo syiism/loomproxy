@@ -23,6 +23,7 @@ func MyUsageLogs(c *gin.Context) {
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		db.LogReadFail("my_usage_total:quota_usage_logs", err)
+		total = -1 // 同 admin 那一格：0 与"没读到"要分得开（待办清单 P99② 的 B）
 	}
 
 	var logs []models.QuotaUsageLog

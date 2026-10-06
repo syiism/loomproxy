@@ -24,6 +24,10 @@ func ListUsageLogs(c *gin.Context) {
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		db.LogReadFail("admin_usage_total:quota_usage_logs", err)
+		// 第三态：0 在这张页面上既可能是"真没有流水"也可能是"没读到"，两者必须分得开
+		// （待办清单 P99② 的 B，形状照 P54 的 table_growth 与 /admin/stats 的 -1）。
+		// 刻意不 500：这一页的**行**可能已经取到了，把整页打死反而丢掉那部分真相。
+		total = -1
 	}
 
 	var logs []models.QuotaUsageLog

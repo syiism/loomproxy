@@ -8,7 +8,8 @@
 
     <!-- 筛选级计数：这一页只报「这次筛选有多宽」，站点级数字在「管理后台」那四张看板 -->
     <div class="reveal font-mono text-xs text-text-muted mb-4">
-      当前列表命中 {{ total }} 条<span v-if="filterCount">（{{ filterCount }} 个筛选条件）</span><span v-else>（未筛选）</span>
+      <template v-if="total < 0">条数不可用：本次读取失败<span v-if="filterCount">（{{ filterCount }} 个筛选条件）</span></template>
+      <template v-else>当前列表命中 {{ total }} 条<span v-if="filterCount">（{{ filterCount }} 个筛选条件）</span><span v-else>（未筛选）</span></template>
     </div>
 
     <div class="reveal flex flex-col sm:flex-row gap-3 mb-3">
@@ -496,6 +497,8 @@ const load = async () => {
     const meta = (data.filters_meta || {})
     if (meta.many_api_keys) manyApiKeys.value = meta.many_api_keys
   } catch (e) {
+    // 读失败要写成"不可用"，不许留成上一轮的 0：0 在这页既可能是"真没人"也可能是"没读到"
+    total.value = -1
     error.value = e.message
   }
   loading.value = false

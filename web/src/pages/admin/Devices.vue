@@ -141,6 +141,7 @@ const load = async () => {
     sort.value = data.sort || sort.value
     dir.value = data.dir || dir.value
   } catch (e) {
+    total.value = -1 // 读失败写成"不可用"，不许留成 0（待办清单 P99 列表页那一格）
     error.value = e.message
     toast(e.message, 'error')
   }

@@ -241,7 +241,7 @@ const loadList = async (p) => {
     page.value = data.page || 1
     pageSize.value = data.page_size || 20
     selected.value = new Set() // 翻页/刷新后清空勾选
-  } catch (e) { error.value = e.message }
+  } catch (e) { total.value = -1; error.value = e.message }
   loading.value = false
   nextTick(revealObserve)
 }
