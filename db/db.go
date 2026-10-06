@@ -128,6 +128,7 @@ func Init() error {
 		&models.QuotaCost{},
 		&models.QuotaUsageLog{},
 		&models.UserDisplayAlias{},
+		&models.QuotaTransferLog{},
 		&models.PoolDevice{},
 		&models.UserQuotaOverride{},
 		&models.UserSourceConfig{},

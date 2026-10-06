@@ -86,6 +86,11 @@ func RegisterRoutes(r *gin.Engine) {
 		g.GET("/dashboard", Dashboard)
 		g.GET("/usage-logs", MyUsageLogs)
 	}
+	// 转移单独挂在组**外面**：`/quota` 那组是 AuthOrKeyRequired（三形态统一可用，§7），
+	// 而这条只认会话——挂在组里再叠一层 AuthRequired 会出现"网关先放行了 apiKey、
+	// 再由端点拒绝"的两张脸，日志里看到的是端点拒绝、审计里看到的却是另一个人。
+	// 一条端点一个守卫，谁的口径谁负责。
+	r.POST("/quota/transfer", auth.AuthRequired(), TransferMyQuota)
 }
 
 func Dashboard(c *gin.Context) {

@@ -553,3 +553,50 @@ func ptrOrZero(p *uint) uint {
 	}
 	return *p
 }
+
+// TransferUserQuota 管理员替某个用户在其两个源之间转移额度（待办清单 P97 落地）。
+// 边界与本人端**完全同一条**：都走 `gate.TransferQuota`，这里不重算、不放宽。
+// 审计行里的 `via="admin"` 与 `operator_id` 就是这一条与本人那条唯一的区别——
+// 没有它，"这个人的额度分布被谁改过"在记录里分不出来。
+func TransferUserQuota(c *gin.Context) {
+	var req struct {
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Amount int64  `json:"amount"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		auth.Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+	var user models.User
+	if err := db.DB.First(&user, c.Param("id")).Error; err != nil {
+		auth.Fail(c, http.StatusNotFound, "用户不存在")
+		return
+	}
+	opID, _ := c.Get("user_id")
+	operator, _ := opID.(uint)
+	res, err := gate.TransferQuota(user.ID, operator, req.From, req.To, req.Amount, "admin")
+	if err != nil {
+		status, msg := gate.TransferErrorStatus(err)
+		if status == 500 {
+			log.Printf("ERROR: 管理员发起的额度转移失败 target=%d operator=%d: %v", user.ID, operator, err)
+		} else {
+			log.Printf("WARN: 管理员额度转移被拒 target=%d %s→%s n=%d: %v", user.ID, req.From, req.To, req.Amount, err)
+		}
+		auth.Fail(c, status, msg)
+		return
+	}
+	actor, _ := c.Get("username")
+	log.Printf("ADMIN: 额度转移 target=%s(%d) %s→%s n=%d operator=%v", user.Username, user.ID, req.From, req.To, req.Amount, actor)
+	auth.Ok(c, gin.H{
+		// 回的是**被操作的那个人**：面板改完读数要靠它确认"我挪的是这个人的额度"。
+		// （这里一度写成了 `res.FromBefore`——一个复制粘贴出来的错，类型还正好对得上，
+		// 编译器不会拦、用例拦得住，所以用例里钉了这一格。）
+		"user_id":  user.ID,
+		"username": user.Username,
+		"amount":   res.Amount,
+		"from":     gin.H{"code": res.FromCode, "before": res.FromBefore, "after": res.FromAfter},
+		"to":       gin.H{"code": res.ToCode, "before": res.ToBefore, "after": res.ToAfter},
+	})
+}

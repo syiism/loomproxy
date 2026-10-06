@@ -123,6 +123,34 @@
     </template>
 
     <!-- 调用流水：管理员看全站，普通用户看自己的 -->
+      <!-- 额度转移（待办清单 P97）：只在自己的两个源之间重排**日限额增量**。
+           可选列表用后端的 `effective_total >= 0` 判据，与网关拒「不限额端」是同一条 —— 遮按钮不算校验。 -->
+      <section v-if="!isAdmin" class="mt-12 reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">额度转移</h2>
+        <p class="text-sm text-text-muted leading-relaxed mb-4">
+          把自己两个源之间的<strong>当日限额</strong>重排：转出方减、转入方加，总数不变。
+          已用量与流水不回改；不限额的源不参与，目标源必须是你有权限的。
+        </p>
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="flex flex-col gap-1 text-xs text-text-muted">从
+            <select v-model="tf.from" class="input font-mono">
+              <option v-for="s in numericSources" :key="'f'+s.source_code" :value="s.source_code">{{ s.name }}（{{ s.effective_total }}）</option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-1 text-xs text-text-muted">到
+            <select v-model="tf.to" class="input font-mono">
+              <option v-for="s in numericSources" :key="'t'+s.source_code" :value="s.source_code">{{ s.name }}（{{ s.effective_total }}）</option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-1 text-xs text-text-muted">数量
+            <input v-model.number="tf.amount" type="number" min="1" class="input w-24 font-mono">
+          </label>
+          <button type="button" class="btn-primary" :disabled="tf.saving || !tfReady" @click="onTransfer">
+            {{ tf.saving ? '转移中' : '转移' }}
+          </button>
+        </div>
+      </section>
+
     <section class="mt-12 md:mt-16 reveal">
       <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">{{ isAdmin ? '全站调用流水' : '调用流水' }}</h2>
       <UiSpinner v-if="logsLoading" />
@@ -181,6 +209,9 @@ import { fmtDate, revealObserve, quotaBand, remainingPct, quotaLitCount, QUOTA_D
 const loading = ref(true)
 const error = ref('')
 const sources = ref([])
+// 额度转移的本地状态：from/to/amount + 一条"这次成功的结果"回显（不静默改数字，让用户看得见挪了多少）
+const tf = ref({ from: '', to: '', amount: 10, saving: false })
+const tfReady = computed(() => !!tf.value.from && !!tf.value.to && tf.value.from !== tf.value.to && (tf.value.amount | 0) > 0)
 const groups = ref([])
 const ungroupedCount = ref(0)
 const groupFilter = ref('all')
@@ -236,6 +267,23 @@ const summaryCards = computed(() => {
     { label: '今日剩余', value: remaining },
   ]
 })
+
+// 能参与转移的源：限额是非负数字的那些（-1/不限 一律排除，判据与后端同源）
+const numericSources = computed(() => sources.value.filter(s => (s.effective_total ?? -1) >= 0))
+
+const onTransfer = async () => {
+  if (!tfReady.value || tf.value.saving) return
+  tf.value.saving = true
+  try {
+    const d = await quotaApi.transfer(tf.value.from, tf.value.to, tf.value.amount)
+    toast(`已转移 ${d.amount}：${d.from.code} ${d.from.before}→${d.from.after}，${d.to.code} ${d.to.before}→${d.to.after}`, 'success')
+    await load() // 数字由后端重算，不在本地加减——两侧都要看的是判定读的那一格
+  } catch (e) {
+    toast(e.message, 'error')
+  } finally {
+    tf.value.saving = false
+  }
+}
 
 const goLogsPage = (p) => { logsPage.value = p; loadLogs() }
 

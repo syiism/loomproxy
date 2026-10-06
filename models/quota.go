@@ -54,8 +54,11 @@ type UserQuotaOverride struct {
 	ID     uint `gorm:"primaryKey" json:"id"`
 	UserID uint `gorm:"uniqueIndex:idx_uqo_user_group;not null" json:"user_id"`
 	// GroupCode 历史字段名：存数据源码（组级覆盖已随组概念移除）
-	GroupCode string    `gorm:"size:32;uniqueIndex:idx_uqo_user_group;not null" json:"group_code"`
-	Limit     int64     `gorm:"default:0" json:"limit"` // >0=指定额度, 0=删除覆盖回退计划, -1=不限
+	GroupCode string `gorm:"size:32;uniqueIndex:idx_uqo_user_group;not null" json:"group_code"`
+	// Limit 是**增量**：>0 追加、<0 扣减（有效额度 = 套餐限额 + 本值，下限 0）。
+	// **0 是哨兵「没有覆盖」**（由 userOverrideLimit 判），不是"额度为零"——要清零写 -套餐限额。
+	// 旧注释这里写的是「-1=不限」，与解析函数相反，P97 落地时改掉。
+	Limit     int64     `gorm:"default:0" json:"limit"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -199,4 +202,33 @@ type SourceGroup struct {
 
 func (SourceGroup) TableName() string {
 	return "source_groups"
+}
+
+// QuotaTransferLog 一次额度转移的审计行（待办清单 P97 的 ④）。
+// 记的是**转移前后的有效额度**而不是覆盖增量：回读的人要看的是"当时那个源有多少、现在剩多少"，
+// 而增量要还原成那句话还得先查出套餐限额——把一次读回变成两次查询和一份可能已变的套餐。
+// 这张表是**判定输入的一部分**（同 §10 那条纪律）：写它必须与改两行覆盖**同一个事务**，
+// 写失败整个转移失败并出声——不许"额度挪了但没留下记录"。
+type QuotaTransferLog struct {
+	ID     uint `gorm:"primaryKey" json:"id"`
+	UserID uint `gorm:"index" json:"user_id"`
+	// OperatorID 实际操作者：本人自助时等于 UserID，管理端操作时是管理员的 ID。
+	// 这一列存在的唯一理由就是分得开这两种——只记 UserID 的话，
+	// "谁动了这个人的额度分布"这件事在记录里是看不出来的。
+	OperatorID   uint      `gorm:"index" json:"operator_id"`
+	Via          string    `gorm:"size:16" json:"via"` // self | admin
+	FromCode     string    `gorm:"size:64" json:"from_code"`
+	ToCode       string    `gorm:"size:64" json:"to_code"`
+	Amount       int64     `json:"amount"`
+	FromBefore   int64     `json:"from_before"`
+	FromAfter    int64     `json:"from_after"`
+	ToBefore     int64     `json:"to_before"`
+	ToAfter      int64     `json:"to_after"`
+	FromOverride int64     `json:"from_override"` // 转移后写入（或删除）的那个增量
+	ToOverride   int64     `json:"to_override"`
+	CreatedAt    time.Time `gorm:"index" json:"created_at"`
+}
+
+func (QuotaTransferLog) TableName() string {
+	return "quota_transfer_logs"
 }

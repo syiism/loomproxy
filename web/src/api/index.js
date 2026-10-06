@@ -148,6 +148,9 @@ export const adminApi = {
 
 export const quotaApi = {
   dashboard: () => request('/quota/dashboard'),
+  // 额度转移（待办清单 P97）：本人侧唯一写入口，只认会话（apiKey 打这里 401，有用例钉着）
+  transfer: (from, to, amount) =>
+    request('/quota/transfer', { method: 'POST', body: { from, to, amount } }),
   myUsageLogs: ({ page = 1, pageSize = 10, group } = {}) =>
     request('/quota/usage-logs', { query: { page, page_size: pageSize, group: group || undefined } }),
 }

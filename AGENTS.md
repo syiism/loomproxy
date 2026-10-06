@@ -147,6 +147,10 @@
 - **当日用量的起算点只有一处定义**（`gate.UsageSince`，P41）：取「平台时区零点」与「该用户的管理员刷新时刻」
   （`users.quota_reset_at`，NULL=从未刷新）里较晚的那个，判定与面板读数共用它。管理员刷额度走
   `POST /admin/users/:id/refresh-quota`（只认会话）：**不删流水、不改限额**，放开的是「再一天的量」。
+  **在同一个人的两个源之间重排日限额**是另一件事（`gate.TransferQuota`，待办清单 P97）：
+  本人端 `POST /quota/transfer` 与管理端各一个入口，**判定只在那个函数里**；
+  两端都不能是不限额、目标须已授权、增量算到 0 要删行（0 的语义是"没有覆盖"），
+  并与 `quota_transfer_logs` 同一事务——**不跨账户**，覆盖行的键本来就是 `(user_id, 源)`。
 - **套餐名/角色名可被本人设显示别名（P43）**：`user_display_aliases` 按 `(user_id, kind, target_id)` 存，
   默认名那两张全局表一概不动；显示规则只有 `models.DisplayAlias` 一处——本人界面看 `display_name`，
   管理员与运营看 `name` 并另给一栏 `alias`。写入口 `PUT /auth/display-alias` 只认会话，资格 = 绑定了非免费套餐。

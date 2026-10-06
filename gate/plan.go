@@ -49,7 +49,10 @@ func PlanSourceLimits(planID uint) map[string]int64 {
 }
 
 // userOverrideLimit 查询用户级覆盖额度（code 为数据源码）。
-// ok=false 表示无覆盖或覆盖值为 0（回退套餐）；limit<0 表示不限。
+// ok=false 表示无覆盖，或覆盖值是 0——**0 是哨兵"没有覆盖"**，不是"额度为零"。
+// limit 是**增量**：正数追加、负数扣减（结果由 clampLimit 夹到 0）。
+// （这里原先写的是「limit<0 表示不限」——那句与 EffectiveSourceLimit 的实际算法相反，
+// 谁照它写转移就会把"扣减"当成"放开"。待办清单 P97 落地时改掉的。）
 func userOverrideLimit(userID uint, code string) (int64, bool) {
 	var override models.UserQuotaOverride
 	if err := db.DB.Where("user_id = ? AND group_code = ?", userID, code).First(&override).Error; err != nil {
