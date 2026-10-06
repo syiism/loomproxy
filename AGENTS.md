@@ -74,7 +74,8 @@
   不探活），把请求轮询到全部可用号上，失效走 `Pool.Cooldown` 的临时冷却而不是判死（P5）。
   给「不因墙钟过期、燃烧看请求量」的号套默认形态，等于把所有请求打到同一台设备上。
 - **两条后台路径的 panic 兜底 + 临界区一律 defer 解锁**（P77/P78）：`Start`/`Maintain` 各
-  `defer p.guardPanic(...)`（它们直调源写的 `Provider.Create/Refresh/Claim`，而这里没有 gin Recovery），
+  `defer p.guardPanic(...)`（它们直调源写的 `Provider.Create/Refresh/Claim`，而这里没有 gin Recovery；
+  **兜底本身只有一处实现** `base.Guard`/`base.Supervised`，新起的后台循环一律走它，P103 已把另外四条裸跑的路径接上），
   被它们走到的临界区一律 `p.locked(fn)`——**「临界区一律 defer 解锁」是全仓规则，不只是号池**（P93：
   尾解锁被 panic 跳过 = 锁被永久持有，症状从"少一行读数"变成"下一个请求卡死"；**已由 `make vet` 的
   `lock-defer-check` 扫**，多段临界区与循环体各包闭包，就地加 defer 会把锁扩到网络请求上）；启动装填 `initLedger` **全程持锁**——`go pool.StartAll()` 排在

@@ -50,10 +50,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 要还原的文件 = target ∪ 相对 HEAD 脏的已跟踪文件
+# 要还原的文件 = target ∪ 相对 HEAD 脏的已跟踪文件 ∪ **未跟踪的 .go**
+# 最后这一项是第四十八遍补的：当天那次变异脚本改的是新建（还没 git add）的 `base/supervise.go`，
+# 而参数里的 target 写成了另一个文件——脚本走了"target 没被改动"那条退出路径，
+# 把改动过的文件还原回快照，可那份新文件**根本不在快照里**，于是变异留在工作树里，
+# 下一次跑测试看到的是"recover 没生效"的假象。未跟踪的 Go 源正是"刚写出来、正要验"的那批文件。
 {
   printf '%s\n' "$target"
   git diff --name-only
+  git ls-files --others --exclude-standard '*.go'
 } | sort -u > "$before.files"
 
 : > "$before"

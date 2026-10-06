@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"runtime/debug"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -210,18 +209,13 @@ func (p *Pool) locked(fn func()) {
 	fn()
 }
 
-// guardPanic 是后台路径（启动、维护 tick）的兜底，用法就是 defer p.guardPanic("维护")。
-// 这两条路径都调用源写的钩子，而它们不在 gin Recovery 的覆盖范围内：不拦下等于
-// **一个源解析畸形响应 = 整进程重启**，而 Restart=always 会把崩溃循环伪装成「运行中」。
-// 同一原则在本仓已落地两次——源启动钩子逐个 recover（base.RunSourceBoots）、
-// 聚合搜索逐目标 recover（app.callSourceHandler）；号池是第三处（待办清单 P77）。
-// 拦下只跳过本轮：临期号下一 tick 还会再试，与「刷新失败下轮再试」是同一条规矩。
-func (p *Pool) guardPanic(what string) {
-	if r := recover(); r != nil {
-		log.Printf("ERROR: 号池 %s 的%s路径 panic 已拦下（本轮跳过，进程与下一轮照常）：%v\n%s",
-			p.Name(), what, r, debug.Stack())
-	}
-}
+// 后台路径（启动、维护 tick）的兜底直接 defer base.Guard（P77/P78 → P103 收成一处实现）。
+//
+// 为什么不再包一层 p.guardPanic(...)：`recover()` 只认**被 panic 的那个函数直接 defer 的那个调用**。
+// 第四十九遍我先写的是 `defer p.guardPanic(...)` 而 guardPanic 里再调 base.Guard——
+// 那已经不是直接 defer，recover() 返回 nil，`test/pool_panic_guard_test.go` 当场红
+// （`TestPoolMaintainSurvivesProviderPanic`）。所以这两处改成直接 defer 到 base.Guard，
+// 名字在这里拼好（defer 的实参在 defer 语句执行时就求值，p.Name() 不经锁）。
 
 // noteBad 判断这条坏消息该不该说：**与上一次同一种失败就只累计不出声**，返回 false。
 //
@@ -265,7 +259,7 @@ func (p *Pool) noteGood(key string) (int, bool) {
 // Start 加载存量号并分类、转正首个活跃号、补齐冷备，然后启动维护协程。
 // 数据库未就绪时跳过（仅告警，不阻断启动——与缓存预热的守卫同类）。
 func (p *Pool) Start() {
-	defer p.guardPanic("启动")
+	defer base.Guard("号池 " + p.Name() + " 的启动路径")
 	if db.DB == nil {
 		p.logf("数据库未连接，跳过号池初始化")
 		return
@@ -549,7 +543,7 @@ func (p *Pool) Report(err error) {
 
 // Maintain 巡检：活跃号续期/退役、冷备补齐、dead 清理、限流扩容评估
 func (p *Pool) Maintain() {
-	defer p.guardPanic("维护")
+	defer base.Guard("号池 " + p.Name() + " 的维护路径")
 	if db.DB == nil {
 		return
 	}

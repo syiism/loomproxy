@@ -668,7 +668,11 @@ func prewarmCache(ctx context.Context, cancel context.CancelFunc) {
 			default:
 			}
 
-			if !prefillDatasourcesAnon(ctx) {
+			// 预热走的是取数那一族代码，同样在 Recovery 之外（待办清单 P103）；
+			// 拦下就等下一个 tick，deadline 到了自然收摊。
+			ready := false
+			base.Supervised("缓存预热的一轮", func() { ready = prefillDatasourcesAnon(ctx) })
+			if !ready {
 				continue
 			}
 			log.Println("缓存预热完成（只热 /datasources；/data 直读文件不缓存，见待办清单 P16）")

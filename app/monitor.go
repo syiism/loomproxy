@@ -172,7 +172,8 @@ func startSubjectNameBackfill(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				RunSubjectBackfillTick()
+				// 一轮回填会读明细、调命名缓存，都在 gin Recovery 之外（待办清单 P103）
+				base.Supervised("名称回填的一轮", RunSubjectBackfillTick)
 			}
 		}
 	}()

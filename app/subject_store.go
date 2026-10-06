@@ -95,20 +95,25 @@ func (s *redisSubjectStore) run(ctx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
-		n := len(batch)
-		p := s.rdb.Pipeline()
-		for _, w := range batch {
-			p.Set(ctx, w.key, w.value, subjectStoreTTL)
-		}
-		// 超时也要认：Redis 卡住时把写协程钉死，队列就会一路涨到丢弃
-		execCtx, cancelExec := context.WithTimeout(ctx, subjectExecTimeout)
-		_, err := p.Exec(execCtx)
-		cancelExec()
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("WARNING: 命名缓存写入 Redis 失败（本批 %d 条，累计失败 %d 条）: %v",
-				n, s.failed.Add(int64(n)), err)
-		}
-		batch = batch[:0]
+		// 兜底包在"这一批"外面（待办清单 P103）：写协程在 gin Recovery 之外，
+		// pipeline 里一次 panic 过去会带走整个进程，而 Restart=always 把它伪装成"运行中"。
+		// batch 的清理用 defer 收口：panic 时也要清空，否则下一轮拿同一批再炸一次。
+		base.Supervised("命名缓存的一批落盘", func() {
+			defer func() { batch = batch[:0] }()
+			n := len(batch)
+			p := s.rdb.Pipeline()
+			for _, w := range batch {
+				p.Set(ctx, w.key, w.value, subjectStoreTTL)
+			}
+			// 超时也要认：Redis 卡住时把写协程钉死，队列就会一路涨到丢弃
+			execCtx, cancelExec := context.WithTimeout(ctx, subjectExecTimeout)
+			_, err := p.Exec(execCtx)
+			cancelExec()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("WARNING: 命名缓存写入 Redis 失败（本批 %d 条，累计失败 %d 条）: %v",
+					n, s.failed.Add(int64(n)), err)
+			}
+		})
 	}
 	for {
 		select {

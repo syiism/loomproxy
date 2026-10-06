@@ -62,7 +62,9 @@ func maintainProxyPool(ctx context.Context, gap time.Duration) {
 	defer t.Stop()
 	for {
 		if healthyAPICount() < proxyAPIMinAlive && time.Since(lastReplenish) >= gap {
-			replenishProxies()
+			// 一轮补充会解析外部 API 的响应，也在别人的实现路径上：
+			// 不拦下就等于"一个畸形响应重启一次进程"（待办清单 P103）。
+			Supervised("动态代理池的一轮补充", func() { replenishProxies(ctx) })
 			lastReplenish = time.Now()
 		}
 		select {
@@ -89,7 +91,7 @@ func healthyAPICount() int {
 
 // replenishProxies 补充代理池至水位：先复验存量丢弃已死代理，
 // 再逐轮拉取新代理校验入池（跨轮去重，避免重复校验 API 重复下发的同一批死代理）
-func replenishProxies() {
+func replenishProxies(ctx context.Context) {
 	// 两小段临界区各自包闭包：中间那些是网络活（复验、拉取、休眠重试），
 	// 把 defer 写在函数开头等于持着 `proxyMu` 跑完整轮复验——比原来的尾解锁更糟（待办清单 P81/P93）。
 	existing := func() []string {
@@ -98,7 +100,7 @@ func replenishProxies() {
 		return append([]string(nil), proxyAPIList...)
 	}()
 
-	alive := validateProxies(existing)
+	alive := validateProxies(ctx, existing)
 	seen := make(map[string]bool)
 	for _, p := range existing {
 		seen[p] = true
@@ -106,7 +108,7 @@ func replenishProxies() {
 
 	totalFetched := 0
 	for round := 1; len(alive) < proxyAPIMinAlive && round <= proxyAPIMaxRounds; round++ {
-		proxies, err := fetchProxyAPI()
+		proxies, err := fetchProxyAPI(ctx)
 		if err != nil {
 			log.Printf("动态代理池: 拉取失败（第 %d/%d 轮）: %v", round, proxyAPIMaxRounds, err)
 			break
@@ -119,9 +121,14 @@ func replenishProxies() {
 				fresh = append(fresh, p)
 			}
 		}
-		alive = append(alive, validateProxies(fresh)...)
+		alive = append(alive, validateProxies(ctx, fresh)...)
 		if len(alive) < proxyAPIMinAlive && round < proxyAPIMaxRounds {
-			time.Sleep(proxyAPIRetryDelay)
+			// 等下一轮要听得见关停：这一轮剩下的网络活已经在 ctx 里了，等待本身也该听（P103）。
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(proxyAPIRetryDelay):
+			}
 		}
 	}
 
@@ -140,9 +147,11 @@ func replenishProxies() {
 }
 
 // fetchProxyAPI 请求代理 API，返回归一化（带 scheme）的代理列表（直连请求，不走代理）
-func fetchProxyAPI() ([]string, error) {
+func fetchProxyAPI(ctx context.Context) ([]string, error) {
 	apiURL := conf.Config.UpstreamProxyAPI
-	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	// ctx 一路传到底（P103）：这一路以前用 http.NewRequest，接了 ctx 却不往下传，
+	// 上层以为可取消而实际只能等 client 的 15 秒超时——**"接了 ctx 不传"比"不接"更坏**。
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +191,7 @@ func fetchProxyAPI() ([]string, error) {
 }
 
 // validateProxies 并发健康校验：经代理请求校验 URL，能拿到 <400 的 HTTP 响应视为存活
-func validateProxies(proxies []string) []string {
+func validateProxies(ctx context.Context, proxies []string) []string {
 	if len(proxies) == 0 {
 		return nil
 	}
@@ -198,7 +207,7 @@ func validateProxies(proxies []string) []string {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if checkProxyAlive(p, checkURL) {
+			if checkProxyAlive(ctx, p, checkURL) {
 				// defer 在这个 goroutine 退出时执行，与原来的尾解锁等价；
 				// 统一成 defer 是为了让 `check-lock-defer-unlock` 这条门禁能覆盖所有写法（待办清单 P93）
 				mu.Lock()
@@ -212,8 +221,8 @@ func validateProxies(proxies []string) []string {
 }
 
 // checkProxyAlive 单个代理健康校验
-func checkProxyAlive(proxy, checkURL string) bool {
-	req, err := http.NewRequest(http.MethodGet, checkURL, nil)
+func checkProxyAlive(ctx context.Context, proxy, checkURL string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checkURL, nil)
 	if err != nil {
 		return false
 	}
