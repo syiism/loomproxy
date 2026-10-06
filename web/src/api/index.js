@@ -13,6 +13,9 @@ export const authApi = {
   // 阅读数据留存同意位（隐私协议）：唯一写入口，只认会话
   updatePrivacy: (contentConsent) =>
     request('/auth/privacy', { method: 'POST', body: { content_consent: contentConsent } }),
+  // 单日额度的清零钟点模式（待办清单 P106）：唯一写入口，只认会话，30 天限频
+  updateQuotaCycle: (mode) =>
+    request('/auth/quota-cycle', { method: 'POST', body: { mode } }),
   // 套餐名/角色名的显示别名（待办清单 P43）：alias 传空串 = 清除覆盖、回默认名
   updateDisplayAlias: (kind, targetId, alias) =>
     request('/auth/display-alias', { method: 'PUT', body: { kind, target_id: targetId, alias } }),

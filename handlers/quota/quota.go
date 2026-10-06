@@ -60,11 +60,23 @@ type DashboardResponse struct {
 	PlanExpireAt   *time.Time        `json:"plan_expire_at"` // 套餐到期时间（null=永久/免费）
 	ActiveUsers    int64             `json:"active_users"`   // 管理员：当日全站去重活跃用户数
 	CallCount      int64             `json:"call_count"`     // 管理员：当日全站调用次数（接口监控口径，含未计费调用）
+	// QuotaCycleMode 与 NextCycleAt 是**本人口径的清零规则**：面板显示与切换入口都读这两格，
+	// 不自己复制"什么模式下钟点怎么算"这条规则（规则在 gate.UsageSince / utils.DailyAnchorStart）。
+	QuotaCycleMode string `json:"quota_cycle_mode"`
+	// QuotaCycleAnchor 是 `subscription` 模式下实际用的清零钟点（"14:32" 这种形状，平台时区）。
+	// 取的是注册时刻——**面板不许自己拿 created_at 算**：算错一个时区，显示的就不是判定读的那一格。
+	QuotaCycleAnchor string `json:"quota_cycle_anchor,omitempty"`
+	// SwitchAllowedAt 是下一次允许切换的时刻；NULL=现在就能切。限频数字由后端下发，不让面板写死。
+	SwitchAllowedAt *time.Time `json:"switch_allowed_at"`
 }
 
-func nextResetTime() string {
-	// 下一个平台时区零点：日界的算法在 utils.DayStart 那一处，这里取「今天零点 + 一天」。
+func nextResetTime(user *models.User) string {
+	// 下一次清零的时刻：`day` 模式取「下一个平台时区零点」，`subscription` 模式取「下一个注册钟点」。
+	// 日界的算法都在 utils 那一处（DayStart / DailyAnchorStart），这里只加一天。
 	// （写成 DayStart(2) 是错的——那个函数是**往前**推，得到的是昨天零点；用例把这条钉着。）
+	if user != nil && user.EffectiveQuotaCycleMode() == models.QuotaCycleSubscription && !user.CreatedAt.IsZero() {
+		return utils.DailyAnchorStart(user.CreatedAt).Add(24 * time.Hour).Format("2006/1/2 15:04:05")
+	}
 	return utils.DayStart(1).Add(24 * time.Hour).Format("2006/1/2 15:04:05")
 }
 
@@ -229,7 +241,7 @@ func Dashboard(c *gin.Context) {
 			EffectiveTotal: quota,
 			Remaining:      remaining,
 			UsagePct:       usagePct,
-			NextReset:      nextResetTime(),
+			NextReset:      nextResetTime(&user),
 			Handlers:       handlers,
 			Interfaces:     ifaces,
 		})
@@ -261,6 +273,10 @@ func Dashboard(c *gin.Context) {
 		PlanCode:       plan.Code,
 		PlanExpireAt:   user.PlanExpireAt,
 	}
+	// 清零口径随响应一起下发（同 P70 那条「档位数字由响应下发，面板不自己抄」的做法）
+	resp.QuotaCycleMode = user.EffectiveQuotaCycleMode()
+	resp.QuotaCycleAnchor = utils.ClockHHMM(user.CreatedAt)
+	resp.SwitchAllowedAt = user.QuotaCycleNextSwitchAt()
 	if isAdmin {
 		resp.ActiveUsers = gate.ActiveUsersToday("")
 		// 今日调用次数取接口监控口径（今日落库明细 + 内存环中今日记录），

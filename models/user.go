@@ -29,6 +29,16 @@ type User struct {
 	// 删行等于毁掉「今天到底用了多少」的证据，写负数行等于在总和里掺假账——
 	// 需要改的是**起算点**这一份事实，而且它只有一处定义（gate.UsageSince）。
 	QuotaResetAt *time.Time `json:"quota_reset_at"`
+	// QuotaCycleMode 单日额度的清零钟点模式：`day`=平台时区自然日 0 点（默认），
+	// `subscription`=本人**注册时刻那个钟点**（每 24h 一轮，见 utils.DailyAnchorStart）。
+	// **只移起算点，不动限额数字**——限额仍然是「/ 日」，P70 那条「额度只有一个窗口：当日」不被推翻。
+	// 默认值写在这一处就是唯一默认处，且默认**不是新行为**（P85：默认方向不许是改动后的那一头）；
+	// AutoMigrate 给存量行补的也是 `day`，所以升级前后所有人口径一字不变，不需要一次回填写库。
+	QuotaCycleMode string `gorm:"size:16;default:day" json:"quota_cycle_mode"`
+	// QuotaCycleChangedAt 本人上一次切换模式的时刻；NULL=从未切换。**它是那条端点的限频依据**（30 天一次，
+	// 与 UsernameChangedAt 同一个形状理由）——不限频就是白送刷新：起算点一旦后移，
+	// 前一段用量就不在窗口里了，而 UsedToday 正是按起算点求和的。
+	QuotaCycleChangedAt *time.Time `json:"quota_cycle_changed_at"`
 	// ContentConsent 是否同意网关留存「搜索词与阅读记录」（监控明细的内容维度）。
 	// **NULL = 从未表态 = 同意**：默认档写在这里，升级前的存量用户读出来就是同意，
 	// 不需要一次回填写数据（那是生产库写操作）。显式 false 才是不同意。
@@ -116,6 +126,11 @@ func (u *User) Public(aliases map[string]string) map[string]interface{} {
 		"last_login_at":       u.LastLoginAt,
 		"username_changed_at": u.UsernameChangedAt,
 		"token_expire_hours":  u.TokenExpireHours,
+		// 额度清零口径下发的是**有效值**（空串归一成 day）与算好的可切换时刻：
+		// 面板不许自己抄那 30 天。钟点那一格由读侧用 utils.ClockHHMM 补——models 不能反向依赖 utils
+		// （`utils/auth.go` 已经在用 models，倒过来就是环），这条边界是被编译器教的，不是设计的。
+		"quota_cycle_mode":           u.EffectiveQuotaCycleMode(),
+		"quota_cycle_next_switch_at": u.QuotaCycleNextSwitchAt(),
 		// 下发的是**有效值**而不是原始指针：面板不该需要知道「NULL 算什么」这条规则
 		"content_consent": u.KeepsContentData(),
 		"created_at":      u.CreatedAt,
@@ -161,4 +176,47 @@ func (u *User) HasRole(code string) bool {
 
 func (u *User) IsAdmin() bool {
 	return u.HasRole("admin")
+}
+
+// 额度清零模式的两个合法值（写口与判定读的是同一组常量，不在两处写字面量）。
+const (
+	QuotaCycleDay          = "day"
+	QuotaCycleSubscription = "subscription"
+)
+
+// QuotaCycleSwitchInterval 是本人切换清零模式的冷却长度（30 天，与「用户名每 30 天限改一次」同族）。
+// 为什么必须限频：切换**不改流水、只移起算点**，而起算点一旦后移，之前那段用量就不在窗口里了——
+// UsedToday 正是按起算点求和的。不限频的话「来回切两次」等于免费把当天额度清空一次，
+// 而监控与流水看不出任何异常。
+const QuotaCycleSwitchInterval = 30 * 24 * time.Hour
+
+// QuotaCycleNextSwitchAt 下一次允许切换的时刻；nil = 现在就能切（含从未切换的存量用户）。
+// 算法只在这一处：面板要显示「何时可再切」、端点要拒绝、用例要钉边界——三处必须同一个数。
+func (u *User) QuotaCycleNextSwitchAt() *time.Time {
+	if u == nil || u.QuotaCycleChangedAt == nil {
+		return nil
+	}
+	next := u.QuotaCycleChangedAt.Add(QuotaCycleSwitchInterval)
+	if time.Now().Before(next) {
+		return &next
+	}
+	return nil
+}
+
+// IsQuotaCycleMode 校验写入口收到的值。**空串不是合法值**——它是 AutoMigrate 之前那批行的形状，
+// 读的一侧由 EffectiveQuotaCycleMode 归一成 day，写的一侧必须显式给两个词之一。
+func IsQuotaCycleMode(v string) bool {
+	return v == QuotaCycleDay || v == QuotaCycleSubscription
+}
+
+// EffectiveQuotaCycleMode 读「这个人实际按哪个钟点清零」：**空值归一到 day**。
+// 归一必须只有一个地方做——判定与面板各归一次，就会在新增第三种模式时漏掉一处。
+func (u *User) EffectiveQuotaCycleMode() string {
+	if u == nil {
+		return QuotaCycleDay
+	}
+	if u.QuotaCycleMode == QuotaCycleSubscription {
+		return QuotaCycleSubscription
+	}
+	return QuotaCycleDay
 }

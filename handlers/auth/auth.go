@@ -85,6 +85,8 @@ func RegisterRoutes(r *gin.Engine) {
 		auth.GET("/me", AuthRequired(), Me)
 		auth.PATCH("/me", AuthRequired(), UpdateMe)
 		auth.POST("/privacy", AuthRequired(), UpdatePrivacyConsent)
+		// 单日额度的清零钟点模式：只认会话，与 /auth/privacy 同一组理由（本人自己的额度节奏）。
+		auth.POST("/quota-cycle", AuthRequired(), UpdateQuotaCycle)
 		// 显示别名（套餐名/角色名）：只认会话，与 /auth/privacy 同一组理由
 		auth.PUT("/display-alias", AuthRequired(), UpdateDisplayAlias)
 		auth.POST("/password", AuthRequired(), ChangePassword)
@@ -495,7 +497,10 @@ func Me(c *gin.Context) {
 		fail(c, http.StatusNotFound, "用户不存在")
 		return
 	}
-	ok(c, user.Public(db.DisplayAliasesFor(user.ID)))
+	view := user.Public(db.DisplayAliasesFor(user.ID))
+	// 锚点钟点由 utils 那一个口径算（时区与判定读的是同一处），面板只显示不推算。
+	view["quota_cycle_anchor"] = utils.ClockHHMM(user.CreatedAt)
+	ok(c, view)
 }
 
 // usernameChangeCooldown 用户名修改冷却期：每 30 天限改一次
@@ -633,7 +638,10 @@ func UpdateMe(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "数据库错误")
 		return
 	}
-	ok(c, user.Public(db.DisplayAliasesFor(user.ID)))
+	view := user.Public(db.DisplayAliasesFor(user.ID))
+	// 锚点钟点由 utils 那一个口径算（时区与判定读的是同一处），面板只显示不推算。
+	view["quota_cycle_anchor"] = utils.ClockHHMM(user.CreatedAt)
+	ok(c, view)
 }
 
 type privacyConsentRequest struct {
@@ -1235,4 +1243,76 @@ func ValidatePassword(pw string) bool {
 
 func validatePassword(pw string) bool {
 	return ValidatePassword(pw)
+}
+
+type quotaCycleRequest struct {
+	Mode string `json:"mode"` // 必须显式给出：day / subscription
+}
+
+// UpdateQuotaCycle 切换「单日额度按哪个钟点清零」——这条事实的**唯一写入口**（管理端不写这一列）。
+//
+// 语义要说清，因为它容易被读成别的东西：**只移起算点，不动限额、不动窗口长度**。
+// 窗口仍然是「一日」（P70 那条决定），`subscription` 只是把清零的那一刻从平台时区 0 点
+// 挪到本人注册时刻的那个钟点（每 24h 一轮，算法在 utils.DailyAnchorStart）。
+//
+// 为什么必须限频（30 天，models.QuotaCycleSwitchInterval）：切换不冲正任何流水，
+// 而起算点一旦后移，之前那段用量就不在窗口里了——`UsedToday` 正是按起算点求和的。
+// **不限频的话"来回切两次"就等于免费把当天额度清空**，而且监控与流水看不出任何异常
+// （这与 P41 那次「管理员刷新额度」的区别是：那一处由管理员的手发起，这一处由本人发起）。
+//
+// 只认会话：长期 API Key 不该能改本人的额度节奏——密钥泄露时攻击者可以用它把当天用量"洗"掉一次。
+// 重复提交同一个模式**不算切换**：不盖时刻、不占限频名额（P52 那一条：给没变的状态盖时刻等于让那列说假话）。
+func UpdateQuotaCycle(c *gin.Context) {
+	var req quotaCycleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("参数绑定失败（%s）: %v", c.Request.URL.Path, err)
+		fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+	if !models.IsQuotaCycleMode(req.Mode) {
+		fail(c, http.StatusBadRequest, "mode 只能是 day 或 subscription")
+		return
+	}
+	uid, _ := c.Get("user_id")
+	var user models.User
+	if err := db.DB.Select("id, created_at, quota_cycle_mode, quota_cycle_changed_at").First(&user, uid).Error; err != nil {
+		fail(c, http.StatusNotFound, "用户不存在")
+		return
+	}
+	current := user.EffectiveQuotaCycleMode()
+	if current == req.Mode {
+		quotaCycleResponse(c, &user, current, false)
+		return
+	}
+	if next := user.QuotaCycleNextSwitchAt(); next != nil {
+		fail(c, http.StatusTooManyRequests,
+			"切换过于频繁，请在 "+next.In(utils.PlatformZone()).Format("2006-01-02 15:04")+" 之后再试")
+		return
+	}
+	now := time.Now()
+	if err := db.DB.Model(&models.User{}).Where(map[string]interface{}{"id": user.ID}).
+		Updates(map[string]interface{}{"quota_cycle_mode": req.Mode, "quota_cycle_changed_at": now}).Error; err != nil {
+		// 给用户固定句、给服务端有声（P67 那两份信息）；驱动原文不外发（P90）
+		log.Printf("ERROR: 写入额度清零模式失败 user=%d: %v", user.ID, err)
+		fail(c, http.StatusInternalServerError, "更新失败")
+		return
+	}
+	log.Printf("额度清零模式已切换: user=%d %s→%s（30 天限频；切换只移起算点，不动流水与限额）", user.ID, current, req.Mode)
+	user.QuotaCycleMode = req.Mode
+	quotaCycleResponse(c, &user, req.Mode, true)
+}
+
+// quotaCycleResponse 把"现在按哪个钟点清零"回给面板：锚点钟点与下一次可切换的时刻都由后端算，
+// 面板不自己拿 created_at 推（算错一个时区，显示的就不是判定读的那一格）。
+func quotaCycleResponse(c *gin.Context, user *models.User, mode string, changed bool) {
+	data := map[string]interface{}{
+		"mode":    mode,
+		"changed": changed,
+		"scope":   "只改每日额度的清零钟点；限额数字与「当日」这个窗口长度都不变",
+	}
+	data["anchor"] = utils.ClockHHMM(user.CreatedAt)
+	if next := user.QuotaCycleNextSwitchAt(); next != nil {
+		data["next_switch_at"] = next.In(utils.PlatformZone()).Format("2006-01-02 15:04:05")
+	}
+	ok(c, data)
 }

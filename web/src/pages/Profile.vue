@@ -66,6 +66,38 @@
         </div>
       </section>
 
+      <!-- 单日额度的清零钟点（待办清单 P106）：唯一写入口 POST /auth/quota-cycle（只认会话）。
+           模式、锚点钟点、下一次可切换时刻全部由后端下发——面板不自己拿 created_at 推时区，也不自己抄那 30 天。 -->
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">额度清零时间</h2>
+        <p class="text-sm text-text-muted leading-relaxed mb-4">
+          每日额度默认在<strong>平台时区 0 点</strong>清零。也可以改为按<strong>你注册那一刻的钟点</strong>
+          （当前为 <span class="font-mono">{{ me.quota_cycle_anchor || '—' }}</span>）每 24 小时清零一次。
+          <strong>这只移动清零的时刻，不改变限额数字，也不改变「一日」这个窗口长度。</strong>
+        </p>
+        <div class="space-y-2 mb-4">
+          <label class="flex items-start gap-2">
+            <input type="radio" value="day" v-model="cycleForm.mode" class="mt-0.5" :disabled="cycleLocked || savingCycle">
+            <span class="text-sm">按自然日 0 点清零（默认）</span>
+          </label>
+          <label class="flex items-start gap-2">
+            <input type="radio" value="subscription" v-model="cycleForm.mode" class="mt-0.5" :disabled="cycleLocked || savingCycle">
+            <span class="text-sm">按注册钟点 <span class="font-mono">{{ me.quota_cycle_anchor || '—' }}</span> 清零</span>
+          </label>
+        </div>
+        <p v-if="cycleLocked" class="text-xs text-text-muted leading-relaxed mb-4">
+          每 30 天只能切换一次，下一次可切换时间：<span class="font-mono">{{ me.quota_cycle_next_switch_at }}</span>。
+        </p>
+        <div class="flex items-center gap-3">
+          <button type="button" class="btn-primary" :disabled="savingCycle || cycleLocked || cycleForm.mode === me.quota_cycle_mode" @click="onSaveCycle">
+            {{ savingCycle ? '保存中' : '保存设置' }}
+          </button>
+          <span v-if="!cycleLocked && cycleForm.mode !== (me.quota_cycle_mode || 'day')" class="text-xs text-text-muted">
+            切换不会撤销本次已用的额度，但会把今天这一轮的起算点移到新钟点。
+          </span>
+        </div>
+      </section>
+
       <!-- 显示别名（待办清单 P43）：只改「你看到的称呼」。默认名在 quota_plans/roles 两张全局表里，
            这里一概不动；管理员视图同时显示默认名与你的别名，所以别名不会把你的真实档位藏起来。 -->
       <section v-if="canAlias" class="reveal">
@@ -239,6 +271,16 @@ const profileForm = ref({ username: '', nickname: '', email: '', token_expire_ho
 // 老会话缓存里没这个键时读成 undefined，`!== false` 按默认档（同意）走
 const privacyForm = ref({ content_consent: true })
 const savingPrivacy = ref(false)
+// 单日额度清零钟点的模式（待办清单 P106）：值只有 day / subscription 两个词，读的是服务端下发的有效值
+const cycleForm = ref({ mode: 'day' })
+const savingCycle = ref(false)
+// 限频的判据也在服务端算：这一刻还没到 = 锁住。面板不自己加 30 天（抄一份就会漂）。
+const cycleLocked = computed(() => {
+  const v = (me.value || {}).quota_cycle_next_switch_at
+  if (!v) return false
+  const t = new Date(v).getTime()
+  return !Number.isNaN(t) && t > Date.now()
+})
 // 显示别名（待办清单 P43）：资格判据与后端一致——绑定了非免费套餐才能改
 const savingAlias = ref(false)
 const aliasTargets = ref([])
@@ -347,8 +389,27 @@ const load = async () => {
     buildAliasTargets()
     profileForm.value = { username: me.value.username || '', nickname: me.value.nickname || '', email: me.value.email || '', token_expire_hours: me.value.token_expire_hours || 0 }
     privacyForm.value.content_consent = me.value.content_consent !== false
+    cycleForm.value.mode = me.value.quota_cycle_mode || 'day'
   } catch (e) { /* 401 已由客户端处理 */ }
   nextTick(revealObserve)
+}
+
+const onSaveCycle = async () => {
+  if (savingCycle.value || cycleLocked.value) return
+  const want = cycleForm.value.mode
+  savingCycle.value = true
+  try {
+    const data = await authApi.updateQuotaCycle(want)
+    me.value = { ...me.value, quota_cycle_mode: data.mode, quota_cycle_anchor: data.anchor || '', quota_cycle_next_switch_at: data.next_switch_at || null }
+    session.user = me.value
+    toast(data.changed ? '已切换额度清零时间' : '当前已是该模式，未做变更', 'success')
+  } catch (err) {
+    // 失败要把开关拨回服务端的事实——这一项直接影响"今天这一轮从几点算"，不能让用户以为已经生效
+    cycleForm.value.mode = me.value.quota_cycle_mode || 'day'
+    toast(err.message, 'error')
+  } finally {
+    savingCycle.value = false
+  }
 }
 
 const onSaveProfile = async () => {

@@ -72,6 +72,22 @@ func DayStart(days int) time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -(days - 1))
 }
 
+// DailyAnchorStart 返回「最近一次到达 anchor 那个钟点（时:分:秒）」的时刻，按 24h 一轮、平台时区。
+//
+// 与 DayStart 是同一族算法：**钟点来自调用方，时区在这里只取一次**（P71：日界的算法不许散落到各层）。
+// DayStart(1) 是它的特例（anchor 钟点 = 0:00:00）。
+func DailyAnchorStart(anchor time.Time) time.Time {
+	loc := PlatformZone()
+	now := time.Now().In(loc)
+	a := anchor.In(loc)
+	t := time.Date(now.Year(), now.Month(), now.Day(), a.Hour(), a.Minute(), a.Second(), 0, loc)
+	if now.Before(t) {
+		// 今天的锚点钟点还没到 —— 本轮从昨天那一刻算起（不是"从今天 0 点算"，也不是"报错"）。
+		t = t.AddDate(0, 0, -1)
+	}
+	return t
+}
+
 // TZShanghai 是 PlatformZone 的旧名字，只留给尚未迁移的调用方（携带形态的 `sources/xmly` 还有一处）。
 // 新代码一律用 PlatformZone / DayStart——这里保留的不是"第二份事实"，它只是同一个定义的另一块门牌。
 func TZShanghai() *time.Location { return PlatformZone() }
@@ -128,4 +144,14 @@ func FormatDate(ts int64) string {
 
 func toInt(s string) (int, error) {
 	return strconv.Atoi(s)
+}
+
+// ClockHHMM 把任意时刻写成平台时区里的钟点（"14:32"）——给"这个人每天几点清零"这种展示用。
+// 放在 utils 是因为它必须和 DailyAnchorStart 用同一个时区口径：换个地方自己 Format，
+// 显示出来的钟点就可能不是判定实际读的那一格。
+func ClockHHMM(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(PlatformZone()).Format("15:04")
 }

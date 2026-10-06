@@ -91,7 +91,7 @@
 ## 7. 鉴权模型
 
 - 两层：API 网关层（`middleware/apiauth` → `utils.VerifyAuth`，JWT 或 API Key）与用户层（`AuthRequired()`/`AdminRequired()` 查库）。
-- **三形态（token / cookie / apiKey）在用户面端点统一可用**，但**凭证引导类（`/apikey`、`/auth/me·password·privacy·sessions·logout`）
+- **三形态（token / cookie / apiKey）在用户面端点统一可用**，但**凭证引导类（`/apikey`、`/auth/me·password·privacy·quota-cycle·sessions·logout`）
   与管理面（`/admin/*`）只认会话**：长期密钥不该能铸造别的密钥、改密码或绕过「一次登出全部失效」。
   两层共用同一个凭证解析器，别在第二处再写一遍解析顺序（P26）。
 - **登录/找回密码的防爆破是进程内存状态，不落库**：按**客户端 IP** 限频（登录 10 次/分、找回 5 次/分），

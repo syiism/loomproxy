@@ -26,7 +26,14 @@ func StartOfDay() time.Time {
 // 判定（billing 的 429）与读数（dashboard、管理面额度弹窗）都走这里——
 // 起算点要是长在两处，刷新后一处归零、另一处还挂着旧值，面板就成了「说不清哪边是真的地方」。
 func UsageSince(user *models.User) time.Time {
+	// 起算点的**候选**从两个变成三个，但"取较晚者"这条规则没变、定义处仍只有这一处：
+	//   ① 自然日零点（`day` 模式，也是所有存量人的实际值）
+	//   ② 本人注册时刻的钟点（`subscription` 模式，每 24h 一轮）——与 ① 二选一，不是叠加
+	//   ③ 管理员刷新时刻（P41）——**两种模式下都仍然压过它们**：管理员那一次是覆盖，不是换算法
 	start := StartOfDay()
+	if user != nil && user.EffectiveQuotaCycleMode() == models.QuotaCycleSubscription && !user.CreatedAt.IsZero() {
+		start = utils.DailyAnchorStart(user.CreatedAt)
+	}
 	if user == nil || user.QuotaResetAt == nil {
 		return start
 	}
