@@ -15,6 +15,7 @@ import (
 	"loomproxy/handlers/auth"
 	"loomproxy/handlers/catalog"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 var quotaScopes = map[string]bool{
@@ -599,4 +600,63 @@ func TransferUserQuota(c *gin.Context) {
 		"from":     gin.H{"code": res.FromCode, "before": res.FromBefore, "after": res.FromAfter},
 		"to":       gin.H{"code": res.ToCode, "before": res.ToBefore, "after": res.ToAfter},
 	})
+}
+
+// ListUserQuotaTransfers 管理端读某个用户的转移历史（待办清单 P97）。
+// 与本人那条的**唯一**区别是这里带上操作者账号名——管理面要追责到具体的人，
+// 而本人面只给 `via`（见 handlers/quota/transfers.go 那句）。两处都不重算额度，只回记录。
+func ListUserQuotaTransfers(c *gin.Context) {
+	var user models.User
+	if err := db.DB.First(&user, c.Param("id")).Error; err != nil {
+		auth.Fail(c, http.StatusNotFound, "用户不存在")
+		return
+	}
+	page, pageSize := utils.Paginate(c.DefaultQuery("page", "1"), c.DefaultQuery("page_size", "20"), 20)
+	q := db.DB.Model(&models.QuotaTransferLog{}).Where("user_id = ?", user.ID)
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	var rows []models.QuotaTransferLog
+	if err := q.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows).Error; err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	// 操作者名字一次查齐：逐条查就是 N+1，而这一屏的记录条数不会小到让批量查询显得多余
+	operatorNames := map[uint]string{}
+	var ops []models.User
+	ids := make([]uint, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.OperatorID)
+	}
+	if len(ids) > 0 {
+		if err := db.DB.Select("id", "username").Where("id IN ?", ids).Find(&ops).Error; err != nil {
+			log.Printf("ERROR: 读转移操作者失败 user=%d: %v", user.ID, err)
+		}
+		for _, o := range ops {
+			operatorNames[o.ID] = o.Username
+		}
+	}
+	list := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, gin.H{
+			"id":            r.ID,
+			"from":          r.FromCode,
+			"to":            r.ToCode,
+			"amount":        r.Amount,
+			"from_before":   r.FromBefore,
+			"from_after":    r.FromAfter,
+			"to_before":     r.ToBefore,
+			"to_after":      r.ToAfter,
+			"via":           r.Via,
+			"operator_id":   r.OperatorID,
+			"operator":      operatorNames[r.OperatorID],
+			"from_override": r.FromOverride,
+			"to_override":   r.ToOverride,
+			"created_at":    r.CreatedAt,
+		})
+	}
+	auth.Ok(c, gin.H{"list": list, "total": total, "page": page, "page_size": pageSize,
+		"user_id": user.ID, "username": user.Username})
 }

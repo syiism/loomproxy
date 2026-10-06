@@ -153,6 +153,9 @@ export const quotaApi = {
     request('/quota/transfer', { method: 'POST', body: { from, to, amount } }),
   myUsageLogs: ({ page = 1, pageSize = 10, group } = {}) =>
     request('/quota/usage-logs', { query: { page, page_size: pageSize, group: group || undefined } }),
+  // 转移历史（P97 的「人也要能查」那一半）：只读，三形态统一可用；回显不带操作者身份，只有 via
+  myTransfers: ({ page = 1, pageSize = 5 } = {}) =>
+    request('/quota/transfers', { query: { page, page_size: pageSize } }),
 }
 
 export const miscApi = {

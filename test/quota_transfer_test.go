@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"loomproxy/db"
 	"loomproxy/gate"
@@ -296,4 +297,179 @@ func TestQuotaTransferAdminEntry(t *testing.T) {
 		t.Errorf("管理端超额应 400，实得 %d", status)
 	}
 	_ = userToken
+}
+
+// 「转移是永久的」这条不能靠我读一遍代码下结论：
+// 它要断的是**跨过一次日界之后仍然生效**，以及**管理员刷新额度也不把它抹掉**。
+// 挪的是流水的时间戳，不改系统时钟（改时钟会污染同一进程里的其它用例，P57 那一族）。
+func TestQuotaTransferPersistsAcrossDays(t *testing.T) {
+	srv := newTestServer(t)
+	token := registerUser(t, srv, "tr_p1", "tr_p1@example.com", "pass1234")
+	admin := adminToken(t, srv)
+	var u models.User
+	if err := db.DB.Where("username = ?", "tr_p1").First(&u).Error; err != nil {
+		t.Fatalf("读不回用户: %v", err)
+	}
+	plan := gate.ResolvePlanForUser(&u)
+	ensureGrant(t, plan.ID, "fake_a", 100)
+	ensureGrant(t, plan.ID, "fake_b", 40)
+
+	if status, env := doJSON(t, srv, http.MethodPost, "/quota/transfer",
+		map[string]interface{}{"from": "fake_a", "to": "fake_b", "amount": 20}, authHeader(token)); status != http.StatusOK {
+		t.Fatalf("转移失败 status=%d msg=%s", status, env.Msg)
+	}
+	limits := gate.PlanSourceLimits(plan.ID)
+
+	log := models.QuotaUsageLog{UserID: u.ID, GroupCode: "fake_a", Cost: 5}
+	if err := db.DB.Create(&log).Error; err != nil {
+		t.Fatalf("写用量流水失败: %v", err)
+	}
+	var now models.User
+	if err := db.DB.First(&now, u.ID).Error; err != nil {
+		t.Fatalf("重读用户失败: %v", err)
+	}
+	if got := gate.UsedToday(&now, "fake_a"); got != 5 {
+		t.Fatalf("前置不成立：当日已用 = %d, want 5（后面那条「跨日」断言会空转）", got)
+	}
+	if got := gate.EffectiveSourceLimit(&now, "fake_a", limits); got != 80 {
+		t.Fatalf("转移后 fake_a 的限额 = %d, want 80", got)
+	}
+
+	// 把这条用量挪到 3 天前 = 模拟"过了日界、第二天刷新生效"
+	if err := db.DB.Model(&models.QuotaUsageLog{}).Where(map[string]interface{}{"id": log.ID}).
+		Update("created_at", time.Now().AddDate(0, 0, -3)).Error; err != nil {
+		t.Fatalf("挪流水时间失败: %v", err)
+	}
+	if got := gate.UsedToday(&now, "fake_a"); got != 0 {
+		t.Errorf("过日后当日已用应归 0，实得 %d（这条不成立就说明日界判定没读流水时间）", got)
+	}
+	// **核心那条**：用量归零了，限额却没回到 100——转移是永久的
+	if got := gate.EffectiveSourceLimit(&now, "fake_a", limits); got != 80 {
+		t.Errorf("跨日之后 fake_a 的限额 = %d, want 80（回到 100 就说明转移跟着日界失效了）", got)
+	}
+	if got := gate.EffectiveSourceLimit(&now, "fake_b", limits); got != 60 {
+		t.Errorf("跨日之后 fake_b 的限额 = %d, want 60（转入量没留住）", got)
+	}
+
+	// 管理员那次「刷新额度」只该动起算点，不许顺手把覆盖清掉
+	if status, env := doJSON(t, srv, http.MethodPost, "/admin/users/"+fmt.Sprintf("%d", u.ID)+"/refresh-quota", nil, authHeader(admin)); status != http.StatusOK {
+		t.Fatalf("刷新额度失败 status=%d msg=%s", status, env.Msg)
+	}
+	if ov, ok := transferOf(t, u.ID, "fake_a"); !ok || ov != -20 {
+		t.Errorf("刷新额度之后 fake_a 的覆盖被改动：ov=%d 存在=%v, want -20", ov, ok)
+	}
+	if ov, ok := transferOf(t, u.ID, "fake_b"); !ok || ov != 20 {
+		t.Errorf("刷新额度之后 fake_b 的覆盖被改动：ov=%d 存在=%v, want 20", ov, ok)
+	}
+}
+
+// 只读查看口：本人看自己的（不带操作者身份），管理端看别人的（带），且**互相看不到别人的记录**。
+func TestQuotaTransferReadViews(t *testing.T) {
+	srv := newTestServer(t)
+	owner := registerUser(t, srv, "tr_v1", "tr_v1@example.com", "pass1234")
+	other := registerUser(t, srv, "tr_v2", "tr_v2@example.com", "pass1234")
+	admin := adminToken(t, srv)
+
+	var u models.User
+	if err := db.DB.Where("username = ?", "tr_v1").First(&u).Error; err != nil {
+		t.Fatalf("读不回用户: %v", err)
+	}
+	plan := gate.ResolvePlanForUser(&u)
+	ensureGrant(t, plan.ID, "fake_a", 100)
+	ensureGrant(t, plan.ID, "fake_b", 40)
+	if status, env := doJSON(t, srv, http.MethodPost, "/quota/transfer",
+		map[string]interface{}{"from": "fake_a", "to": "fake_b", "amount": 80}, authHeader(owner)); status != http.StatusOK {
+		t.Fatalf("转移失败 status=%d msg=%s", status, env.Msg)
+	}
+
+	status, env := doJSON(t, srv, http.MethodGet, "/quota/transfers", nil, authHeader(owner))
+	if status != http.StatusOK || env.Code != 0 {
+		t.Fatalf("本人读转移史失败 status=%d msg=%s", status, env.Msg)
+	}
+	d := env.dataMap(t)
+	list, _ := d["list"].([]interface{})
+	if len(list) != 1 {
+		t.Fatalf("本人应看到 1 条，实得 %d", len(list))
+	}
+	row, _ := list[0].(map[string]interface{})
+	if row["from"] != "fake_a" || row["to"] != "fake_b" || row["amount"] != float64(80) {
+		t.Errorf("记录内容不对：%v", row)
+	}
+	if row["via"] != "self" {
+		t.Errorf("via = %v, want self", row["via"])
+	}
+	// 本人面**不给操作者身份**：管理员账号名不是这个人需要知道的信息
+	if _, leaked := row["operator_id"]; leaked {
+		t.Error("本人面把 operator_id 发出去了——只给 via 这一格就够")
+	}
+
+	// 越权那条最贵：另一个用户读同一条端点，必须一条都看不到
+	status, env = doJSON(t, srv, http.MethodGet, "/quota/transfers", nil, authHeader(other))
+	if status != http.StatusOK {
+		t.Fatalf("别人读自己的转移史应 200（空表），实得 %d", status)
+	}
+	if got := len(env.dataMap(t)["list"].([]interface{})); got != 0 {
+		t.Errorf("别人看到了这个用户的转移记录（%d 条）——查询没按 user_id 夹住", got)
+	}
+
+	// 管理员再挪一笔（fake_b→fake_a 20）：管理端的操作者名字两条路都要走到——
+	// 自助那一行的操作者是本人自己（tr_v1），管理端那一行才是 admin。原先这里只发了一笔
+	// 自助转移却硬性期望 operator=="admin"，是「为错误的理由写绿」的断言（P97 落地教训②同族）。
+	if status, env := doJSON(t, srv, http.MethodPost, "/admin/users/"+fmt.Sprintf("%d", u.ID)+"/quota-transfer",
+		map[string]interface{}{"from": "fake_b", "to": "fake_a", "amount": 20}, authHeader(admin)); status != http.StatusOK {
+		t.Fatalf("管理端转移失败 status=%d msg=%s", status, env.Msg)
+	}
+	// 管理端：带操作者账号名，并且审计里的写回增量说的是真话
+	status, env = doJSON(t, srv, http.MethodGet, "/admin/users/"+fmt.Sprintf("%d", u.ID)+"/quota-transfers", nil, authHeader(admin))
+	if status != http.StatusOK {
+		t.Fatalf("管理端读转移史失败 status=%d", status)
+	}
+	arows, _ := env.dataMap(t)["list"].([]interface{})
+	if len(arows) != 2 {
+		t.Fatalf("管理端应看到 2 条，实得 %d", len(arows))
+	}
+	operatorOf := func(amount float64) interface{} {
+		for _, r := range arows {
+			m, _ := r.(map[string]interface{})
+			if m["amount"] == amount {
+				return m["operator"]
+			}
+		}
+		return nil
+	}
+	if got := operatorOf(80); got != "tr_v1" {
+		t.Errorf("自助转移的操作者应是本人自己（tr_v1），实得 %v", got)
+	}
+	if got := operatorOf(20); got != "admin" {
+		t.Errorf("管理端转移的操作者应是 admin，实得 %v", got)
+	}
+	var arow map[string]interface{}
+	for _, r := range arows {
+		m, _ := r.(map[string]interface{})
+		if m["amount"] == float64(80) {
+			arow = m
+		}
+	}
+	if arow["from_override"] != float64(-80) {
+		t.Errorf("审计里的写回增量 = %v, want -80", arow["from_override"])
+	}
+	status, env = doJSON(t, srv, http.MethodGet, "/quota/dashboard", nil, authHeader(owner))
+	if status != http.StatusOK {
+		t.Fatalf("读 dashboard 失败 status=%d", status)
+	}
+	sources, _ := env.dataMap(t)["sources"].([]interface{})
+	if len(sources) == 0 {
+		t.Fatal("dashboard 的 sources 是空的——下面那条 override 断言会空转")
+	}
+	var label string
+	for _, s := range sources {
+		m, _ := s.(map[string]interface{})
+		if m["source_code"] == "fake_a" {
+			label, _ = m["override"].(string)
+		}
+	}
+	if label != "-60" {
+		t.Errorf("源卡上的永久调整 = %q, want \"-60\"——两笔转移后 fake_a 净减 60（转走 80、转回 20），"+
+			"被转走额度的源必须看得见这件事，否则半年后回来的人只会怀疑源坏了", label)
+	}
 }

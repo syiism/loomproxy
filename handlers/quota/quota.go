@@ -2,6 +2,7 @@ package quota
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +27,14 @@ type InterfaceCost struct {
 }
 
 type DashboardSource struct {
-	SourceCode     string          `json:"source_code"`
-	Name           string          `json:"name"`
-	ID             uint            `json:"id"`
-	GroupID        uint            `json:"group_id,omitempty"`
-	GroupName      string          `json:"group_name,omitempty"` // 所属分组名（未分组或组已停用为空）
+	SourceCode string `json:"source_code"`
+	Name       string `json:"name"`
+	ID         uint   `json:"id"`
+	GroupID    uint   `json:"group_id,omitempty"`
+	GroupName  string `json:"group_name,omitempty"` // 所属分组名（未分组或组已停用为空）
+	// Override 是这个源上的**永久调整**（`user_quota_overrides` 的增量，带符号；无覆盖显示「未设置」）。
+	// 这一格以前是**硬编码的常量**——面板没读它，于是它永远说同一句话。P97 之后必须说真话：
+	// 转移不随每日刷新回退，被转空的源第二天仍然是 0，没有这一格那种源看起来就像源坏了。
 	Override       string          `json:"override"`
 	UsedToday      int64           `json:"used_today"`   // 普通用户=自己的消耗；管理员=全站消耗
 	ActiveUsers    int64           `json:"active_users"` // 管理员：当日有消耗的去重用户数
@@ -70,6 +74,18 @@ type DashboardResponse struct {
 	SwitchAllowedAt *time.Time `json:"switch_allowed_at"`
 }
 
+// overrideLabel 把带符号的增量写成 "+20" / "-20" / "未设置"。
+// 空与 0 同义（这张表上 0 的语义就是"没有覆盖"，见 gate.TransferQuota 那句），所以都归到「未设置」。
+func overrideLabel(v int64) string {
+	if v == 0 {
+		return "未设置"
+	}
+	if v > 0 {
+		return "+" + strconv.FormatInt(v, 10)
+	}
+	return strconv.FormatInt(v, 10)
+}
+
 func nextResetTime(user *models.User) string {
 	// 下一次清零的时刻：`day` 模式取「下一个平台时区零点」，`subscription` 模式取「下一个注册钟点」。
 	// 日界的算法都在 utils 那一处（DayStart / DailyAnchorStart），这里只加一天。
@@ -85,6 +101,7 @@ func RegisterRoutes(r *gin.Engine) {
 	{
 		g.GET("/dashboard", Dashboard)
 		g.GET("/usage-logs", MyUsageLogs)
+		g.GET("/transfers", MyQuotaTransfers)
 	}
 	// 转移单独挂在组**外面**：`/quota` 那组是 AuthOrKeyRequired（三形态统一可用，§7），
 	// 而这条只认会话——挂在组里再叠一层 AuthRequired 会出现"网关先放行了 apiKey、
@@ -240,7 +257,7 @@ func Dashboard(c *gin.Context) {
 			Name:           ds.DisplayName,
 			GroupID:        groupID,
 			GroupName:      groupName,
-			Override:       "未设置",
+			Override:       overrideLabel(gate.UserSourceOverride(user.ID, ds.Name)),
 			UsedToday:      used,
 			ActiveUsers:    activeUsers,
 			EffectiveTotal: quota,

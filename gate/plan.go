@@ -94,3 +94,14 @@ func clampLimit(v int64) int64 {
 	}
 	return v
 }
+
+// UserSourceOverride 某个源上的**覆盖增量**原值（0 = 没有覆盖行）。
+// 与 userOverrideLimit 的区别是它不折叠 0 的语义：这里要给面板看的是"这一格有多少永久调整"，
+// 而 ok=false 那种折叠是给判定用的。**同一个数、两个口径**，所以两个函数都在这一处。
+func UserSourceOverride(userID uint, sourceName string) int64 {
+	var row models.UserQuotaOverride
+	if err := db.DB.Where("user_id = ? AND group_code = ?", userID, sourceName).First(&row).Error; err != nil {
+		return 0
+	}
+	return row.Limit
+}

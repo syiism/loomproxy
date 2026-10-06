@@ -62,6 +62,17 @@
           最近一次转移：{{ groupNameOf(tf.result.from.code) }} {{ tf.result.from.before }}→{{ tf.result.from.after }}，
           {{ groupNameOf(tf.result.to.code) }} {{ tf.result.to.before }}→{{ tf.result.to.after }}（共 {{ tf.result.amount }}）。上方卡片与下拉已按服务端重算刷新。
         </p>
+        <!-- 历史来自 GET /quota/transfers（服务端分页，这里只取最近 5 条）；口径由响应的 scope 一格下发，
+             面板不自己复述"改的是增量还是当日已用"。空列表整块不渲染——从没转过的页面上它是噪声。 -->
+        <div v-if="tfHistory.length" class="mt-5">
+          <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-2">最近转移</div>
+          <div class="space-y-1.5 text-sm">
+            <div v-for="h in tfHistory" :key="h.id" class="flex flex-wrap items-baseline justify-between gap-x-3">
+              <span class="font-mono text-xs text-text-muted">{{ fmtDate(h.created_at) }}</span>
+              <span>{{ groupNameOf(h.from) }} <span class="font-mono">{{ h.from_before }}→{{ h.from_after }}</span>，{{ groupNameOf(h.to) }} <span class="font-mono">{{ h.to_before }}→{{ h.to_after }}</span>（{{ h.amount }}）</span>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- 筛选栏：分组（归类视图）+ 名称/源码/分组名搜索 -->
@@ -140,6 +151,11 @@
 
               <div class="space-y-2 text-sm">
                 <div class="flex justify-between"><span class="text-text-muted">日额度</span><span class="font-mono">{{ fmtQuota(s.effective_total) }}</span></div>
+                <!-- 覆盖增量是 P97 之后 dashboard 才开始说真话的一格：转移不随每日刷新回退，
+                     "日额度怎么跟别人不一样"的答案在这里。未设置整行不渲染（row 是噪声）。 -->
+                <div v-if="!isAdmin && s.override && s.override !== '未设置'" class="flex justify-between">
+                  <span class="text-text-muted">覆盖增量</span><span class="font-mono text-xs">{{ s.override }}</span>
+                </div>
                 <div class="flex justify-between"><span class="text-text-muted">下次重置</span><span class="font-mono text-xs">{{ s.next_reset }}</span></div>
               </div>
 
@@ -218,6 +234,9 @@ const error = ref('')
 const sources = ref([])
 // 额度转移的本地状态：from/to/amount + 一条"这次成功的结果"回显（不静默改数字，让用户看得见挪了多少）
 const tf = ref({ from: '', to: '', amount: 10, saving: false, result: null })
+// 转移历史（P97 的「人也要能查」那一半）：转移改的是**永久**的日限额增量，不随每日刷新回退——
+// 半年后"这个源怎么是 0"的人，最该在这一眼看到原因，而不是去怀疑源坏了。
+const tfHistory = ref([])
 const tfReady = computed(() => !!tf.value.from && !!tf.value.to && tf.value.from !== tf.value.to && (tf.value.amount | 0) > 0)
 const groups = ref([])
 const ungroupedCount = ref(0)
@@ -395,6 +414,15 @@ const load = async () => {
   loading.value = false
   nextTick(revealObserve)
   loadLogs()
+  // 转移历史只在本人视角拉（管理员没有"自己的转移"可看）；读失败不影响主内容
+  if (!isAdmin.value) loadTransfers()
+}
+
+const loadTransfers = async () => {
+  try {
+    const data = await quotaApi.myTransfers({ page: 1, pageSize: 5 })
+    tfHistory.value = data.list || []
+  } catch (e) { /* 历史读不到不影响转移与卡片读数 */ }
 }
 
 onMounted(() => { revealObserve() })
