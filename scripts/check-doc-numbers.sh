@@ -95,11 +95,23 @@ if os.path.exists(ledger):
     real_todo = (wc('docs/规范/待办清单.md', '-l'),
                  sum(1 for l in open('docs/规范/待办清单.md', encoding='utf-8') if l.startswith('## P')))
     real_judg = (wc('docs/规范/踩坑判据.md', '-l'),)
-    real_agents = (wc('AGENTS.md', '-c'),)
+    # **按树取口径**（第三次命中同一条判据：检查的口径窄于事实的分布）——
+    # 携带分支的 AGENTS.md 多一整个 §0 书源段，同一个"体量读数"在两棵树里天然是两个值；
+    # 只认骨架那个数，分支树上的 `make build` 就会红在一句真话上（2026-10-06 实测 MAKE_EXIT=2）。
+    agents_txt = open('AGENTS.md', encoding='utf-8').read()
+    branch_tree = '本分支与骨架的差异' in agents_txt
+    m_agents = re.search(r'`AGENTS\.md` \*\*(\d+) 字节（骨架树）/ (\d+) 字节（携带分支树）\*\*', txt)
+    if not m_agents:
+        bad.append('%s：AGENTS 体量那条句式变了，规则④ 对这一项就变成看着空气' % ledger)
+    else:
+        declared = int(m_agents.group(2) if branch_tree else m_agents.group(1))
+        real_bytes = wc('AGENTS.md', '-c')
+        if declared != real_bytes:
+            bad.append('%s：AGENTS.md 体量读数（%s那一侧）写的是 %d，现测 %d 字节'
+                       % (ledger, '分支树' if branch_tree else '骨架树', declared, real_bytes))
     for pat, key, real in (
         (r'清单页 \*\*(\d+) 行 / 在册正文 (\d+) 条\*\*', '清单页', real_todo),
         (r'判据页 (\d+) 行', '判据页', real_judg),
-        (r'`AGENTS\.md` (\d+) 字节', 'AGENTS.md', real_agents),
     ):
         m = re.search(pat, txt)
         if not m:
