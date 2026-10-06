@@ -2,7 +2,8 @@
 # 文档里那些**自己声称的数**必须等于当场数出来的：
 #   ① 执行报告 §8 抬头的「共 N 条」= 那一节里 `### ` 块的个数；
 #   ② 报告里那句「清单页 …N 行」= `wc -l docs/规范/待办清单.md`；
-#   ③ 归档 README 每行的「N 条已收口原文」= 那个归档文件里 `## P` 条目的个数。
+#   ③ 归档 README 每行的「N 条已收口原文」= 那个归档文件里 `## P` 条目的个数；
+#   ④ 门禁台账 rule 2 的三条**体量读数**（清单页行/在册条、判据页行、AGENTS 字节）= 现测。
 #
 # 触发它的经验都是本轮自己撞的：同一个「共 11 条」在补进两块之后没人改过（实测 13），
 # 我顺手改成 13 又立刻是错的（再加两块是 15）；那句「清单页 913 行」被凭印象写过四次
@@ -78,6 +79,37 @@ if os.path.exists(readme):
         if declared != real:
             bad.append('%s:%d：那行写「%s 条已收口原文」，%s 里实测 %d 个 `## P` 条目'
                        % (readme, i, m.group(2), fname, real))
+
+# 规则 ④（2026-10-06 加）：门禁台账 rule 2 那三条**体量读数**必须等于现测。
+# 加这条的经过本身就是判据：台账那句「清单页 585 行 / 在册 9 条」是一小时前按 `wc -l` 写的，
+# 往里加一条 P104 之后就变了，而**没有任何检查会说它过期**——报告里那句有规则② 看着，台账那句没有。
+# 「写下的时候是对的」不是对的定义：这三条数是体量阈值的判据本身，一旦与文件脱钩，
+# 阈值就变成一句自我认证的话（「规则被兑现一次，比新加一条规则有用」那句也一起作废）。
+ledger = 'docs/规范/门禁台账.md'
+if os.path.exists(ledger):
+    txt = open(ledger, encoding='utf-8').read()
+
+    def wc(path, opt):
+        return int(subprocess.run(['wc', opt, path], capture_output=True, text=True).stdout.split()[0])
+
+    real_todo = (wc('docs/规范/待办清单.md', '-l'),
+                 sum(1 for l in open('docs/规范/待办清单.md', encoding='utf-8') if l.startswith('## P')))
+    real_judg = (wc('docs/规范/踩坑判据.md', '-l'),)
+    real_agents = (wc('AGENTS.md', '-c'),)
+    for pat, key, real in (
+        (r'清单页 \*\*(\d+) 行 / 在册正文 (\d+) 条\*\*', '清单页', real_todo),
+        (r'判据页 (\d+) 行', '判据页', real_judg),
+        (r'`AGENTS\.md` (\d+) 字节', 'AGENTS.md', real_agents),
+    ):
+        m = re.search(pat, txt)
+        if not m:
+            bad.append('%s：体量读数那条句式变了（%s），规则④ 就变成看着空气——**改那句话要连这条一起改**'
+                       % (ledger, pat))
+            continue
+        want = tuple(int(x) for x in m.groups())
+        if want != real:
+            bad.append('%s：%s 写的是 %s，现测 %s（行数 `wc -l`、在册条数按 `^## P`、字节 `wc -c`）'
+                       % (ledger, key, ' / '.join(map(str, want)), ' / '.join(map(str, real))))
 
 if bad:
     print('文档里自己声称的数与当场数出来的不一致（数字要数出来，不要凭印象）：')
