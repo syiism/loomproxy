@@ -135,7 +135,9 @@ func (h *DatasourceHandler) Handle(ctx context.Context, params map[string]interf
 
 	// 停用的组不下发组名（其源等同未分组）；组改动会走 InvalidateDatasourcesCache，此处只读一次
 	var enabledGroups []models.SourceGroup
-	db.DB.Where("status = 1").Find(&enabledGroups)
+	if err := db.DB.Where("status = 1").Find(&enabledGroups).Error; err != nil {
+		db.LogReadFail("catalog_groups:source_groups", err)
+	}
 	groupNames := make(map[uint]string, len(enabledGroups))
 	for _, g := range enabledGroups {
 		groupNames[g.ID] = g.Name

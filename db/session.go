@@ -156,8 +156,10 @@ func RevokedSince(userID uint, since time.Time) int64 {
 // ListActiveSessions 列出用户未吊销且未过期的会话
 func ListActiveSessions(userID uint) []models.AuthSession {
 	var sessions []models.AuthSession
-	DB.Where("user_id = ? AND revoked_at IS NULL AND expires_at > ?", userID, time.Now()).
-		Order("last_active_at DESC").Find(&sessions)
+	if err := DB.Where("user_id = ? AND revoked_at IS NULL AND expires_at > ?", userID, time.Now()).
+		Order("last_active_at DESC").Find(&sessions).Error; err != nil {
+		LogReadFail("active_sessions:auth_sessions", err)
+	}
 	return sessions
 }
 

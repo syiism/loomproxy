@@ -16,7 +16,9 @@ import (
 // ListBlockedIPs IP 黑名单列表（按 id 倒序）
 func ListBlockedIPs(c *gin.Context) {
 	var list []models.BlockedIP
-	db.DB.Order("id DESC").Find(&list)
+	if err := db.DB.Order("id DESC").Find(&list).Error; err != nil {
+		db.LogReadFail("blocked_ip_list:blocked_ips", err)
+	}
 	if list == nil {
 		list = []models.BlockedIP{}
 	}
@@ -50,7 +52,9 @@ func AddBlockedIP(c *gin.Context) {
 	}
 
 	var count int64
-	db.DB.Model(&models.BlockedIP{}).Where("ip = ?", ip).Count(&count)
+	if err := db.DB.Model(&models.BlockedIP{}).Where("ip = ?", ip).Count(&count).Error; err != nil {
+		db.LogReadFail("blocked_ip_dupcheck:blocked_ips", err)
+	}
 	if count > 0 {
 		auth.Fail(c, http.StatusConflict, "该 IP 已在黑名单中")
 		return

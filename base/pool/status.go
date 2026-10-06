@@ -121,9 +121,11 @@ func fillCountsFromDB(st *Status, name string) {
 		N      int64
 	}
 	var rows []row
-	db.DB.Model(&models.PoolDevice{}).
+	if err := db.DB.Model(&models.PoolDevice{}).
 		Where("pool = ?", name).
-		Select("status, COUNT(*) AS n").Group("status").Scan(&rows)
+		Select("status, COUNT(*) AS n").Group("status").Scan(&rows).Error; err != nil {
+		db.LogReadFail("pool_status_counts:pool_devices", err)
+	}
 	for _, r := range rows {
 		st.Counts[r.Status] = r.N
 	}
@@ -131,7 +133,9 @@ func fillCountsFromDB(st *Status, name string) {
 
 func countByStatus(name, status string) int64 {
 	var n int64
-	db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", name, status).Count(&n)
+	if err := db.DB.Model(&models.PoolDevice{}).Where("pool = ? AND status = ?", name, status).Count(&n).Error; err != nil {
+		db.LogReadFail("pool_status_count_by:pool_devices", err)
+	}
 	return n
 }
 
@@ -158,7 +162,9 @@ func listDevices(name string, limit int, statuses ...string) []DeviceInfo {
 		q = q.Where("status IN ?", statuses)
 	}
 	var rows []models.PoolDevice
-	q.Order("updated_at DESC").Limit(limit).Find(&rows)
+	if err := q.Order("updated_at DESC").Limit(limit).Find(&rows).Error; err != nil {
+		db.LogReadFail("pool_status_devices:pool_devices", err)
+	}
 	out := make([]DeviceInfo, 0, len(rows))
 	for i := range rows {
 		out = append(out, snapshot(&rows[i]))

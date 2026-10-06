@@ -22,7 +22,9 @@ func seedRoles(db *gorm.DB) error {
 
 	for _, role := range roles {
 		var count int64
-		db.Model(&models.Role{}).Where("code = ?", role.Code).Count(&count)
+		if err := db.Model(&models.Role{}).Where("code = ?", role.Code).Count(&count).Error; err != nil {
+			LogReadFail("seed_roles:roles", err)
+		}
 		if count == 0 {
 			if err := db.Create(&role).Error; err != nil {
 				return err
@@ -75,7 +77,9 @@ func seedSettings(db *gorm.DB) error {
 	for _, gone := range []string{"rank_public_enabled", "legado_import_url", "site_name"} {
 		var n int64
 		goneCond := map[string]interface{}{"key": gone}
-		db.Model(&models.SystemSetting{}).Unscoped().Where(goneCond).Count(&n)
+		if err := db.Model(&models.SystemSetting{}).Unscoped().Where(goneCond).Count(&n).Error; err != nil {
+			LogReadFail("seed_gone_settings:system_settings", err)
+		}
 		if n > 0 {
 			if err := db.Unscoped().Where(goneCond).Delete(&models.SystemSetting{}).Error; err != nil {
 				return err
@@ -126,7 +130,9 @@ func seedQuotaPlans(db *gorm.DB) error {
 	justCreated := make(map[string]bool, len(plans))
 	for _, plan := range plans {
 		var count int64
-		db.Model(&models.QuotaPlan{}).Where("code = ?", plan.Code).Count(&count)
+		if err := db.Model(&models.QuotaPlan{}).Where("code = ?", plan.Code).Count(&count).Error; err != nil {
+			LogReadFail("seed_plans:quota_plans", err)
+		}
 		if count == 0 {
 			if err := db.Create(&plan).Error; err != nil {
 				return err
@@ -182,7 +188,9 @@ func seedQuotaPlans(db *gorm.DB) error {
 	}
 	for _, limit := range limits {
 		var count int64
-		db.Model(&models.QuotaLimit{}).Where("plan_id = ? AND scope = ? AND target = ?", limit.PlanID, limit.Scope, limit.Target).Count(&count)
+		if err := db.Model(&models.QuotaLimit{}).Where("plan_id = ? AND scope = ? AND target = ?", limit.PlanID, limit.Scope, limit.Target).Count(&count).Error; err != nil {
+			LogReadFail("seed_plan_grants:quota_limits", err)
+		}
 		if count == 0 {
 			if err := db.Create(&limit).Error; err != nil {
 				return err
@@ -195,11 +203,13 @@ func seedQuotaPlans(db *gorm.DB) error {
 
 func seedAdmin(db *gorm.DB) error {
 	var adminCount int64
-	db.Model(&models.User{}).
+	if err := db.Model(&models.User{}).
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
 		Where("roles.code = ?", "admin").
-		Count(&adminCount)
+		Count(&adminCount).Error; err != nil {
+		LogReadFail("seed_admin_exists:users", err)
+	}
 	if adminCount > 0 {
 		return nil
 	}
@@ -366,7 +376,9 @@ func migrateGroupCostRows(db *gorm.DB) error {
 		for _, c := range costs {
 			for _, src := range sources {
 				var n int64
-				db.Model(&models.QuotaCost{}).Where("group_code = ? AND interface = ?", src, c.Interface).Count(&n)
+				if err := db.Model(&models.QuotaCost{}).Where("group_code = ? AND interface = ?", src, c.Interface).Count(&n).Error; err != nil {
+					LogReadFail("seed_cost_fix:quota_costs", err)
+				}
 				if n == 0 {
 					if err := db.Create(&models.QuotaCost{
 						GroupCode: src, Interface: c.Interface,
@@ -393,8 +405,10 @@ func migrateGroupCostRows(db *gorm.DB) error {
 		for _, pc := range planCosts {
 			for _, src := range sources {
 				var n int64
-				db.Model(&models.QuotaCostPlan{}).
-					Where("plan_id = ? AND group_code = ? AND interface = ?", pc.PlanID, src, pc.Interface).Count(&n)
+				if err := db.Model(&models.QuotaCostPlan{}).
+					Where("plan_id = ? AND group_code = ? AND interface = ?", pc.PlanID, src, pc.Interface).Count(&n).Error; err != nil {
+					LogReadFail("seed_cost_plan_fix:quota_cost_plans", err)
+				}
 				if n == 0 {
 					if err := db.Create(&models.QuotaCostPlan{
 						PlanID: pc.PlanID, GroupCode: src, Interface: pc.Interface, Interval: pc.Interval,
@@ -420,8 +434,10 @@ func migrateGroupCostRows(db *gorm.DB) error {
 		for _, o := range overrides {
 			for _, src := range sources {
 				var n int64
-				db.Model(&models.UserQuotaOverride{}).
-					Where("user_id = ? AND group_code = ?", o.UserID, src).Count(&n)
+				if err := db.Model(&models.UserQuotaOverride{}).
+					Where("user_id = ? AND group_code = ?", o.UserID, src).Count(&n).Error; err != nil {
+					LogReadFail("seed_override_fix:user_quota_overrides", err)
+				}
 				if n == 0 {
 					if err := db.Create(&models.UserQuotaOverride{
 						UserID: o.UserID, GroupCode: src, Limit: o.Limit,
@@ -465,7 +481,9 @@ func seedQuotaCosts(db *gorm.DB) error {
 	for _, src := range sourceSeedProvider() {
 		for _, iface := range src.Actions {
 			var count int64
-			db.Model(&models.QuotaCost{}).Where("group_code = ? AND interface = ?", src.Name, iface).Count(&count)
+			if err := db.Model(&models.QuotaCost{}).Where("group_code = ? AND interface = ?", src.Name, iface).Count(&count).Error; err != nil {
+				LogReadFail("seed_cost_default:quota_costs", err)
+			}
 			if count == 0 {
 				cost := DefaultInterfaceCost(iface)
 				if err := db.Create(&models.QuotaCost{
@@ -522,7 +540,9 @@ func seedDataSources(db *gorm.DB) ([]string, error) {
 	var created []string
 	for _, ds := range sourceSeedProvider() {
 		var count int64
-		db.Model(&models.DataSource{}).Where("name = ?", ds.Name).Count(&count)
+		if err := db.Model(&models.DataSource{}).Where("name = ?", ds.Name).Count(&count).Error; err != nil {
+			LogReadFail("seed_datasource:data_sources", err)
+		}
 		if count > 0 {
 			continue
 		}
@@ -648,8 +668,10 @@ func warnUngrantedSources(db *gorm.DB) {
 	}
 	for _, ds := range sources {
 		var n int64
-		db.Model(&models.QuotaLimit{}).
-			Where("scope = ? AND target = ?", "source", ds.Name).Count(&n)
+		if err := db.Model(&models.QuotaLimit{}).
+			Where("scope = ? AND target = ?", "source", ds.Name).Count(&n).Error; err != nil {
+			LogReadFail("seed_grant_warning:quota_limits", err)
+		}
 		if n == 0 {
 			log.Printf("警告：数据源 %s 未授权给任何套餐，其接口对所有人返回 403；"+
 				"确需开放请在管理面板「额度 → 限制项」加一行（scope=source，限额 -1 即不限额），"+

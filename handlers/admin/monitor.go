@@ -35,7 +35,9 @@ type monitorRow struct {
 func lifetimeCounts() map[string]int64 {
 	m := make(map[string]int64)
 	var stats []models.ApiCallStat
-	db.DB.Find(&stats)
+	if err := db.DB.Find(&stats).Error; err != nil {
+		db.LogReadFail("monitor_trend:api_call_stats", err)
+	}
 	for _, s := range stats {
 		m[s.Source+"/"+s.Action] += s.Total
 	}
@@ -45,10 +47,12 @@ func lifetimeCounts() map[string]int64 {
 		Total  int64
 	}
 	var rows []row
-	db.DB.Model(&models.ApiCallLog{}).
+	if err := db.DB.Model(&models.ApiCallLog{}).
 		Select("source, action, COUNT(*) AS total").
 		Group("source, action").
-		Scan(&rows)
+		Scan(&rows).Error; err != nil {
+		db.LogReadFail("monitor_subjects_agg:api_call_logs", err)
+	}
 	for _, r := range rows {
 		m[r.Source+"/"+r.Action] += r.Total
 	}

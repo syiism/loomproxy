@@ -131,7 +131,9 @@ func Dashboard(c *gin.Context) {
 
 	// 获取所有启用的数据源
 	var dataSources []models.DataSource
-	db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources)
+	if err := db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources).Error; err != nil {
+		db.LogReadFail("quota_dashboard:data_sources", err)
+	}
 
 	// 如果用户非管理员，按套餐过滤：判据就一个——套餐有没有这个源的限额行（待办清单 P34）。
 	// 过去这里是「EffectiveSourceLimit != 0 且关联表有记录」两个条件叠着，
@@ -145,7 +147,9 @@ func Dashboard(c *gin.Context) {
 
 	// 停用的组不参与分节/计数：其成员按未分组渲染（分组只是展示视图，不是准入开关）
 	var enabledGroups []models.SourceGroup
-	db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&enabledGroups)
+	if err := db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&enabledGroups).Error; err != nil {
+		db.LogReadFail("quota_dashboard:source_groups", err)
+	}
 	groupNames := make(map[uint]string, len(enabledGroups))
 	for _, g := range enabledGroups {
 		groupNames[g.ID] = g.Name
@@ -314,6 +318,8 @@ func Dashboard(c *gin.Context) {
 // 今日已落库明细 + 内存环形缓冲中今日的调用记录
 func monitorCallsToday() int64 {
 	var persisted int64
-	db.DB.Model(&models.ApiCallLog{}).Where("created_at >= ?", gate.StartOfDay()).Count(&persisted)
+	if err := db.DB.Model(&models.ApiCallLog{}).Where("created_at >= ?", gate.StartOfDay()).Count(&persisted).Error; err != nil {
+		db.LogReadFail("monitor_calls_today:api_call_logs", err)
+	}
 	return persisted + base.CallsRecordedSince(gate.StartOfDay())
 }

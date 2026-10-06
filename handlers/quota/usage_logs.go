@@ -21,11 +21,15 @@ func MyUsageLogs(c *gin.Context) {
 	}
 
 	var total int64
-	q.Count(&total)
+	if err := q.Count(&total).Error; err != nil {
+		db.LogReadFail("my_usage_total:quota_usage_logs", err)
+	}
 
 	var logs []models.QuotaUsageLog
-	q.Order("id DESC").
-		Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs)
+	if err := q.Order("id DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
+		db.LogReadFail("my_usage_list:quota_usage_logs", err)
+	}
 
 	list := make([]gin.H, 0, len(logs))
 	for _, l := range logs {

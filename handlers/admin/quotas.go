@@ -369,7 +369,9 @@ func GetUserQuota(c *gin.Context) {
 	aliases := db.DisplayAliasesFor(user.ID)
 
 	var overrides []models.UserQuotaOverride
-	db.DB.Where("user_id = ?", user.ID).Find(&overrides)
+	if err := db.DB.Where("user_id = ?", user.ID).Find(&overrides).Error; err != nil {
+		db.LogReadFail("admin_user_overrides:user_quota_overrides", err)
+	}
 	overrideMap := make(map[string]int64)
 	for _, o := range overrides {
 		if o.Limit != 0 {
@@ -397,7 +399,9 @@ func GetUserQuota(c *gin.Context) {
 	planLimits := gate.PlanSourceLimits(ptrOrZero(planID))
 
 	var sources []models.DataSource
-	db.DB.Order("category ASC, sort_order ASC, id ASC").Find(&sources)
+	if err := db.DB.Order("category ASC, sort_order ASC, id ASC").Find(&sources).Error; err != nil {
+		db.LogReadFail("admin_plan_sources:data_sources", err)
+	}
 
 	items := make([]QuotaOverrideItem, 0, len(sources))
 	for _, ds := range sources {

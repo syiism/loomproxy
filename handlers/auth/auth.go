@@ -112,7 +112,10 @@ func getSettingStr(key string, def string) string {
 }
 
 func loadUserRoles(user *models.User) {
-	db.DB.Model(user).Association("Roles").Find(&user.Roles)
+	// Association.Find 直接返回 error（不是 *gorm.DB），没有 .Error 可取——这是它和普通读链的形状差异
+	if err := db.DB.Model(user).Association("Roles").Find(&user.Roles); err != nil {
+		db.LogReadFail("auth_load_roles:user_roles", err)
+	}
 }
 
 // registerBindError 将注册请求的绑定/校验错误翻译为友好的中文提示，

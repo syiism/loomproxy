@@ -110,26 +110,44 @@ func Stats(c *gin.Context) {
 	var totalUsers, adminCount, vipCount int64
 	var todayNew int64
 
-	db.DB.Model(&models.User{}).Count(&totalUsers)
-	db.DB.Model(&models.User{}).
+	if err := db.DB.Model(&models.User{}).Count(&totalUsers).Error; err != nil {
+		totalUsers = -1 // P99 第二步：读数不可用的哨兵（P54 的 table_growth 同形），面板按负值渲染第三态
+		db.LogReadFail("admin_stats:users", err)
+	}
+	if err := db.DB.Model(&models.User{}).
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
-		Where("roles.code = ?", "admin").Count(&adminCount)
-	db.DB.Model(&models.User{}).
+		Where("roles.code = ?", "admin").Count(&adminCount).Error; err != nil {
+		adminCount = -1
+		db.LogReadFail("admin_stats:roles_admin", err)
+	}
+	if err := db.DB.Model(&models.User{}).
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
-		Where("roles.code = ?", "vip").Count(&vipCount)
+		Where("roles.code = ?", "vip").Count(&vipCount).Error; err != nil {
+		vipCount = -1
+		db.LogReadFail("admin_stats:roles_vip", err)
+	}
 
 	startOfDay := utils.DayStart(1)
-	db.DB.Model(&models.User{}).Where("created_at >= ?", startOfDay).Count(&todayNew)
+	if err := db.DB.Model(&models.User{}).Where("created_at >= ?", startOfDay).Count(&todayNew).Error; err != nil {
+		todayNew = -1
+		db.LogReadFail("admin_stats:users_today", err)
+	}
+
+	normalCount := int64(-1)
+	if totalUsers >= 0 && adminCount >= 0 && vipCount >= 0 {
+		normalCount = totalUsers - adminCount - vipCount
+	}
 
 	skipped, keys, windowSec := gate.DedupeStats()
 	auth.Ok(c, gin.H{
-		"total_users":  totalUsers,
-		"admin_count":  adminCount,
-		"vip_count":    vipCount,
-		"today_new":    todayNew,
-		"normal_count": totalUsers - adminCount - vipCount,
+		"total_users": totalUsers,
+		"admin_count": adminCount,
+		"vip_count":   vipCount,
+		"today_new":   todayNew,
+		// 三个数里有任何一个读失败（-1）就不再做减法——拿哨兵做算术会算出没有意义的"正常值"（P99 第二步）
+		"normal_count": normalCount,
 		// 扣减冷却的自省读数（待办清单 P25）：没有这行，「冷却到底挡没挡」只能靠人肉比流水。
 		"billing_dedupe": gin.H{
 			"skipped":    skipped,
@@ -282,8 +300,10 @@ func ListUsers(c *gin.Context) {
 	}
 
 	var users []models.User
-	q.Preload("Roles").Preload("Plan").Order("id DESC").
-		Offset((page - 1) * pageSize).Limit(pageSize).Find(&users)
+	if err := q.Preload("Roles").Preload("Plan").Order("id DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).Find(&users).Error; err != nil {
+		db.LogReadFail("admin_user_list:users", err)
+	}
 
 	// 别名一次取整页：逐个用户查就是 N+1，而这一页可能有几十行
 	ids := make([]uint, 0, len(users))
@@ -583,14 +603,18 @@ func ResetUserPassword(c *gin.Context) {
 // ListRoles 角色列表
 func ListRoles(c *gin.Context) {
 	var roles []models.Role
-	db.DB.Order("id ASC").Find(&roles)
+	if err := db.DB.Order("id ASC").Find(&roles).Error; err != nil {
+		db.LogReadFail("admin_role_list:roles", err)
+	}
 	auth.Ok(c, roles)
 }
 
 // ListSettings 系统设置列表
 func ListSettings(c *gin.Context) {
 	var settings []models.SystemSetting
-	db.DB.Find(&settings)
+	if err := db.DB.Find(&settings).Error; err != nil {
+		db.LogReadFail("admin_setting_list:system_settings", err)
+	}
 	// 排序放内存里做：`key` 在 MySQL 是保留字要加引号，而反引号是 MySQL 方言、
 	// PostgreSQL 只认双引号——ORDER BY 里怎么写都不跨方言，交给 GORM 又只支持条件形式
 	sort.Slice(settings, func(i, j int) bool { return settings[i].Key < settings[j].Key })
@@ -653,7 +677,9 @@ func UpdateSetting(c *gin.Context) {
 // ListQuotaPlans 额度套餐列表
 func ListQuotaPlans(c *gin.Context) {
 	var plans []models.QuotaPlan
-	db.DB.Preload("Role").Order("id ASC").Find(&plans)
+	if err := db.DB.Preload("Role").Order("id ASC").Find(&plans).Error; err != nil {
+		db.LogReadFail("admin_plan_list:quota_plans", err)
+	}
 	auth.Ok(c, plans)
 }
 
@@ -661,7 +687,9 @@ func ListQuotaPlans(c *gin.Context) {
 func ListQuotaLimits(c *gin.Context) {
 	id := c.Param("id")
 	var limits []models.QuotaLimit
-	db.DB.Where("plan_id = ?", id).Order("id ASC").Find(&limits)
+	if err := db.DB.Where("plan_id = ?", id).Order("id ASC").Find(&limits).Error; err != nil {
+		db.LogReadFail("admin_plan_limits:quota_limits", err)
+	}
 	auth.Ok(c, limits)
 }
 
@@ -709,7 +737,9 @@ func ListQuotaCosts(c *gin.Context) {
 		q = q.Where("group_code = ?", code)
 	}
 	var costs []models.QuotaCost
-	q.Find(&costs)
+	if err := q.Find(&costs).Error; err != nil {
+		db.LogReadFail("admin_quota_costs:quota_costs", err)
+	}
 	auth.Ok(c, costs)
 }
 
@@ -761,7 +791,9 @@ func UpdateQuotaCost(c *gin.Context) {
 // ListQuotaPlanCosts 获取套餐级别的速率限制配置
 func ListQuotaPlanCosts(c *gin.Context) {
 	var planCosts []models.QuotaCostPlan
-	db.DB.Order("plan_id ASC, group_code ASC, interface ASC").Find(&planCosts)
+	if err := db.DB.Order("plan_id ASC, group_code ASC, interface ASC").Find(&planCosts).Error; err != nil {
+		db.LogReadFail("admin_cost_plans:quota_cost_plans", err)
+	}
 	auth.Ok(c, planCosts)
 }
 
@@ -848,14 +880,18 @@ func UpsertQuotaPlanCost(c *gin.Context) {
 // （数据源由各自源包声明播种，管理端亦可手工新增），底座项目无源时返回空列表
 func ListPlatformSourceConfigs(c *gin.Context) {
 	var configs []models.PlatformSourceConfig
-	db.DB.Find(&configs)
+	if err := db.DB.Find(&configs).Error; err != nil {
+		db.LogReadFail("admin_platform_configs:platform_source_configs", err)
+	}
 	configMap := make(map[string]string)
 	for _, cfg := range configs {
 		configMap[cfg.SourceName] = cfg.BaseURL
 	}
 
 	var sources []models.DataSource
-	db.DB.Order("sort_order, id").Find(&sources)
+	if err := db.DB.Order("sort_order, id").Find(&sources).Error; err != nil {
+		db.LogReadFail("admin_datasource_list:data_sources", err)
+	}
 
 	items := make([]map[string]interface{}, 0, len(sources))
 	for _, s := range sources {
@@ -919,7 +955,9 @@ type createDataSourceRequest struct {
 // ListDataSources 获取数据源列表
 func ListDataSources(c *gin.Context) {
 	var dataSources []models.DataSource
-	db.DB.Order("sort_order ASC, id ASC").Find(&dataSources)
+	if err := db.DB.Order("sort_order ASC, id ASC").Find(&dataSources).Error; err != nil {
+		db.LogReadFail("admin_datasources_view:data_sources", err)
+	}
 	public := rankPublicSet()
 	views := make([]dataSourceView, 0, len(dataSources))
 	for _, ds := range dataSources {
@@ -938,7 +976,9 @@ func CreateDataSource(c *gin.Context) {
 
 	// 检查名称是否已存在
 	var count int64
-	db.DB.Model(&models.DataSource{}).Where("name = ?", req.Name).Count(&count)
+	if err := db.DB.Model(&models.DataSource{}).Where("name = ?", req.Name).Count(&count).Error; err != nil {
+		db.LogReadFail("admin_datasource_dupcheck:data_sources", err)
+	}
 	if count > 0 {
 		auth.Fail(c, http.StatusConflict, "数据源标识已存在")
 		return
@@ -1074,8 +1114,10 @@ func DeleteDataSource(c *gin.Context) {
 
 	// 检查是否被套餐授权（授权现在就是一行限额，见 gate/grant.go）
 	var count int64
-	db.DB.Model(&models.QuotaLimit{}).
-		Where("scope = ? AND target = ?", "source", ds.Name).Count(&count)
+	if err := db.DB.Model(&models.QuotaLimit{}).
+		Where("scope = ? AND target = ?", "source", ds.Name).Count(&count).Error; err != nil {
+		db.LogReadFail("admin_plan_limit_check:quota_limits", err)
+	}
 	if count > 0 {
 		auth.Fail(c, http.StatusBadRequest, "该数据源被套餐引用，无法删除")
 		return
@@ -1124,7 +1166,9 @@ func grantedDataSources(planID uint) []models.DataSource {
 	for id := range ids {
 		idList = append(idList, id)
 	}
-	db.DB.Where("id IN ?", idList).Order("name").Find(&out)
+	if err := db.DB.Where("id IN ?", idList).Order("name").Find(&out).Error; err != nil {
+		db.LogReadFail("admin_source_lookup:data_sources", err)
+	}
 	return out
 }
 

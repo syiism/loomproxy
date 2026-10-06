@@ -556,7 +556,9 @@ func CreateApp() *gin.Engine {
 
 		// 查询所有启用的数据源
 		var dataSources []models.DataSource
-		db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources)
+		if err := db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources).Error; err != nil {
+			db.LogReadFail("aggregate_search:data_sources", err)
+		}
 
 		// 按用户套餐过滤（授权=限额行，见 gate/grant.go）。
 		// 顺手改了这里唯一的宽松处：过去「套餐一条授权都没有」时会**跳过过滤、把全部源发出去**，

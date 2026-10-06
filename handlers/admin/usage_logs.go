@@ -22,11 +22,15 @@ func ListUsageLogs(c *gin.Context) {
 	}
 
 	var total int64
-	q.Count(&total)
+	if err := q.Count(&total).Error; err != nil {
+		db.LogReadFail("admin_usage_total:quota_usage_logs", err)
+	}
 
 	var logs []models.QuotaUsageLog
-	q.Order("id DESC").
-		Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs)
+	if err := q.Order("id DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
+		db.LogReadFail("admin_usage_list:quota_usage_logs", err)
+	}
 
 	// 批量取用户名，避免逐条查询
 	userIDs := make([]uint, 0, len(logs))
@@ -40,7 +44,9 @@ func ListUsageLogs(c *gin.Context) {
 	usernames := make(map[uint]string)
 	if len(userIDs) > 0 {
 		var users []models.User
-		db.DB.Select("id", "username").Where("id IN ?", userIDs).Find(&users)
+		if err := db.DB.Select("id", "username").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+			db.LogReadFail("admin_usage_usernames:users", err)
+		}
 		for _, u := range users {
 			usernames[u.ID] = u.Username
 		}
@@ -61,7 +67,9 @@ func ListUsageLogs(c *gin.Context) {
 
 	// 收集数据源标识去重列表（从数据源表获取，不依赖流水）
 	var dsList []models.DataSource
-	db.DB.Select("name").Where("status = 1").Find(&dsList)
+	if err := db.DB.Select("name").Where("status = 1").Find(&dsList).Error; err != nil {
+		db.LogReadFail("admin_usage_sources:data_sources", err)
+	}
 	sourceCodes := make([]string, 0, len(dsList))
 	for _, ds := range dsList {
 		sourceCodes = append(sourceCodes, ds.Name)

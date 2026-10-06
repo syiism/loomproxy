@@ -2,7 +2,7 @@
   <div>
     <PageHeader title="管理后台" subtitle="站点读数与快捷入口。明细不在这一页：账号看「用户管理」，调用看「接口监控」。" />
 
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
       <div v-for="c in cards" :key="c.label" class="card reveal">
         <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">{{ c.label }}</div>
         <div class="font-serif text-3xl md:text-4xl font-medium tracking-tighter">{{ c.value }}</div>
@@ -34,13 +34,27 @@ const stats = ref({})
 
 // 四张看板只放**站点级**计数：用户管理页那行读数只说「当前列表命中几条」，
 // 同一份数字在两页各写一遍就会各自漂移（待办清单 P28·D1）。
+// 读数不可用的第三态（P99 第二步，形状照 P54 的 table_growth）：后端读失败填 -1，
+// 这里按负值渲染成文字而不是把「-1 个用户」摆出来；null（接口整页没回来）仍是破折号。
+const statText = (v) => (v == null ? '—' : v < 0 ? '读数不可用' : v)
+
 const cards = computed(() => {
   const s = stats.value
+  // 普通用户与扣减冷却是 P96·A 的落地：这两个数后端从上线起就在发，此前 0 处读取。
+  // billing_dedupe 的值是「挡下次数/在记键数」，冷却没开就老实说「关」。
+  const dedupe = s.billing_dedupe
+  const dedupeText = dedupe == null
+    ? '—'
+    : dedupe.enabled
+      ? `${dedupe.skipped}/${dedupe.tracked}`
+      : '关'
   return [
-    { label: '总用户数', value: s.total_users ?? '—' },
-    { label: '今日新增', value: s.today_new ?? '—' },
-    { label: '管理员', value: s.admin_count ?? '—' },
-    { label: 'VIP 用户', value: s.vip_count ?? '—' },
+    { label: '总用户数', value: statText(s.total_users) },
+    { label: '今日新增', value: statText(s.today_new) },
+    { label: '普通用户', value: statText(s.normal_count) },
+    { label: '管理员', value: statText(s.admin_count) },
+    { label: 'VIP 用户', value: statText(s.vip_count) },
+    { label: '扣减冷却 挡/在记', value: dedupeText },
   ]
 })
 

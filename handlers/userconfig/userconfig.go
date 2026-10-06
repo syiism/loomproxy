@@ -25,7 +25,9 @@ func ListSourceConfigs(c *gin.Context) {
 	uid, _ := userID.(uint)
 
 	var configs []models.UserSourceConfig
-	db.DB.Where("user_id = ?", uid).Find(&configs)
+	if err := db.DB.Where("user_id = ?", uid).Find(&configs).Error; err != nil {
+		db.LogReadFail("user_source_configs:user_source_configs", err)
+	}
 
 	configMap := make(map[string]string)
 	for _, cfg := range configs {
@@ -34,7 +36,9 @@ func ListSourceConfigs(c *gin.Context) {
 
 	// 1. 查询所有启用的数据源
 	var dataSources []models.DataSource
-	db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources)
+	if err := db.DB.Where("status = 1").Order("sort_order ASC, id ASC").Find(&dataSources).Error; err != nil {
+		db.LogReadFail("user_sources_view:data_sources", err)
+	}
 
 	// 2. 管理员显示全部，普通用户根据套餐过滤
 	var user models.User

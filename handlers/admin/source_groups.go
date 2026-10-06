@@ -82,7 +82,9 @@ func CreateSourceGroup(c *gin.Context) {
 
 	// 组名唯一：先查再写，否则约束冲突一路撞到驱动，变成没头没尾的 500
 	var count int64
-	db.DB.Model(&models.SourceGroup{}).Where("name = ?", name).Count(&count)
+	if err := db.DB.Model(&models.SourceGroup{}).Where("name = ?", name).Count(&count).Error; err != nil {
+		db.LogReadFail("source_group_dupcheck:source_groups", err)
+	}
 	if count > 0 {
 		auth.Fail(c, http.StatusConflict, "分组名称已存在")
 		return
@@ -134,7 +136,9 @@ func UpdateSourceGroup(c *gin.Context) {
 		}
 		if name != group.Name {
 			var count int64
-			db.DB.Model(&models.SourceGroup{}).Where("name = ? AND id <> ?", name, group.ID).Count(&count)
+			if err := db.DB.Model(&models.SourceGroup{}).Where("name = ? AND id <> ?", name, group.ID).Count(&count).Error; err != nil {
+				db.LogReadFail("source_group_dupcheck_update:source_groups", err)
+			}
 			if count > 0 {
 				auth.Fail(c, http.StatusConflict, "分组名称已存在")
 				return
