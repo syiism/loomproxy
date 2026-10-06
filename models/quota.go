@@ -22,11 +22,17 @@ type QuotaPlan struct {
 }
 
 type QuotaLimit struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	PlanID    uint      `gorm:"index;not null" json:"plan_id"`
-	Scope     string    `gorm:"size:32;not null" json:"scope"`
-	Target    string    `gorm:"size:128;not null" json:"target"`
-	Limit     int64     `gorm:"default:0" json:"limit"`
+	ID     uint   `gorm:"primaryKey" json:"id"`
+	PlanID uint   `gorm:"index;not null" json:"plan_id"`
+	Scope  string `gorm:"size:32;not null" json:"scope"`
+	Target string `gorm:"size:128;not null" json:"target"`
+	Limit  int64  `gorm:"default:0" json:"limit"`
+	// Period 是 P70② 摘掉判定之后的**残留列**：判定不读它（gate.UsageSince 只认当日窗口），
+	// 但列与默认值（`month`）还在——INSERT 不带它时 MySQL 按列默认补值，新授权行于是落成
+	// "按月给量"（P105 实测）。所以映射保留（size:32 与现网列型一致，AutoMigrate 不改列）、
+	// **唯一的写值在 `db.NewExplicitGrant` 显式给 `day`**：列还在一天，就得有一个说话算的写方。
+	// json:"-" 维持 P70② 之后的响应形状（面板只显「/ 日」，不回读这一格）。
+	Period    string    `gorm:"column:period;size:32" json:"-"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

@@ -109,3 +109,22 @@ func TestCreateLimitRequiresExplicitLimit(t *testing.T) {
 		t.Errorf("limit = %d, want -1——显式给值那条口不许掺默认档", row.Limit)
 	}
 }
+
+// P105：period 列的判定已被摘掉（P70②），但列与默认值（`month`）还在——
+// 唯一的写值在 `db.NewExplicitGrant` 显式给 `day`。这条钉住：本库 scope=source 的行 period 只可能是 day，
+// 包括新授权的那一行。变异：把构造器里的 `Period: "day"` 摘掉，此用例红（sqlite 无列默认，落到 NULL）。
+func TestSourceGrantRowsCarryDayPeriod(t *testing.T) {
+	newTestServer(t)
+	freeID := planIDByCode(t, "free")
+	name := pickUngrantedSource(t, freeID)
+	if _, err := gate.GrantPlanSource(freeID, name); err != nil {
+		t.Fatalf("GrantPlanSource err=%v", err)
+	}
+	var periods []string
+	if err := db.DB.Raw("SELECT DISTINCT period FROM quota_limits WHERE scope = 'source'").Scan(&periods).Error; err != nil {
+		t.Fatalf("读 period 失败: %v", err)
+	}
+	if len(periods) != 1 || periods[0] != "day" {
+		t.Fatalf("scope=source 的 period 应只有 day，实得 %v", periods)
+	}
+}

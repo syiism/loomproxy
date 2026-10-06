@@ -21,8 +21,10 @@ import "loomproxy/models"
 
 // NewExplicitGrant 显式给值的那一行。scope/target 的取值口径写在这里：
 // "source" 配数据源码、"global" 配 "api"，别处不要再各自拼字符串常量。
+// period 的唯一写值也在这里（P105）：两个意图口都经过本函数（NewSourceGrantRow 转调），
+// 不显式给 `day` 的话，列默认值会把每个新授权行写成 `month`——与「只有一个窗口：当日」互说假话。
 func NewExplicitGrant(planID uint, scope, target string, limit int64) models.QuotaLimit {
-	return models.QuotaLimit{PlanID: planID, Scope: scope, Target: target, Limit: limit}
+	return models.QuotaLimit{PlanID: planID, Scope: scope, Target: target, Limit: limit, Period: "day"}
 }
 
 // NewSourceGrantRow 默认档授权：限额只从该套餐的默认档取（自定义套餐 = -1 不限）。
