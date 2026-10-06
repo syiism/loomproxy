@@ -217,16 +217,17 @@ const summaryCards = computed(() => {
     ]
   }
   const limited = sources.value.filter(s => (s.effective_total ?? 0) >= 0)
-  const unlimitedCount = sources.value.length - limited.length
+  // 展示口径（维护者 2026-10-06 定）：**还有数字额度就只报数字，全是不限才报「不限」**。
+  // 旧写法在混合时给「123 + 不限」——那既不是一个可核对的数，也不是一个明确的档位。
+  // 两处要一起记住的代价，写在这里免得下一轮当成 bug 改回去：
+  // ①「今日剩余」在混合时是**只统计有限额那些源**的合计，不是全部可见源的合计（不限的源本来就没有"剩余"可言）；
+  // ② 被这句丢掉的信息没有消失——每张源卡自己那一格仍显示「不限」，「平台数」卡也还在。
   let total, remaining
-  if (unlimitedCount === 0) {
-    total = limited.reduce((n, s) => n + (s.effective_total || 0), 0)
-    remaining = limited.reduce((n, s) => n + (s.remaining || 0), 0)
-  } else if (limited.length === 0) {
+  if (limited.length === 0) {
     total = remaining = '不限'
   } else {
-    total = limited.reduce((n, s) => n + (s.effective_total || 0), 0) + ' + 不限'
-    remaining = limited.reduce((n, s) => n + (s.remaining || 0), 0) + ' + 不限'
+    total = limited.reduce((n, s) => n + (s.effective_total || 0), 0)
+    remaining = limited.reduce((n, s) => n + (s.remaining || 0), 0)
   }
   return [
     { label: '平台数', value: sources.value.length },
