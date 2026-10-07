@@ -16,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check goroutine-guard-check
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check goroutine-guard-check tag-sync-check
 
 build: web vet test go-build
 
@@ -124,6 +124,12 @@ todo-status-check:
 # 范围只有两条、且**不查纯文件名**——误报量级实测过，理由写在脚本头部。
 docs-ref-check:
 	@./scripts/check-doc-refs.sh
+
+# 骨架 tag 是否真到了每个推送目标（本地 / gitee / github / 私有），逐目标比完整 SHA 与 peel。
+# **刻意不接进 build/vet**：它要发网络请求，离线或远端抖动就假红，而假红的门禁第二次就被无视。
+# 推完 tag 当场跑一次。触发它的经验：v93"推给私有就写成已推"与 v88"本地打过就当远端有"，方向相反、同一个洞。
+tag-sync-check:
+	@./scripts/check-tag-sync.sh
 
 # 平台时区与日界只有一处定义（待办清单 P71）：出现 FixedZone / time.Local / 旧的 TZShanghai 调用即红。
 # 触发它的经验是本轮第十四遍数出来的七种写法——现网三种口径恰好重合，所以它不会自己报错。
