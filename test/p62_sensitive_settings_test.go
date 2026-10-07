@@ -6,21 +6,15 @@ package test
 // 写入新值正常生效。面板按 sensitive_keys 渲染密钥控件（前端口径与后端同源）。
 
 import (
+	"loomproxy/testkit"
 	"net/http"
 	"strings"
 	"testing"
-
-	"loomproxy/db"
-	"loomproxy/models"
 )
 
 func dbGetSetting(t *testing.T, key string) string {
 	t.Helper()
-	var row models.SystemSetting
-	if err := db.DB.Where(map[string]interface{}{"key": key}).First(&row).Error; err != nil {
-		t.Fatalf("读设置 %s 失败: %v", key, err)
-	}
-	return row.Value
+	return testkit.DBGetSetting(t, key)
 }
 
 func TestSensitiveSettingMaskedAndWriteOnly(t *testing.T) {

@@ -6,16 +6,15 @@ package test
 
 import (
 	"fmt"
+	"loomproxy/db"
+	"loomproxy/gate"
+	"loomproxy/models"
+	"loomproxy/testkit"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"loomproxy/db"
-	"loomproxy/gate"
-	"loomproxy/models"
-	"loomproxy/utils"
 )
 
 // searchA 以指定 token 请求 假数据源A搜索接口
@@ -30,38 +29,25 @@ func searchA(t *testing.T, srv *httptest.Server, token string) (int, []byte) {
 // 键一律由 gate.CostCacheKey 给：**不在测试里再拼一遍格式**——拼法有两份的时候，
 // 改了读侧拼法测试照样绿，而生产上门面改的单价就是不动（待办清单 P39 的固化位）。
 func delCostCache(sourceCode, action string) {
-	utils.DefaultCache().Del(gate.CostCacheKey(sourceCode, action))
+	testkit.DelCostCache(sourceCode, action)
 }
 
 // planIDByCode / dataSourceIDByName 查库辅助
 func planIDByCode(t *testing.T, code string) uint {
 	t.Helper()
-	var id uint
-	if err := db.DB.Table("quota_plans").Select("id").Where("code = ?", code).Scan(&id).Error; err != nil || id == 0 {
-		t.Fatalf("查询套餐 %s 失败（id=%d err=%v）", code, id, err)
-	}
-	return id
+	return testkit.PlanIDByCode(t, code)
 }
 
 func dataSourceIDByName(t *testing.T, name string) uint {
 	t.Helper()
-	var id uint
-	if err := db.DB.Table("data_sources").Select("id").Where("name = ?", name).Scan(&id).Error; err != nil || id == 0 {
-		t.Fatalf("查询数据源 %s 失败（id=%d err=%v）", name, id, err)
-	}
-	return id
+	return testkit.DataSourceIDByName(t, name)
 }
 
 // setAUpstream 把 fake_a 的平台默认 baseUrl 指向假上游。
 // 平台默认配置属管理员可信来源，SSRF 校验豁免（允许 127.0.0.1）。
 func setAUpstream(t *testing.T, upstreamURL string) {
 	t.Helper()
-	if err := db.DB.Create(&models.PlatformSourceConfig{
-		SourceName: "fake_a",
-		BaseURL:    upstreamURL,
-	}).Error; err != nil {
-		t.Fatalf("写入平台默认 baseUrl 失败: %v", err)
-	}
+	testkit.SetAUpstream(t, upstreamURL)
 }
 
 // TestAccessDisabledSource 数据源被管理员禁用（status=0）后全员 403

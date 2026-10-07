@@ -8,6 +8,9 @@
 # 但「共享」不等于「可以假设别人已经初始化过」。
 #
 # 口径（刻意划窄，别当成用例风格检查）：
+#   - 扫 test/ 与它的**所有子包**（`test/**/*_test.go`）：待办清单 P104 把 test/ 切成组 A + 组 B 之后，
+#     只 glob('test/*_test.go') 的版本对新包**一条都不报**（在真树上种违例验过：现版 EXIT=0、递归版 EXIT=1
+#     并指到行号）。这条纪律的保护范围是"所有集成用例"，不是"某个目录深度下的用例"。
 #   - 只看 `func TestXxx(t *testing.T)` 的**函数体内部**；
 #   - 只盯三个跨用例共享的全局：`conf.Config`、`db.DB`、`utils.DefaultCache()`；
 #   - 函数体里没有任何装配动作（`newTestServer(` / `CreateApp(` / `testkit.`）的纯函数测试不管；
@@ -26,7 +29,7 @@ SETUP_RE = re.compile(r'newTestServer\(|app\.CreateApp\(|testkit\.')
 FUNC_RE = re.compile(r'^func (Test\w+)\(t \*testing\.T[^{]*\{(.*?)^\}', re.M | re.S)
 
 bad = []
-for f in sorted(glob.glob('test/*_test.go')):
+for f in sorted(glob.glob('test/**/*_test.go', recursive=True)):
     src = open(f).read()
     for m in FUNC_RE.finditer(src):
         name, body = m.group(1), m.group(2)

@@ -14,12 +14,12 @@ package test
 import (
 	"bytes"
 	"log"
+	"loomproxy/db"
+	"loomproxy/models"
+	"loomproxy/testkit"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"loomproxy/db"
-	"loomproxy/models"
 )
 
 func planIDOfPlanCode(t *testing.T, code string) uint {
@@ -43,11 +43,7 @@ func registeredPlanID(t *testing.T, srv *httptest.Server, username string) *uint
 
 func writeSettingValue(t *testing.T, key, value string) {
 	t.Helper()
-	if err := db.DB.Model(&models.SystemSetting{}).
-		Where(map[string]interface{}{"key": key}).Update("value", value).Error; err != nil {
-		t.Fatalf("改设置 %s 失败: %v", key, err)
-	}
-	db.InvalidateSettingCache(key)
+	testkit.WriteSettingValue(t, key, value)
 }
 
 func TestRegisterUsesDefaultQuotaPlanSetting(t *testing.T) {

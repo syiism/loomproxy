@@ -4,32 +4,22 @@ package test
 
 import (
 	"encoding/json"
-	"net/http"
-	"strings"
-	"testing"
-	"time"
-
 	"loomproxy/base"
 	"loomproxy/base/pool"
 	"loomproxy/db"
 	"loomproxy/middleware/ipblock"
 	"loomproxy/models"
+	"loomproxy/testkit"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
 )
 
 // insertCallLog 直插监控明细（created_at 可指定，用于跨天分桶）
 func insertCallLog(t *testing.T, source, action string, status int, createdAt time.Time) {
 	t.Helper()
-	if err := db.DB.Create(&models.ApiCallLog{
-		Username:  "tester",
-		IP:        "1.2.3.4",
-		Source:    source,
-		Action:    action,
-		Status:    status,
-		LatencyMs: 10,
-		CreatedAt: createdAt,
-	}).Error; err != nil {
-		t.Fatalf("插入调用明细失败: %v", err)
-	}
+	testkit.InsertCallLog(t, source, action, status, createdAt)
 }
 
 // TestMonitorTrend 近 7 天按天×数据源聚合，保留期外明细不计入，无调用的天不占 rows

@@ -13,30 +13,19 @@ package test
 
 import (
 	"fmt"
+	"loomproxy/db"
+	"loomproxy/models"
+	"loomproxy/testkit"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"loomproxy/db"
-	"loomproxy/models"
 )
 
 // listUserIDs 拉一页用户列表并返回 id 集合（顺带断言 200）
 func listUserIDs(t *testing.T, srv *httptest.Server, admin, query string) map[uint]bool {
 	t.Helper()
-	status, env := doJSON(t, srv, http.MethodGet, "/admin/users"+query, nil, authHeader(admin))
-	if status != http.StatusOK || env.Code != 0 {
-		t.Fatalf("GET /admin/users%s status=%d code=%d msg=%s", query, status, env.Code, env.Msg)
-	}
-	raw, _ := env.dataMap(t)["list"].([]interface{})
-	out := map[uint]bool{}
-	for _, r := range raw {
-		m, _ := r.(map[string]interface{})
-		id, _ := m["id"].(float64)
-		out[uint(id)] = true
-	}
-	return out
+	return testkit.ListUserIDs(t, srv, admin, query)
 }
 
 func mustUserRow(t *testing.T, planID *uint, username string) models.User {

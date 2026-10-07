@@ -7,34 +7,19 @@ package test
 // 能改密码、能进管理面 = 提权且无法靠登出止血）。
 
 import (
-	"fmt"
+	"loomproxy/conf"
+	"loomproxy/db"
+	"loomproxy/testkit"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
-
-	"loomproxy/conf"
-	"loomproxy/db"
 )
-
-var threeFormSeq atomic.Int64
 
 // threeFormUser 注册一个用户并为它建一把 API Key，返回 (会话 token, 密钥明文)
 func threeFormUser(t *testing.T, srv *httptest.Server) (string, string) {
 	t.Helper()
-	name := fmt.Sprintf("tf_%d", threeFormSeq.Add(1))
-	token := registerUser(t, srv, name, name+"@example.com", "pass1234")
-
-	status, env := doJSON(t, srv, http.MethodPost, "/apikey", map[string]string{"name": "ci"}, authHeader(token))
-	if status != http.StatusOK || env.Code != 0 {
-		t.Fatalf("建密钥 status = %d code = %d msg = %s", status, env.Code, env.Msg)
-	}
-	plain, _ := env.dataMap(t)["key"].(string)
-	if !strings.HasPrefix(plain, "lp_") {
-		t.Fatalf("密钥格式异常: %q", plain)
-	}
-	return token, plain
+	return testkit.ThreeFormUser(t, srv)
 }
 
 // forms 五种凭证形态 → 该形态的 header 与 query 追加。query 形态返回要拼到 path 上的串。

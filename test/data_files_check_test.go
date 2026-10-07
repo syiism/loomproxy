@@ -13,24 +13,17 @@ package test
 //      只验 ①② 的话，把判据换成「文件存在即可」用例全绿，而生产上「拷坏了」这一类照样漏。
 
 import (
-	"os"
-	"path/filepath"
-	"testing"
-
 	"loomproxy/conf"
 	"loomproxy/handlers/catalog"
+	"loomproxy/testkit"
 	"loomproxy/testkit/fakesource"
+	"path/filepath"
+	"testing"
 )
 
 func writeDict(t *testing.T, root, dir, name, body string) {
 	t.Helper()
-	full := filepath.Join(root, dir)
-	if err := os.MkdirAll(full, 0o755); err != nil {
-		t.Fatalf("建字典目录失败: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(full, name+".json"), []byte(body), 0o644); err != nil {
-		t.Fatalf("写字典失败: %v", err)
-	}
+	testkit.WriteDict(t, root, dir, name, body)
 }
 
 func TestCheckDeclaredDataFiles(t *testing.T) {

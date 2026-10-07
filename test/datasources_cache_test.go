@@ -5,6 +5,7 @@ package test
 
 import (
 	"encoding/json"
+	"loomproxy/testkit"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,44 +14,13 @@ import (
 // datasourceNames 请求匿名视图的 /datasources，返回数据源标识（name）列表
 func datasourceNames(t *testing.T, srv *httptest.Server) map[string]bool {
 	t.Helper()
-	status, env := doJSON(t, srv, http.MethodGet, "/datasources", nil, nil)
-	if status != http.StatusOK || env.Code != 0 {
-		t.Fatalf("GET /datasources 失败（status=%d code=%d msg=%s）", status, env.Code, env.Msg)
-	}
-	var items []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(env.Data, &items); err != nil {
-		t.Fatalf("解析 /datasources 响应失败: %v", err)
-	}
-	names := make(map[string]bool, len(items))
-	for _, it := range items {
-		names[it.ID] = true
-	}
-	return names
+	return testkit.DatasourceNames(t, srv)
 }
 
 // adminDataSourceID 取管理后台数据源列表中指定 name 的数值 ID
 func adminDataSourceID(t *testing.T, srv *httptest.Server, token, name string) int {
 	t.Helper()
-	status, env := doJSON(t, srv, http.MethodGet, "/admin/data-sources", nil, authHeader(token))
-	if status != http.StatusOK || env.Code != 0 {
-		t.Fatalf("GET /admin/data-sources 失败（status=%d）", status)
-	}
-	var items []struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(env.Data, &items); err != nil {
-		t.Fatalf("解析管理数据源列表失败: %v", err)
-	}
-	for _, it := range items {
-		if it.Name == name {
-			return it.ID
-		}
-	}
-	t.Fatalf("管理列表中未找到数据源 %s", name)
-	return 0
+	return testkit.AdminDataSourceID(t, srv, token, name)
 }
 
 func TestDatasourcesCacheInvalidatedOnUpdate(t *testing.T) {
