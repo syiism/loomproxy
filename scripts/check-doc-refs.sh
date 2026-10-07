@@ -122,11 +122,9 @@ token_re = re.compile(r'`([^`\n]{1,90})`')
 dot_re = re.compile(r'^([a-z][a-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$')
 
 EXEMPT = {
-    # P71 的现象段在陈述 ①（22d2b8a）之前的七种写法，段首已写明「第十四遍巡检读出」。
-    'docs/规范/待办清单.md|verify.beijingDayStart':
-        '历史：该函数随 P71① 并进 utils.DayStart 后删除（git log -S 查证），这一段说的是收口之前',
-    'docs/规范/待办清单.md|admin.GetStats':
-        '反例本身：P71 现象段现在带着这个假名字是为了让"第十四遍编了个像真的名字"可追（第四十二遍改正为 admin.Stats）；它不是对现存代码的引用',
+    # P71 的现象段在陈述 ①（22d2b8a）之前的七种写法——那一段随 P71 收口整条搬进 docs/归档/，
+    # 而归档整棵不核对（DOC_SKIP_DIRS），所以这里的两条豁免（verify.beijingDayStart /
+    # docs/规范/待办清单.md|admin.GetStats）已无对应引用，按"豁免也要先删后加"删掉。
     'docs/规范/踩坑判据.md|admin.GetStats':
         '反例本身：P70 那一行的固化格在记这一族第二种形态（编的名字 vs 漂移的名字），不是引用现存代码',
     'docs/规范/门禁台账.md|admin.GetStats':
