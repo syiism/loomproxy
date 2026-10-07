@@ -78,7 +78,7 @@
 - **后台路径的 panic 兜底 + 临界区一律 defer 解锁**（P77/P78 → P103 全仓口径）：`Start`/`Maintain` 各
   `defer base.Guard(...)`（它们直调源写的 `Provider.Create/Refresh/Claim`，而这里没有 gin Recovery；
   **兜底只有一处实现** `base.Guard`/`base.Supervised`（`base/supervise.go`），号池原 `guardPanic` 那层已删，
-  新起的后台循环一律走它——P103 已把另外四条裸跑的路径接上），
+  新起的后台循环一律走它——P103 已把另外四条裸跑的路径接上，**③ 也已上门禁**：`make vet` 的 `goroutine-guard-check` 要求每个顶层 `go` 起的长跑循环自带帧（`base.Supervised`/`defer base.Guard`），确实不该包的写一行 `guard-exempt: <理由>`，豁免数会打印出来）；
   被它们走到的临界区一律 `p.locked(fn)`——**「临界区一律 defer 解锁」是全仓规则，不只是号池**（P93：
   尾解锁被 panic 跳过 = 锁被永久持有，症状从"少一行读数"变成"下一个请求卡死"；**已由 `make vet` 的
   `lock-defer-check` 扫**，多段临界区与循环体各包闭包，就地加 defer 会把锁扩到网络请求上）；启动装填 `initLedger` **全程持锁**——`go pool.StartAll()` 排在

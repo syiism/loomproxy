@@ -16,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check goroutine-guard-check
 
 build: web vet test go-build
 
@@ -63,6 +63,7 @@ vet:
 	@$(MAKE) --no-print-directory ledger-write-check
 	@$(MAKE) --no-print-directory ticker-stop-check
 	@$(MAKE) --no-print-directory lock-defer-check
+	@$(MAKE) --no-print-directory goroutine-guard-check
 
 # ticker 必须 Stop：这条形状被处理过两次（P80 给号池巡检协程补 defer Stop；第三十遍发现
 # app.prewarmCache 是全仓 8 个 ticker 里唯一漏的那个），第三次不再靠人想起来
@@ -160,6 +161,9 @@ ledger-write-check:
 # 理由与写法都写在脚本头部。
 lock-defer-check:
 	@./scripts/check-lock-defer-unlock.sh
+
+goroutine-guard-check:
+	@./scripts/check-goroutine-guard.sh
 
 # 管理后台导航完整性：main.js 里每个 /admin/* 路由都要在 Admin.vue 的 shortcuts 里有入口。
 # 号池那一页就是这样漏掉的（导航页不是索引的话，管理员只能靠背 URL）。

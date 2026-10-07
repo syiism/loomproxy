@@ -55,6 +55,10 @@ func dnsCacheCleanup() {
 	ticker := time.NewTicker(dnsCacheTTL)
 	defer ticker.Stop()
 	for range ticker.C {
+		// guard-exempt: utils 在 base 之下——AGENTS §4 定的层序是 base 不得反向导入 utils，反过来也不该导，
+		// 所以这一处拿不到 base.Supervised。循环体里调的只有 time.Now、map 迭代与 RWMutex，
+		// **没有外部实现**：这条规则真正要守的形状（接了别人写的钩子却没帧）在这里不存在。
+		// 扫描器认这一行注释而不是靠猜——豁免必须可见、可数（scripts/check-goroutine-guard.sh 会报有几处）。
 		// 循环体里就地 defer 要等协程退出才解锁，下一次 tick 就抢不到锁了；包闭包（待办清单 P93）
 		func() {
 			dnsCacheMu.Lock()

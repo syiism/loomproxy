@@ -301,7 +301,14 @@ func (p *Pool) Start() {
 		for {
 			select {
 			case <-t.C:
-				p.Maintain()
+				// 循环级再包一层（待办清单 P103③ 的规则 A：每个长跑循环体自带兜底帧）。
+				// Maintain 自己已经有 defer base.Guard——那一层拦的是"这一轮炸在源钩子里"，
+				// 这一层拦的是"panic 发生在 tick 与 select 之间、还没进 Maintain 的那一小截"。
+				// 规则要能纯语法判，就必须uniform到"循环都有帧"，所以这里多包一层是**故意的冗余**，
+				// 不是遗漏：内层先 recover，外层永远不响。
+				// 消息串里不调 p.Name()：它在帧**外面**求值，而 Name() 要走到 provider——
+				// 兜底帧的意义就是"这一轮的任何一段都不带走进程"，所以标签用固定句，池名由 Maintain 自己的日志给。
+				base.Supervised("号池维护的一轮", p.Maintain)
 			case <-p.stopCh:
 				return
 			}

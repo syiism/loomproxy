@@ -130,18 +130,20 @@ func startDedupeJanitor() {
 			ticker := time.NewTicker(5 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
-				now := time.Now()
-				// 循环体里就地写 defer 会等协程退出才解锁（下一次 tick 就抢不到锁了），
-				// 所以这一段包闭包——尾解锁的问题是 panic 会把锁永久留在手里（待办清单 P93）
-				func() {
-					deductMu.Lock()
-					defer deductMu.Unlock()
-					for k, at := range deductAt {
-						if now.Sub(at) > idle {
-							delete(deductAt, k)
+				base.Supervised("扣减时间去重表的一轮清理", func() {
+					now := time.Now()
+					// 循环体里就地写 defer 会等协程退出才解锁（下一次 tick 就抢不到锁了），
+					// 所以这一段包闭包——尾解锁的问题是 panic 会把锁永久留在手里（待办清单 P93）
+					func() {
+						deductMu.Lock()
+						defer deductMu.Unlock()
+						for k, at := range deductAt {
+							if now.Sub(at) > idle {
+								delete(deductAt, k)
+							}
 						}
-					}
-				}()
+					}()
+				})
 			}
 		}()
 	})

@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"loomproxy/base"
 	"loomproxy/conf"
 	"loomproxy/db"
 	"loomproxy/middleware"
@@ -133,28 +134,30 @@ func startLimiterJanitor() {
 			ticker := time.NewTicker(5 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
-				now := time.Now()
-				// 两段各包闭包：这是循环体，就地 defer 要等协程退出才解锁，第二次 tick 就抢不到锁了
-				// （尾解锁才是问题——panic 会把锁永久留在手里，待办清单 P93）
-				func() {
-					rateLimiterMu.Lock()
-					defer rateLimiterMu.Unlock()
-					for k, l := range rateLimiters {
-						if l.idleExpired(now) {
-							delete(rateLimiters, k)
+				base.Supervised("限流器闲置回收的一轮", func() {
+					now := time.Now()
+					// 两段各包闭包：这是循环体，就地 defer 要等协程退出才解锁，第二次 tick 就抢不到锁了
+					// （尾解锁才是问题——panic 会把锁永久留在手里，待办清单 P93）
+					func() {
+						rateLimiterMu.Lock()
+						defer rateLimiterMu.Unlock()
+						for k, l := range rateLimiters {
+							if l.idleExpired(now) {
+								delete(rateLimiters, k)
+							}
 						}
-					}
-				}()
+					}()
 
-				func() {
-					windowLimiterMu.Lock()
-					defer windowLimiterMu.Unlock()
-					for k, l := range windowLimiters {
-						if l.idleExpired(now) {
-							delete(windowLimiters, k)
+					func() {
+						windowLimiterMu.Lock()
+						defer windowLimiterMu.Unlock()
+						for k, l := range windowLimiters {
+							if l.idleExpired(now) {
+								delete(windowLimiters, k)
+							}
 						}
-					}
-				}()
+					}()
+				})
 			}
 		}()
 	})
