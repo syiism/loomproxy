@@ -92,9 +92,12 @@
           暂无限制项——该套餐当前没有授权任何数据源，其用户对任何源都是 403。
         </div>
         <div v-else class="border border-border rounded-lg overflow-hidden mb-5">
+          <!-- 「周期」不再是一列：P70② 之后额度只有当日一个窗口，而一列永远相同的值不是信息
+               ——表格的形式在暗示"每行可能不同"，而它不可能（待办清单 P96③，2026-10-07 拍：并进一句说明） -->
+          <div class="px-4 pt-3 text-xs text-text-muted font-mono">限额均按日（当日只有一个窗口，没有第二种口径）</div>
           <table class="table-base">
             <thead>
-              <tr><th>维度</th><th>目标</th><th>限额</th><th>周期</th><th>操作</th></tr>
+              <tr><th>维度</th><th>目标</th><th>限额</th><th>操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="l in limits" :key="l.id">
@@ -103,9 +106,6 @@
                 <td>
                   <input v-if="editingLimit === l.id" v-model.number="limitEditForm.limit" type="number" class="input input-sm w-24 font-mono">
                   <span v-else class="font-mono text-xs">{{ l.limit < 0 ? '不限' : l.limit }}</span>
-                </td>
-                <td>
-                  <span class="font-mono text-xs text-text-muted">日</span>
                 </td>
                 <td>
                   <div class="flex gap-3">

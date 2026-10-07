@@ -117,6 +117,9 @@ const MEASURE = `(() => {
     if (!tops.some((t) => t.right >= b.right && t.width >= b.width)) tops.push(b);
   }
   const text = (document.querySelector('main') || document.body).innerText.replace(/\\s+/g, ' ').slice(0, 60);
+  // 注意：`main` 取到的文字**不含弹窗内容**（UiModal 渲染在 main 之外）。
+  // 这一格本轮骗过我们一次：验证「限制项」表格里的一句话时读 main，读不到，判成假红
+  // ——文字在页上但不在测量范围内。溢出那半边不受影响（它扫的是 body *）。
   return { page, offenders: tops, scrolledCount, text, loc: location.pathname };
 })()`;
 
