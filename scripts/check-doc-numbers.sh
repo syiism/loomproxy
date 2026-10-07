@@ -3,7 +3,7 @@
 #   ① 执行报告 §8 抬头的「共 N 条」= 那一节里 `### ` 块的个数；
 #   ② 报告里那句「清单页 …N 行」= `wc -l docs/规范/待办清单.md`；
 #   ③ 归档 README 每行的「N 条已收口原文」= 那个归档文件里 `## P` 条目的个数；
-#   ④ 门禁台账 rule 2 的三条**体量读数**（清单页行/在册条、判据页行、AGENTS 字节）= 现测。
+#   ④ 门禁台账 rule 2 的体量读数（清单页行/在册条、已收口索引行/索引条、判据页行、AGENTS 字节）= 现测。
 #
 # 触发它的经验都是本轮自己撞的：同一个「共 11 条」在补进两块之后没人改过（实测 13），
 # 我顺手改成 13 又立刻是错的（再加两块是 15）；那句「清单页 913 行」被凭印象写过四次
@@ -92,6 +92,8 @@ if os.path.exists(ledger):
     def wc(path, opt):
         return int(subprocess.run(['wc', opt, path], capture_output=True, text=True).stdout.split()[0])
 
+    real_index = (wc('docs/规范/已收口索引.md', '-l'),
+                  len(re.findall(r'^\| P\d+\b', open('docs/规范/已收口索引.md', encoding='utf-8').read(), re.M)))
     real_todo = (wc('docs/规范/待办清单.md', '-l'),
                  sum(1 for l in open('docs/规范/待办清单.md', encoding='utf-8') if l.startswith('## P')))
     real_judg = (wc('docs/规范/踩坑判据.md', '-l'),)
@@ -116,6 +118,7 @@ if os.path.exists(ledger):
     for pat, key, real in (
         (r'清单页 \*\*(\d+) 行 / 在册正文 (\d+) 条\*\*', '清单页', real_todo),
         (r'判据页 (\d+) 行', '判据页', real_judg),
+        (r'已收口索引 \*\*(\d+) 行 / 索引 (\d+) 条\*\*', '已收口索引', real_index),
     ):
         m = re.search(pat, txt)
         if not m:
