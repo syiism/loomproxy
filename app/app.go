@@ -765,6 +765,18 @@ func init() {
 		}
 		return seeds
 	})
+	// 源声明的自有设置项同理注入：db 落行 + 登记敏感键，骨架不认识任何具体源键。
+	db.SetSourceSettingProvider(func() []db.SourceSettingSeed {
+		decls := base.DeclaredSettings()
+		seeds := make([]db.SourceSettingSeed, 0, len(decls))
+		for _, d := range decls {
+			seeds = append(seeds, db.SourceSettingSeed{
+				Key: d.Key, Type: d.Type, Value: d.Default,
+				Description: d.Description, Sensitive: d.Sensitive,
+			})
+		}
+		return seeds
+	})
 }
 
 func Run(ctx context.Context) error {

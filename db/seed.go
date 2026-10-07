@@ -89,28 +89,52 @@ func seedSettings(db *gorm.DB) error {
 	}
 
 	for _, setting := range settings {
-		var existing models.SystemSetting
-		// 条件一律用 map 形式：让 GORM 按方言给 `key`（MySQL 保留字）加引号
-		err := db.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": setting.Key}).First(&existing).Error
-		if err != nil {
-			if err != gorm.ErrRecordNotFound {
-				return err
-			}
-			if err := db.Create(&setting).Error; err != nil {
-				return err
-			}
-			log.Printf("Created setting: %s", setting.Key)
-			continue
+		if err := seedOneSetting(db, setting); err != nil {
+			return err
 		}
-		// type 由声明决定（面板不提供改类型的入口）：老库里这些 key 可能仍是 string，
-		// 不对账就会错过保存期的 JSON 校验。只同步 type，不动 value 与 description。
-		if existing.Type != setting.Type {
-			if err := db.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": setting.Key}).
-				Update("type", setting.Type).Error; err != nil {
+	}
+
+	// 源声明的设置项（骨架不硬编码任何源键，键与读取方都在源包里）：
+	// 落行规则与内置键完全一致（行不存在才建、已存在只对账 type）；Sensitive 的键登记进
+	// SensitiveSettingKeys，让读接口回空串、写侧留空=保持原值（P62）。
+	if sourceSettingProvider != nil {
+		for _, s := range sourceSettingProvider() {
+			if s.Sensitive {
+				SensitiveSettingKeys[s.Key] = true
+			}
+			if err := seedOneSetting(db, models.SystemSetting{
+				Key: s.Key, Value: s.Value, Type: s.Type, Description: s.Description,
+			}); err != nil {
 				return err
 			}
-			log.Printf("设置项 %s 的 type 对账为 %s（原 %s）", setting.Key, setting.Type, existing.Type)
 		}
+	}
+	return nil
+}
+
+// seedOneSetting 播种单个设置键：行不存在则建（用声明初值），已存在只对账 type——
+// type 由声明决定（面板不提供改类型的入口），老库里这些 key 可能仍是 string，不对账就会
+// 错过保存期的 JSON 校验；value 与 description 一律不覆盖（管理员填的值是最新的）。
+func seedOneSetting(db *gorm.DB, setting models.SystemSetting) error {
+	var existing models.SystemSetting
+	// 条件一律用 map 形式：让 GORM 按方言给 `key`（MySQL 保留字）加引号
+	err := db.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": setting.Key}).First(&existing).Error
+	if err != nil {
+		if err != gorm.ErrRecordNotFound {
+			return err
+		}
+		if err := db.Create(&setting).Error; err != nil {
+			return err
+		}
+		log.Printf("Created setting: %s", setting.Key)
+		return nil
+	}
+	if existing.Type != setting.Type {
+		if err := db.Model(&models.SystemSetting{}).Where(map[string]interface{}{"key": setting.Key}).
+			Update("type", setting.Type).Error; err != nil {
+			return err
+		}
+		log.Printf("设置项 %s 的 type 对账为 %s（原 %s）", setting.Key, setting.Type, existing.Type)
 	}
 	return nil
 }
@@ -286,6 +310,22 @@ var sourceSeedProvider func() []SourceSeed
 
 // SetSourceSeedProvider 注入数据源声明；未注入时数据源相关播种跳过（角色/设置等不受影响）。
 func SetSourceSeedProvider(fn func() []SourceSeed) { sourceSeedProvider = fn }
+
+// SourceSettingSeed 源声明的自有设置项在 db 侧的最小形态（app 注入；db 不反向依赖 base）。
+// 与 SourceSeed 同源：都来自 base.SourceMeta 的声明位，只是这里只关心"落行 + 是否敏感"。
+type SourceSettingSeed struct {
+	Key         string
+	Type        string
+	Value       string
+	Description string
+	Sensitive   bool
+}
+
+var sourceSettingProvider func() []SourceSettingSeed
+
+// SetSourceSettingProvider 注入源声明的设置项；未注入（骨架树没有源）时跳过。
+// 播种规则与内置设置键一致：行不存在才建，已存在只对账 type，不覆盖管理员已填值。
+func SetSourceSettingProvider(fn func() []SourceSettingSeed) { sourceSettingProvider = fn }
 
 // retiredSources 本部署声明的已下线数据源码（环境变量 RETIRED_SOURCES，逗号分隔，默认空）。
 // 底座不携带任何书源实现，也就不知道该清理谁的存量行——清单归部署侧，底座只提供清理机制。

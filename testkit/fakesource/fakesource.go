@@ -37,6 +37,12 @@ const (
 
 	// DictFile fake_b 声明的附属数据字典文件名（不含 .json）
 	DictFile = "fake_dict"
+
+	// SetKeyToken / SetKeyMode fake_b 声明的两个自有设置项（密钥型 + 普通型）：
+	// 验声明位「落行 + 敏感键登记进 SensitiveSettingKeys」这一条——骨架不含任何具体源键，
+	// 这两个键只存在于夹具里。
+	SetKeyToken = "fake_b_token"
+	SetKeyMode  = "fake_b_mode"
 )
 
 // Actions 假源声明的动作集：seed 据此播种 quota_costs，app 据此对账路由
@@ -104,15 +110,20 @@ func Register() {
 		dataFiles     []base.DataFileDesc
 		mediaType     string
 		required      map[string][]string
+		settings      []base.SettingDecl
 	}{
 		// fake_a 的 content 声明必填 bookId+itemId：它是 reqparams 中间件的夹具
 		// （缺参的请求必须在进 handler 之前收口成 400，见待办清单 P22）
-		{A, "假数据源A", []string{LegacyGroup}, nil, nil, "", map[string][]string{"content": {"bookId", "itemId"}}},
-		{B, "假数据源B", nil, nil, []base.DataFileDesc{{Name: DictFile, Description: "假源字典"}}, base.MediaAudio, nil},
+		{A, "假数据源A", []string{LegacyGroup}, nil, nil, "", map[string][]string{"content": {"bookId", "itemId"}}, nil},
+		{B, "假数据源B", nil, nil, []base.DataFileDesc{{Name: DictFile, Description: "假源字典"}}, base.MediaAudio, nil,
+			[]base.SettingDecl{
+				{Key: SetKeyToken, Type: "string", Description: "假源令牌（只写不回显）", Sensitive: true},
+				{Key: SetKeyMode, Type: "string", Default: "fast", Description: "假源模式"},
+			}},
 		{C, "假数据源C", nil, []base.SearchTab{
 			{TabType: 1, BdID: "fa", Name: "假分类一"},
 			{TabType: 2, BdID: "fb", Name: "假分类二", MediaType: base.MediaComic},
-		}, nil, "", nil},
+		}, nil, "", nil, nil},
 	}
 	for i, s := range sources {
 		var boot func() error
@@ -141,6 +152,7 @@ func Register() {
 			DataFiles:      s.dataFiles,
 			MediaType:      s.mediaType,
 			RequiredParams: s.required,
+			Settings:       s.settings,
 		}); err != nil {
 			panic("注册假数据源失败: " + err.Error())
 		}

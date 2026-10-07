@@ -43,6 +43,17 @@ type SourceMeta struct {
 	// 都没给出类型时兜底。多媒介源（一站同时载小说/听书/漫画/短剧）不要填默认值——那只会把
 	// 误判固化，应由 SearchTabs 逐项声明 + 让响应自带的类型说话。空 = 未声明。
 	MediaType string `json:"media_type,omitempty"`
+	// Settings 该源的**自有设置项**（键/类型/初值/说明/是否敏感）。源要一个可热改、面板能编辑、
+	// 又可能含令牌的配置时声明在这里，落库与「只写不回显」由骨架统一办——底座不认识任何具体源键。
+	//
+	// 为什么值得一个声明位：源的配置键过去只能由源自己写（`OnBoot` 里造 setting 行、自己往
+	// `db.SensitiveSettingKeys` 塞），那是"绕过而不声明"——键名与有没有人读它都不在骨架可见的
+	// 清单里，而面板会把不在声明里的行落进「自定义配置」兜底卡，管理员看不见它归谁。声明之后：
+	//   ① 骨架在 db.Init 期把每项落成 system_settings 行（行已存在只对账 type，不覆盖管理员已填值）；
+	//   ② Sensitive 的键登记进 db.SensitiveSettingKeys（读接口回空串、写侧留空=保持原值）；
+	//   ③ 行随 GET /admin/settings 下发，面板按 sensitive_keys 渲染密钥控件。
+	// 读取仍由源自己走 db.GetSetting（键的语义只有源知道），这一位只负责"声明与登记"。
+	Settings []SettingDecl `json:"settings,omitempty"`
 	// OnBoot 是**装配后钩子**：由 app.Run 在「配置已加载、数据库已连接、号池尚未启动」这一刻
 	// 按登记顺序调用一次，然后才 `pool.StartAll()`。
 	//
@@ -80,6 +91,28 @@ func RunSourceBoots() {
 type DataFileDesc struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+// SettingDecl 源声明的一个自有设置项。Type 与面板的设置类型同域（见 ValidSettingType），
+// Default 只在该键的行**尚不存在**时写入——管理员改过的值不会被播种回退。
+// Sensitive 的键在读接口回空串、写侧留空表示"保持原值"（待办清单 P62）。
+type SettingDecl struct {
+	Key         string `json:"key"`
+	Type        string `json:"type"`                // string/bool/number/json/json_object
+	Default     string `json:"default"`             // 播种初值（行不存在时）
+	Description string `json:"description"`         // 面板展示说明
+	Sensitive   bool   `json:"sensitive,omitempty"` // true = 值只写不回显
+}
+
+// ValidSettingType 判断设置类型是否是骨架认识的那五档（string/bool/number/json/json_object）。
+// **这是类型域的唯一事实来源**：面板写入端（handlers/admin/settings.go）与声明位校验都读它，
+// 免得"能声明"与"能保存"两份名单各写一遍、漂了没人知道（P60/P94 那族：类型是行为声明不是标签）。
+func ValidSettingType(t string) bool {
+	switch t {
+	case "string", "bool", "number", "json", "json_object":
+		return true
+	}
+	return false
 }
 
 // lookupDataFile 按文件名在注册表里找那条声明（同一文件名可能被多个源共用声明，取第一个）
@@ -174,10 +207,36 @@ func RegisterSource(m SourceMeta) error {
 			}
 		}
 	}
+	// Settings 声明校验：键必填、类型必须在五档内（类型域见 ValidSettingType）、同一源内不得重复键。
+	// 与 RequiredParams 同风格——声明错在这里炸，别等到面板存不回来一个键才发现。
+	seenSetting := make(map[string]bool, len(m.Settings))
+	for _, s := range m.Settings {
+		if s.Key == "" {
+			log.Fatalf("RegisterSource(%s): Settings 含空键", m.Code)
+		}
+		if !ValidSettingType(s.Type) {
+			log.Fatalf("RegisterSource(%s): 设置 %s 的 Type %q 非法（只接受 string/bool/number/json/json_object）", m.Code, s.Key, s.Type)
+		}
+		if seenSetting[s.Key] {
+			log.Fatalf("RegisterSource(%s): 设置键 %s 在同一源内重复声明", m.Code, s.Key)
+		}
+		seenSetting[s.Key] = true
+	}
 	sourceMu.Lock()
 	defer sourceMu.Unlock()
 	if _, exists := sourceMetas[m.Code]; exists {
 		return fmt.Errorf("数据源重复声明: %s", m.Code)
+	}
+	// 设置键跨源必须全局唯一：两个源声明同一个键，谁先播种谁赢，另一个静默读到别人的值——
+	// 症状是"我的配置改了没反应"，而两边代码都看不出。这里在装配期炸，别留给运行时猜。
+	for _, other := range sourceMetas {
+		for _, own := range m.Settings {
+			for _, o := range other.Settings {
+				if own.Key == o.Key {
+					log.Fatalf("RegisterSource(%s): 设置键 %s 已被数据源 %s 声明（键必须全局唯一）", m.Code, own.Key, other.Code)
+				}
+			}
+		}
 	}
 	sourceMetas[m.Code] = m
 	sourceOrdered = append(sourceOrdered, m.Code)
@@ -202,6 +261,18 @@ func GetSourceMeta(code string) (SourceMeta, bool) {
 	defer sourceMu.Unlock()
 	m, ok := sourceMetas[code]
 	return m, ok
+}
+
+// DeclaredSettings 汇总全部源声明的设置项（按 SortOrder 稳定顺序）。
+// 由 app 注入给 db 播种（同 SetSourceSeedProvider 的注入模式，避免 db→base 反向依赖）。
+// 同名键跨源重复在 RegisterSource 期已 log.Fatalf，这里不再去重。
+func DeclaredSettings() []SettingDecl {
+	metas := DeclaredSources()
+	var out []SettingDecl
+	for _, m := range metas {
+		out = append(out, m.Settings...)
+	}
+	return out
 }
 
 // HandlerInfo 处理器注册信息（泛型版本，编译时确定类型，无运行时断言）

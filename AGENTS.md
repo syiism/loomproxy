@@ -40,10 +40,11 @@
 
 ## 5. 处理器自注册与数据源声明位
 
-- `base.RegisterSource(SourceMeta{...})` 是路由对账与 seed 播种的**唯一事实来源**；声明位含 `Actions`/`FixedBaseURL`/`SearchTabs`/`LegacyGroups`/`DataFiles`/`MediaType`/**`OnBoot`**/**`RequiredParams`**。
+- `base.RegisterSource(SourceMeta{...})` 是路由对账与 seed 播种的**唯一事实来源**；声明位含 `Actions`/`FixedBaseURL`/`SearchTabs`/`LegacyGroups`/`DataFiles`/`MediaType`/`Settings`/**`OnBoot`**/**`RequiredParams`**。
 - **源的启动动作放 `OnBoot`，不要放包 `init()`**：`conf.Load()` 在 `app.Run` 里才读 `.env`，init 阶段 `os.Getenv` 只能看到真实环境变量（症状是「.env 改了不生效」）；`OnBoot` 跑在 `db.Init` 之后、`pool.StartAll()` 之前，登记号池与初始导入都在这里。
 - **必填参数用 `RequiredParams` 声明，不要在源里自己判**：`map[动作][]参数名`，由 `middleware/source` 的 `reqparams`（链上 350，晚于 monitor/baseurl、早于 access/billing）在进 handler 之前统一校验，缺任何一个直接 400。源里自己判的旧写法是返回 `ContentType=="error"` 的正文——HTTP 仍是 200，下游会把「缺少参数」那句话**当正文渲染进阅读器**（P22、分支侧 S15）。`baseUrl` 由 baseurl 中间件解析后放 context，所以这条校验必须排在它之后；未声明的动作一律直通（`search` 的空搜是合法形态，别乱填）。
 - 需要新行为优先**补声明位**而不是改骨架；声明值非法在 `RegisterSource` 期 `log.Fatalf`（`RequiredParams` 声明了未声明的动作就是炸，不是静默不校验）。
+- **源的自有设置项用 `Settings` 声明，不要在源里造 setting 行、自己往 `db.SensitiveSettingKeys` 塞**：`[]SettingDecl{Key,Type,Default,Description,Sensitive}`，骨架在 `db.Init` 期落行（行已存在只对账 `type`）、把 `Sensitive` 键登记进 `db.SensitiveSettingKeys`；**读取仍由源自己走 `db.GetSetting`**。类型域唯一来源是 `base.ValidSettingType`（与面板写入端同源），键跨源必须唯一，两条都在装配期炸。细节见 §5 详情页。
 - 路由全是根级 `/{source}/{action}`；链由中间件包的 `Def{Scope,Order,Applies,Build}` 装配，禁止在 `app.go` 手工拼链。
 - **数据源分组**（`source_groups` + `data_sources.group_id`）只是归类与筛选视图：限额/计费/限速/授权的键
   **一律仍是数据源码**，`POST /admin/source-groups/:id/apply-limits` 也只是批量写入口（落库每源一行）。

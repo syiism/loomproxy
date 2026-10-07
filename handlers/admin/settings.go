@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"loomproxy/base"
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/models"
@@ -23,17 +24,11 @@ var protectedSettingKeys = map[string]bool{
 	"default_quota_plan": true,
 }
 
-var settingTypes = map[string]bool{
-	"string": true,
-	"bool":   true,
-	"number": true,
-	"json":   true,
-	// json_object：合法 JSON 之外还要求「字符串到字符串的对象」。
-	// 加这一档是因为 `verify_http_headers` 的**消费方**要的就是这个形状（`map[string]string`），
-	// 而写入端原来只判"是不是合法 JSON"，中间没人负责——数组、裸字符串、值写成数字都能存进去，
-	// 到发送端才被丢掉（P94）。type 是行为声明，所以判据要能对得上读的那一方。
-	"json_object": true,
-}
+// 设置类型域的唯一事实来源是 base.ValidSettingType（声明位校验与面板写入端读同一份）：
+// 类型是行为声明不是展示标签，所以"源能声明什么类型"与"面板能存什么类型"必须是同一档。
+// json_object：合法 JSON 之外还要求「字符串到字符串的对象」——`verify_http_headers` 的消费方
+// 要的就是这个形状（`map[string]string`），只判"是不是合法 JSON"会让数组/裸字符串/数字值
+// 存进去、到发送端才被丢掉（P94）。
 
 // normalizeJSONValue 校验并压缩 JSON 型设置值：留空合法（表示该能力未启用），
 // 非空必须是合法 JSON，落库前压成单行。
@@ -133,7 +128,7 @@ func CreateSetting(c *gin.Context) {
 	if settingType == "" {
 		settingType = "string"
 	}
-	if !settingTypes[settingType] {
+	if !base.ValidSettingType(settingType) {
 		auth.Fail(c, http.StatusBadRequest, "type 必须是 string/bool/number/json 之一")
 		return
 	}
