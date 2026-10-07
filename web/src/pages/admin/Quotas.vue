@@ -145,12 +145,12 @@
               <input v-model="limitForm.target" class="input font-mono" placeholder="api" maxlength="64" required>
             </UiField>
           </div>
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 items-end">
-            <UiField label="限额" label-hint="-1 表示不限">
+          <div class="grid grid-cols-2 sm:grid-cols-2 gap-4 items-end">
+            <!-- 「周期」这一格由 P96 收口时删掉：表单里它渲染的是常量，而 limitForm 根本没有 period 这一项，
+                 后端也不收（P70②）——它不是"告诉你现在填的是按日的"，是一个填不动也没人读的输入框位。
+                 口径那句话留在上方表格那一行（页面上只有一处说这件事）。 -->
+            <UiField label="限额" label-hint="按日；-1 表示不限">
               <input v-model.number="limitForm.limit" type="number" class="input font-mono" required>
-            </UiField>
-            <UiField label="周期">
-              <span class="input font-mono text-text-muted">日（额度窗口只有一个口径）</span>
             </UiField>
             <button type="submit" class="btn-primary col-span-2 sm:col-span-1" :disabled="submitting">添加</button>
           </div>
