@@ -26,7 +26,7 @@ def as_int(token):
     return int(token) if token.isdigit() else CN.get(token, -1)
 
 
-reports = sorted(glob.glob('docs/规范/待办清单修复报告_*.md'))
+reports = sorted(glob.glob('docs/规范/修复报告/待办清单修复报告_*.md'))
 if not reports:
     print('没有执行报告文件——本检查没有对象（新增一轮报告时别改这个 glob 的形状）。')
     sys.exit(1)
