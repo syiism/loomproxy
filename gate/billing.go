@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -76,9 +75,6 @@ func (w *captureWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (w *captureWriter) succeeded() bool {
 	return w.status == http.StatusOK
 }
-
-// cacheTTL 计费配置缓存周期（配置项极少变动，长期缓存安全）
-const cacheTTL = 5 * time.Minute
 
 // costCachePrefix 接口消耗缓存键的唯一前缀。
 //

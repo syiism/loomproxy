@@ -653,8 +653,8 @@ func CreateApp() *gin.Engine {
 }
 
 func prewarmCache(ctx context.Context, cancel context.CancelFunc) {
-	// 数据库未就绪（db.Init 失败仅告警继续运行）时不预热：
-	// 下游 handler 会对 nil 的 db.DB 执行查询直接 panic 拖垮进程
+	// 理论防御：CreateApp 里 db.Init 失败已 log.Fatalf（P27），跑到这里 db.DB 必非 nil；
+	// 留着这一格是为了将来有人把 Fatalf 改回告警时不立刻空指针。
 	if db.DB == nil {
 		log.Println("缓存预热跳过：数据库未连接")
 		return
@@ -832,7 +832,12 @@ func Run(ctx context.Context) error {
 		Handler:           r,
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1MB
+		// WriteTimeout 覆盖从请求头读完到响应写完的整段（含上游等待）：
+		// 单上游请求受 TIMEOUT_CONNECT(5s)+TIMEOUT_POOL(10s) 约束，30s 留足余量。
+		WriteTimeout: 30 * time.Second,
+		// IdleTimeout 给 keep-alive 连接兜底：防慢loris 类挂起，也防空闲连接无限占 fd。
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 	shutdownDone := make(chan struct{})
 
