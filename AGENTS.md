@@ -57,37 +57,11 @@
 ## 6. 通用号池（base/pool）
 
 - Provider 三钩子 `Create`/`Refresh`/`Claim`（**Claim 必须叠加无损**）+ 可选 `ResourceExpiredClassifier`；状态机 `hot`/`cold`/`cooldown`/`spent`/`dead`，表 `pool_devices`。
-- 水位参数是 `ColdSpares`/`MaxHot`/`MaxDead`，**总号数上限是另一个声明位 `Config.MaxDevices`**（0=不限，
-  判在框架的建号入口，报 `ErrCapacityReached`）——建号会对上游产生不可逆增长的源用它，别在源内自己数行。
-  **死号保留上限是算出来的**：`min(MaxDead, MaxDevices - 可用目标)`——`MaxDevices < MaxDead` 时旧代码里死号
-  既清不掉又占满名额（生产 uxx 是 5<10），现在先留得下可用号再谈留档，建号被判住前还会先清一次腾名额（P35）。
-  **水位也被名额压**（同一条规则的另一半）：`MaxDevices>0` 时 `ColdSpares`（spread 是 `TargetDevices`）在
-  `withDefaults` 里夹到名额之内、**下限 1**（建号只走补齐这条路，夹到 0 池就一个号都建不出来），
-  而 `MaxDevices` 本身不动——它是闸门，按水位收紧会把错误驱动扩容的余量一起削掉。
-  单设备池（`MaxDevices=1`）因此长期补不齐冷备，这是预期：`ErrCapacityReached` **只在状态变化时出声**，
-  不再每轮巡检刷一条（生产 qm_device 曾每 60 秒一条，把「这个池有问题」的读数泡坏）。
-  快照另有一格 `soft_deleted`（按池数软删行）：**框架从不软删自己的行**（清理走 `Unscoped()` 硬删），
-  所以它 >0 只可能是"有人在库外面动过号池"；这些行在所有状态计数里隐形——**已拍：不自动清、维持手工清**
-  （P35②，2026-10-06）：`pool_devices` 的行是上游凭证的载体，自动物理清理会拿走运维的手工 undo。
-- **持锁调源钩子必须带截止**（P81）：`Provider.Create`/`Refresh`/`Claim` 三处出口走 `hookCtx()`
-  （`POOL_HOOK_TIMEOUT_SEC`，默认 30 秒）——维护与装填是**持着 `p.mu`** 调它们的，一次挂住的上游
-  同时扣住维护协程与全部 `Acquire`。框架只保证"传下去的 ctx 带截止"，**不读 ctx 的 Provider 拦不住**。
-- **`Config.Kind` 是调度分叉位，不只是标签**：`burn_wall_clock`（默认）= 墙钟燃烧型，只保持 1 个活跃号
-  + N 个冷备，临期续领、用尽换号、错误驱动扩容；`spread` = 用量摊薄型，框架**只调 `Create`**（不 Claim
-  不探活），把请求轮询到全部可用号上，失效走 `Pool.Cooldown` 的临时冷却而不是判死（P5）。
-  给「不因墙钟过期、燃烧看请求量」的号套默认形态，等于把所有请求打到同一台设备上。
-- **后台路径的 panic 兜底 + 临界区一律 defer 解锁**（P77/P78 → P103 全仓口径）：`Start`/`Maintain` 各
-  `defer base.Guard(...)`（它们直调源写的 `Provider.Create/Refresh/Claim`，而这里没有 gin Recovery；
-  **兜底只有一处实现** `base.Guard`/`base.Supervised`（`base/supervise.go`），号池原 `guardPanic` 那层已删，
-  新起的后台循环一律走它——P103 已把另外四条裸跑的路径接上，**③ 也已上门禁**：`make vet` 的 `goroutine-guard-check` 要求每个顶层 `go` 起的长跑循环自带帧（`base.Supervised`/`defer base.Guard`），确实不该包的写一行 `guard-exempt: <理由>`，豁免数会打印出来）；
-  被它们走到的临界区一律 `p.locked(fn)`——**「临界区一律 defer 解锁」是全仓规则，不只是号池**（P93：
-  尾解锁被 panic 跳过 = 锁被永久持有，症状从"少一行读数"变成"下一个请求卡死"；**已由 `make vet` 的
-  `lock-defer-check` 扫**，多段临界区与循环体各包闭包，就地加 defer 会把锁扩到网络请求上）；启动装填 `initLedger` **全程持锁**——`go pool.StartAll()` 排在
-  `http.Server` 之前，端口开着而燃烧型还在逐行探活，不持锁等于让并发 `Acquire` 读半装填的切片。
-- 嵌套凭证（会话 cookie 一类）走 `Device.Payload` / `pool_devices.payload`，框架不解析、只搬运
-  （回写用 `Pool.UpdatePayload`）；`Attrs` 是扁平 `map[string]string`——**塞嵌套在 Go 里就编译不过**，
-  真实的坏形态是这一列被库外面改坏（手填 SQL、截断文本），那会表现为"号在库里但凭证为空"；
-  现在 `deviceOf` 对解不开的 `attrs` 出一条脱敏 ERROR，同一行只喊一次（P59）。
+- 水位参数是 `ColdSpares`/`MaxHot`/`MaxDead`，**总号数上限是另一个声明位 `Config.MaxDevices`**（0=不限，判在建号入口）；**死号保留上限是算出来的**（`min(MaxDead, MaxDevices - 可用目标)`），**水位被名额压而名额不被水位压**，夹的下限是 1。快照那格 `soft_deleted` >0 只可能是「有人在库外面动过号池」——已拍：不自动清、维持手工清（P35/P36）。细节在 §6 详情页。
+- **持锁调源钩子必须带截止**（P81）：三钩子经 `hookCtx()`（`POOL_HOOK_TIMEOUT_SEC`，默认 30 秒）——维护与装填是持着锁调它们的，一次挂住的上游同时扣住维护协程与全部 `Acquire`；框架只保证「传下去的 ctx 带截止」，**不读 ctx 的 Provider 拦不住**。细节在 §6 详情页。
+- **`Config.Kind` 是调度分叉位，不只是标签**：`burn_wall_clock`（默认）=墙钟燃烧型（1 活跃 + N 冷备、临期续领）；`spread`=用量摊薄型（框架只调 `Create`、请求轮询全部可用号、失效走临时冷却而不是判死）。给「不因墙钟过期、燃烧看请求量」的号套默认形态，等于把所有请求打到同一台设备上。细节在 §6 详情页。
+- **后台路径的 panic 兜底 + 临界区一律 defer 解锁**（P77/P78 → P103 全仓口径）：`Start`/`Maintain` 各自带帧（唯一实现 `base.Guard`/`base.Supervised`），临界区一律 `p.locked(fn)`，启动装填 `initLedger` 全程持锁。**已由 `make vet` 的 `goroutine-guard-check` 与 `lock-defer-check` 扫**：每个顶层 `go` 起的长跑循环必须带帧，确实不该包的写一行 `guard-exempt: <理由>`（豁免数会打印出来）。细节在 §6 详情页。
+- 嵌套凭证（会话 cookie 一类）走 `Device.Payload` / `pool_devices.payload`，框架不解析、只搬运（回写用 `Pool.UpdatePayload`）；`Attrs` 是扁平 `map[string]string`——**塞嵌套在 Go 里就编译不过**，真实的坏形态是这一列被库外面改坏，`deviceOf` 对解不开的 `attrs` 出一条脱敏 ERROR、同一行只喊一次（P59）。细节在 §6 详情页。
 - 底座不携带任何 Provider，号池列表为空是正常状态；面板读 `GET /admin/pools`（凭证只列出键名）。
 - 详情：[`docs/架构/号池框架.md`](docs/架构/号池框架.md)
 
@@ -98,18 +72,7 @@
 - **三形态（token / cookie / apiKey）在用户面端点统一可用**，但**凭证引导类（`/apikey`、`/auth/me·password·privacy·quota-cycle·sessions·logout`）
   与管理面（`/admin/*`）只认会话**：长期密钥不该能铸造别的密钥、改密码或绕过「一次登出全部失效」。
   两层共用同一个凭证解析器，别在第二处再写一遍解析顺序（P26）。
-- **登录/找回密码的防爆破是进程内存状态，不落库**：按**客户端 IP** 限频（登录 10 次/分、找回 5 次/分），
-  连击失败 10 次或超窗口即锁 1 小时。它**不是 IP 黑名单**（`blocked_ips` 在库里、拦所有请求）。
-  管理面可读可清：`GET /admin/security/attempts`（快照，锁定项排前）与 `POST /admin/security/attempts/reset`
-  （按 IP 清锁与连击）——重启进程也会全清，所以这条端点的价值是把「为救一个 NAT 出口而重启」换成定向操作（P40）。
-  已知边界：不按账号、且自动拉黑只看数据面 403/429，**登录失败不喂给它**。
-  **账号侧的形状已经可观察、但仍然不管事**（P40① 的准备）：`handlers/auth/account_watch.go` 按登录标识
-  记「尝试 / 失败 / 不同 IP 数」（内存、一小时、不入库、**不参与 `locked()` 判定**），经
-  `GET /admin/security/attempts` 的 `accounts` 出，面板「IP 拉黑」页有只读一节，标黄阈值由响应的
-  `accounts_meta.multi_ip_yellow` 下发（复用 `suspect_distinct_ips` 那一条定义）；那一节还渲染
-  `first_seen`/`last_seen` 两个时刻（**跨度**才是"慢速试"唯一看得出的形状，P66）。**已拍：不据此锁人**
-  （P40① 选 A，2026-10-06）——用户名可被任意填，按标识锁人等于让攻击者点名把某个账号锁在门外；
-  那一列**永远只给人看**，"观察不许变成判定"那条反向断言从此是定案的守卫。
+- **登录/找回密码的防爆破是进程内存状态，不落库**：按**客户端 IP** 限频（登录 10 次/分、找回 5 次/分），连击失败 10 次或超窗口锁 1 小时；它**不是 IP 黑名单**（`blocked_ips` 在库里、拦所有请求）。管理面可读可清（`/admin/security/attempts` 两条），重启进程也全清，所以那条端点的价值是把「为救一个 NAT 出口而重启」换成定向操作（P40）。**账号侧的形状已经可观察、但仍然不管事**（P40① 已拍 A：那一列永远只给人看，不参与 `locked()` 判定）——读数、跨度判据与「观察不许变成判定」那条定案守卫在 §7 详情页；到期回看登记在待办清单 P108。
 - 用户自助密钥（`lp_` 前缀）匹配时**注入归属身份**，计费/配额/监控/套餐门控随该用户生效；静态 env 键保持匿名语义。
 - 会话由 JWT 的 `jti` 对应 `auth_sessions`，无 `jti` 的旧 token 一律 401；**会话行就是鉴权的执行点**
   （每请求 `db.ValidateSession` 查 `revoked_at`），所以"吊销没做成"等于那个人还能用。
@@ -139,12 +102,7 @@
   **还有一个更外层的闸门：`maintenance_mode`**（待办清单 P53②，面板那个开关从此说话算）——开着时数据面
   `/{source}/{action}` 在进 handler 之前一律 503，**管理员放行**、查不到角色按拦处理（失败关闭），
   控制面与登录注册不受影响；被它拦下的请求没进过 handler，`CallSubject` 是 nil、维度全空，但观测仍要走完。**面板顶部有一条横幅说明这件事**（P95：信号是 `/announcement` 的 `maintenance`，按 `isAdmin()` 分两个变体、不可关闭；定稿里给登录页的那条被撤回——维护不动登录注册，写上去就是替系统说假话）。
-- **多设备登录监控（P44）**：登录时按 `max_active_sessions` 把超出的旧会话移出（保留最近的），开关 `device_watch_enabled` **默认关**；
-  处置**只按会话数，IP 数再多也只标红不踢人**。读数在 `/admin/devices`；密钥侧只统计数量与来源 IP 分布，**不做冻结**。
-  **活跃会话只有一份定义**（`db.ActiveSessionCond`：窗口内建立 + 未吊销 + 未过期），页面的 `active_sessions`
-  与用户管理的 `over_cap=1` 筛选共用它；而会话**明细**那一条按窗口全集取（`db.SessionWindowCond`，含已吊销），
-  否则「近期移出 / 登录设备 / 登录 IP」会跟着静默归零（P45）。这页可按七个聚合列排序：`sort`/`dir` 走白名单映射到
-  **内存比较函数**，**永不进 `ORDER BY`**，非法值回默认而不是 400。
+- **多设备登录监控（P44）**：登录时按 `max_active_sessions` 把超出的旧会话移出（保留最近的），开关 `device_watch_enabled` **默认关**；处置**只按会话数，IP 数再多也只标红不踢人**；读数在 `/admin/devices`，密钥侧只统计数量与 IP 分布、不做冻结。**活跃会话只有一份定义**（`db.ActiveSessionCond`），明细那条按窗口全集取（`SessionWindowCond`，否则三列静默归零，P45）；这页七个聚合列可排序，`sort`/`dir` 走白名单映射到**内存比较**、**永不进 `ORDER BY`**，非法值回默认而不是 400。细节在 §7 详情页。
 - **用户管理有九个筛选条件（P46）**：状态三态（含「已删除」）、套餐（含「绑着的套餐已下架」）、角色、到期四档、
   活跃度（**从未登录单独一档**）、留存同意位（**NULL ≠ false**）、被手工刷过额度、密钥数分档、活跃会话超上限。
   非法枚举值一律当「没这个筛选」；档位数字由响应 `filters_meta` 下发，面板不自己抄。
@@ -155,19 +113,10 @@
   本人端 `POST /quota/transfer` 与管理端各一个入口，**判定只在那个函数里**；
   两端都不能是不限额、目标须已授权、增量算到 0 要删行（0 的语义是"没有覆盖"），
   并与 `quota_transfer_logs` 同一事务——**不跨账户**，覆盖行的键本来就是 `(user_id, 源)`。
-- **套餐名/角色名可被本人设显示别名（P43）**：`user_display_aliases` 按 `(user_id, kind, target_id)` 存，
-  默认名那两张全局表一概不动；显示规则只有 `models.DisplayAlias` 一处——本人界面看 `display_name`，
-  管理员与运营看 `name` 并另给一栏 `alias`。写入口 `PUT /auth/display-alias` 只认会话，资格 = 绑定了非免费套餐。
+- **套餐名/角色名可被本人设显示别名（P43）**：`user_display_aliases` 按 `(user_id, kind, target_id)` 存，默认名那两张全局表一概不动；显示规则只有 `models.DisplayAlias` 一处（本人看 `display_name`，管理员与运营看 `name` 另给一栏 `alias`）；写入口 `PUT /auth/display-alias` 只认会话，资格=绑定了非免费套餐。细节在 §9 详情页。
 - **扣减按内容去重**：同接口同内容在 `BILLING_DEDUPE_SEC`（默认 300 秒，0=关）窗口内只扣一次（P25）。
   标识取不到时照扣，不去重。
-- **授权与限额是同一行（P34）**：`quota_limits(scope=source, target=数据源码)` 存在即该套餐可用该源，
-  `-1` = 不限额，**删行 = 回收**；判定口只有 `gate/grant.go`，旧关联表已停写、已摘出 `AutoMigrate`、生产已 `DROP`。
-  播种只在套餐新建那一次铺默认档，新源由 `attachSourceToBuiltinPlans` 补授权——按行无限回填会复活管理员删掉的授权。
-  限额优先级：用户数据源级覆盖（**追加语义**）> 套餐限额 > 不限；限流为套餐级 > 全局。
-  **额度只有一个窗口：当日**——`quota_limits.period` 没有任何判定读它，而面板把它当单位显示也让人改（P70）；
-  **②已落 B 收掉**（`3672d22`）：模型不再映射这列、写口不再收 `period`、面板只显示「/ 日」，
-  库里那一列仍在——**已拍定不追 DROP**（2026-10-06）：B 摘的是口径（谁读它、谁显示它、谁收它），不是清库，
-  没有任何路径读它之后 DROP 只是整洁性，不值得为它单独开一次生产写授权。
+- **授权与限额是同一行（P34）**：`quota_limits(scope=source, target=数据源码)` 存在即该套餐可用该源，`-1`=不限额，**删行=回收**；判定口只有 `gate/grant.go`，旧关联表已停写、已摘出 `AutoMigrate`、生产已 `DROP`。播种只在套餐新建那一次铺默认档，新源由 `attachSourceToBuiltinPlans` 补授权（按行无限回填会复活管理员删掉的授权）。限额优先级：用户数据源级覆盖（**追加语义**）> 套餐限额 > 不限。**额度只有一个窗口：当日**——`period` 没有任何判定读它，②已落 B 收掉，库里那一列仍在，已拍定不追 DROP（P70）。细节在 §9 详情页。
 - **同意位关闭时内容维度不捕获（P37）**：`users.content_consent`（NULL=默认同意），个人中心 `POST /auth/privacy` 只认会话；
   关闭后 `monitor` 在写明细前抹掉七个内容字段（**含标识**，否则名称回填会补回来）并置 `content_withheld`。
 - **聚合搜索（P38）**：`GET /{source}/search?sources=a,b` 在 handler 内扇出到多个源，那条路不经过中间件链，
