@@ -130,3 +130,27 @@ type cachedResult struct {
 	body   []byte
 	status int
 }
+
+// PeekShared 只读地问一句"这一键在不在"：不合并、不打上游、不刷新 TTL。
+//
+// 为什么要有它——**读缓存的时机必须在"取验证材料"之前**。带验证的源（纸间是 ALTCHA：取挑战 →
+// 本地解 PoW → verify → 才轮到那一发被缓存的正文）如果先解验证再问缓存，
+// 命中就只省掉最后一发，前面那两发照打；缓存越有效，这个顺序问题越隐蔽，
+// 因为命中率读数会看起来"还行"。携带形态 2026-10-08 实测到的就是这一格（见其待办清单 S87）。
+//
+// 与 `FetchShared` 一致的两条语义：`ttl <= 0` 一律算未命中（那一档本来就不存东西）；
+// 未注入缓存层时永远未命中。
+func (h *BaseHandler) PeekShared(_ context.Context, cacheKey string, ttl time.Duration) ([]byte, bool) {
+	if cacheKey == "" || ttl <= 0 {
+		return nil, false
+	}
+	sc := loadSharedCache()
+	if sc == nil {
+		return nil, false
+	}
+	val, ok := sc.Get(cacheKey)
+	if !ok || len(val) == 0 {
+		return nil, false
+	}
+	return val, true
+}

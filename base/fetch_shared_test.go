@@ -297,3 +297,40 @@ func TestReplayableRequestCapsBody(t *testing.T) {
 		t.Error("超上限的请求体被静默接受了")
 	}
 }
+
+// TestPeekSharedReadsWithoutUpstream 钉住 PeekShared 的三条语义：
+// 命中只读不打上游、`ttl<=0` 一律未命中、没注入缓存层时永远未命中。
+// 它存在的原因是携带形态实测到的那个顺序问题：先解验证再问缓存，命中就白命中一半。
+func TestPeekSharedReadsWithoutUpstream(t *testing.T) {
+	srv, hits := sharedUpstream(t, http.StatusOK, "正文内容", 0)
+	cache := newMemCache()
+	SetSharedCache(cache)
+	t.Cleanup(func() { SetSharedCache(nil) })
+	h := &BaseHandler{Path: "/demo/content"}
+	key := "content:demo:peek"
+
+	if _, _, err := h.FetchShared(context.Background(), srv.URL, "POST", nil,
+		strings.NewReader("{}"), key, time.Minute, nil); err != nil {
+		t.Fatal(err)
+	}
+	before := hits.Load()
+
+	got, ok := h.PeekShared(context.Background(), key, time.Minute)
+	if !ok || string(got) != "正文内容" {
+		t.Fatalf("peek 没读到已存在的条目: ok=%v got=%q", ok, got)
+	}
+	if n := hits.Load(); n != before {
+		t.Errorf("peek 打上游了：调用数从 %d 变到 %d", before, n)
+	}
+
+	if _, ok := h.PeekShared(context.Background(), key, 0); ok {
+		t.Error("ttl=0 时 peek 不该命中（那一档本来就不存东西）")
+	}
+	if _, ok := h.PeekShared(context.Background(), "", time.Minute); ok {
+		t.Error("空键不该命中")
+	}
+	SetSharedCache(nil)
+	if _, ok := h.PeekShared(context.Background(), key, time.Minute); ok {
+		t.Error("没注入缓存层时不该命中")
+	}
+}
