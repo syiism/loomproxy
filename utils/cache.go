@@ -147,10 +147,21 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 	return entry.value, true
 }
 
+// Set 用全局默认 TTL（CACHE_TTL）写入。
 func (c *Cache) Set(key string, value interface{}) {
+	c.SetTTL(key, value, c.ttl)
+}
+
+// SetTTL 写入并**指定这一条的存活时间**。
+//
+// 为什么要有这一条：全局 CACHE_TTL 管的是「计费读数/列表」这类几秒钟旧了也无所谓的缓存，
+// 而正文类内容的合适寿命由用它的源决定（上游改了这章要多快让读者看到，是产品口径不是全局常数）。
+// 让调用方改全局 TTL 等于互相牵制；共用一个写入口又各自算过期，Redis 那一段就会留下
+// 永远按默认值活的键（本仓「两处写同一份值」那一族的老形状）。
+func (c *Cache) SetTTL(key string, value interface{}, ttl time.Duration) {
 	if c.useRedis {
 		data, _ := json.Marshal(value)
-		if err := c.redis.Set(context.Background(), key, data, c.ttl).Err(); err != nil {
+		if err := c.redis.Set(context.Background(), key, data, ttl).Err(); err != nil {
 			c.rSet.fail("写入", err)
 			return
 		}
@@ -164,7 +175,7 @@ func (c *Cache) Set(key string, value interface{}) {
 	if elem, ok := c.items[key]; ok {
 		entry := elem.Value.(*cacheEntry)
 		entry.value = value
-		entry.expires = time.Now().Add(c.ttl)
+		entry.expires = time.Now().Add(ttl)
 		c.lruList.MoveToFront(elem)
 		return
 	}
@@ -172,7 +183,7 @@ func (c *Cache) Set(key string, value interface{}) {
 	entry := &cacheEntry{
 		key:     key,
 		value:   value,
-		expires: time.Now().Add(c.ttl),
+		expires: time.Now().Add(ttl),
 	}
 	elem := c.lruList.PushFront(entry)
 	c.items[key] = elem

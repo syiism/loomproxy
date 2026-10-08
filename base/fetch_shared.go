@@ -1,0 +1,119 @@
+package base
+
+// 正文类响应的跨进程缓存端口。
+//
+// 为什么是端口而不是直接调 `utils.DefaultCache()`：**AGENTS §4 那条硬边界——base 不得导入 utils**。
+// 所以这里只声明"要一件能按 key 取/存字节的东西"，具体接哪一层（Redis 或纯内存）由装配期决定：
+// `app` 同时看得到 base 与 utils，适配器落在那儿。
+//
+// 未注入时一切照旧可用：`FetchShared` 退化成"只做并发合并、不缓存"，不报错也不 panic——
+// 测试与不接 Redis 的部署都是这个形状。
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+)
+
+// SharedCache 是按 key 存字节的跨进程缓存；ttl 是**这一条**的存活时间。
+type SharedCache interface {
+	Get(key string) ([]byte, bool)
+	Set(key string, val []byte, ttl time.Duration)
+}
+
+// 存法用互斥而不是 atomic.Value：**atomic.Value 要求每次存的具体类型一致**，
+// 而这里天生要往同一个槽里放「适配器」与「清空用的哨兵」两种类型——
+// 第一版那么写，用例一 cleanup 就 panic（`store of inconsistently typed value`）。
+// 注入只发生在装配期与测试里，读侧的这点开销不构成热点。
+var (
+	sharedCacheMu sync.RWMutex
+	sharedCache   SharedCache
+)
+
+// SetSharedCache 在装配期注入（一次；重复注入直接覆盖，便于测试换替身）。传 nil = 不缓存。
+func SetSharedCache(c SharedCache) {
+	sharedCacheMu.Lock()
+	defer sharedCacheMu.Unlock()
+	sharedCache = c
+}
+
+func loadSharedCache() SharedCache {
+	sharedCacheMu.RLock()
+	defer sharedCacheMu.RUnlock()
+	return sharedCache
+}
+
+// FetchShared 与 `Fetch` 走同一条传输通路（熔断、代理池、UA 轮换全都照旧），另外接上两件事：
+//
+//	① 并发合并：同一 cacheKey 的并发请求只打一发上游（进程内 singleflight）；
+//
+// ② 可选的跨进程缓存：装配期注入的那一层（现网是 Redis）。
+//
+// 它是给 **POST 型源**用的。现成那两条带缓存的通路 `FetchJSON`/`FetchText` 是 GET，
+// 缓存键能从 URL + headers 推出来；而签名/加密站的 body 与 nonce/时间戳/签名每次都不同，
+// **推不出可复用的键**——所以这里要求调用方显式给 cacheKey。
+//
+// 三条使用约束（都是这套机制成立的前提，不是风格）：
+//   - **键必须含全部会改变响应的维度**。以 zj_novel 的正文为例：响应是加密信封，
+//     解它要用当时那枚会话的键，所以键里要带 sessionID；换了会话还复用旧条目就是解不开，
+//     而不是"读到旧正文"。
+//   - `ttl <= 0` = 只合并、不缓存（想省上游但不想留内容面就用这一档）。
+//   - 只有 **2xx 且非空**的响应会写缓存；401/403/5xx 与任何错误都不写——
+//     否则一次风控拒绝会被缓存成"这本书读不了"（同族：S54「超限报错而不是截断」，
+//     坏结果一旦进缓存就比没有缓存更难看）。
+func (h *BaseHandler) FetchShared(ctx context.Context, url string, method string,
+	headers map[string]string, body io.Reader, cacheKey string, ttl time.Duration) ([]byte, int, error) {
+
+	if cacheKey == "" {
+		return nil, 0, NewUpstreamError(http.StatusInternalServerError, "FetchShared 需要显式 cacheKey", nil)
+	}
+	sc := loadSharedCache()
+	if ttl > 0 && sc != nil {
+		if val, ok := sc.Get(cacheKey); ok && len(val) > 0 {
+			return val, http.StatusOK, nil
+		}
+	}
+
+	raw, err := doSingleflight("shared:"+cacheKey, func() (interface{}, error) {
+		// double-check：等锁期间先行者可能刚把同一条塞进缓存
+		if ttl > 0 && sc != nil {
+			if val, ok := sc.Get(cacheKey); ok && len(val) > 0 {
+				return cachedResult{body: val, status: http.StatusOK}, nil
+			}
+		}
+		resp, ferr := h.Fetch(ctx, url, method, headers, body)
+		if ferr != nil {
+			return nil, ferr
+		}
+		defer resp.Body.Close()
+		buf := acquireBodyBuf()
+		defer releaseBodyBuf(buf)
+		if _, rerr := io.Copy(buf, io.LimitReader(resp.Body, maxResponseBodySize)); rerr != nil {
+			return nil, rerr
+		}
+		b := append([]byte(nil), buf.Bytes()...)
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && len(b) > 0 && ttl > 0 && sc != nil {
+			sc.Set(cacheKey, b, ttl)
+		}
+		return cachedResult{body: b, status: resp.StatusCode}, nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	switch v := raw.(type) {
+	case cachedResult:
+		return v.body, v.status, nil
+	case []byte: // 缓存命中分支直接回了字节（保留这一型以防将来两条路径合流）
+		return v, http.StatusOK, nil
+	}
+	return nil, 0, NewUpstreamError(http.StatusInternalServerError, "FetchShared 返回了意外的类型", nil)
+}
+
+// cachedResult 带类型地占住 singleflight 的共享值：singleflight 按键合并，
+// 同键不同形状的返回值挤在同一个 interface 里，取用时靠类型断言分辨。
+type cachedResult struct {
+	body   []byte
+	status int
+}
