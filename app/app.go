@@ -250,6 +250,17 @@ func registerHandlers(r *gin.Engine) []RouteInfo {
 			}
 			// 控制面端点（source 为空）没有内容维度可抽
 			if source != "" {
+				// 留存同意位（P113②）：必须在 ObserveCall 之前设好 ContentWithheld 标志——
+				// ObserveCall 内部会把这次响应里的书名/章节名写进命名缓存（内存 + Redis）。
+				// monitor 在 c.Next() 之后调 WithholdContent 抹的是写进明细的字段，够不到
+				// 这条写缓存的路径（那时 ObserveCall 早已执行完）。这里提前设标志，ObserveCall
+				// 内部的 rememberBook/rememberChapter 就会跳过写入。
+				// 匿名 / env 键调用没有 current user，按默认档（同意）走，与 monitor 口径一致。
+				if v, ok := c.Get(middleware.CtxCurrentUser); ok {
+					if user, isUser := v.(*models.User); isUser && !user.KeepsContentData() {
+						subject.WithholdContent()
+					}
+				}
 				legado.ObserveCall(source, params, result, subject)
 			}
 			// 搜索响应在出口统一打标：每条结果硬性写上它来自哪个源，并把源码放进 kind 的第一项

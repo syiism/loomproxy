@@ -22,6 +22,10 @@ type ConfMgr struct {
 	// 上游响应短 TTL 缓存（detail/chapter 等幂等接口，缓解上游限流）
 	UpstreamCacheTTL     float64
 	UpstreamCacheMaxSize int
+	// UpstreamCacheStaleMult 故障降级时允许端出"过期旧值"的时限倍数（P112 出路②）：
+	// 只端出"过期后不超过 UpstreamCacheTTL × 此倍数"的旧值；<=0 表示不限（无限期降级，旧行为）。
+	// 默认 3：上游故障时还能用最多约 30 秒前的旧值兜底，但不会把几小时前的坏信封端出去。
+	UpstreamCacheStaleMult float64
 
 	// 熔断器（按上游 host）：连续失败 CIRCUIT_BREAKER_FAILURES 次后开启，
 	// CIRCUIT_BREAKER_COOLDOWN 秒内快速失败，之后放行探测
@@ -243,8 +247,9 @@ func Load() {
 		CacheTTL:     envInt("CACHE_TTL", 300),
 		CacheMaxSize: envInt("CACHE_MAXSIZE", 128),
 
-		UpstreamCacheTTL:     envFloat("UPSTREAM_CACHE_TTL", 10),
-		UpstreamCacheMaxSize: envInt("UPSTREAM_CACHE_MAXSIZE", 512),
+		UpstreamCacheTTL:       envFloat("UPSTREAM_CACHE_TTL", 10),
+		UpstreamCacheMaxSize:   envInt("UPSTREAM_CACHE_MAXSIZE", 512),
+		UpstreamCacheStaleMult: envFloat("UPSTREAM_CACHE_STALE_MULT", 3),
 
 		CircuitBreakerEnabled:  envBool("CIRCUIT_BREAKER_ENABLED", true),
 		CircuitBreakerFailures: envInt("CIRCUIT_BREAKER_FAILURES", 5),

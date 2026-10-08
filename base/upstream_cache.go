@@ -36,12 +36,20 @@ func getUpstreamCache(key string) (interface{}, bool) {
 	return entry.value, true
 }
 
-// getUpstreamCacheStale 读取缓存项（含已过期），用于上游故障时的降级返回
-func getUpstreamCacheStale(key string) (interface{}, bool) {
+// getUpstreamCacheStale 读取缓存项（含已过期），用于上游故障时的降级返回。
+//
+// maxStale 限制"过期多久以内"的旧值才允许降级（P112 出路②）：<=0 表示不限，
+// 保持旧行为（无限期端出）。这一道闸是为了避免把几小时前的坏信封（HTTP 200 但
+// body 是业务失败）在长期故障期间一直端给下游；刚写进去的坏值它挡不住（那条要等
+// ResponseFilter 回灌到 GET 通路，见 P112 出路①）。
+func getUpstreamCacheStale(key string, maxStale time.Duration) (interface{}, bool) {
 	upstreamCacheMu.Lock()
 	defer upstreamCacheMu.Unlock()
 	entry, ok := upstreamCacheItems[key]
 	if !ok {
+		return nil, false
+	}
+	if maxStale > 0 && time.Since(entry.expires) > maxStale {
 		return nil, false
 	}
 	return entry.value, true

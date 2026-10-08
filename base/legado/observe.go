@@ -13,6 +13,12 @@ import (
 // 为什么放在 legado 而不是 base：base 拥有 CallSubject 与命名缓存，但不能导入 legado
 // （legado → base 已是依赖，反向即成环）；而形状识别必须认识本包的 DTO 类型。
 //
+// 留存同意位（P113②）：subj.ContentWithheld 在 ObserveCall 之前已由装配层按当前用户
+// 设好（用户关掉 content_consent 时）。本函数仍然跑形状识别——InBandError/ResultCount
+// 这些"请求成没成"的观测要保留（WithholdContent 也保留 InBandError）——但**所有对
+// 命名缓存（内存 + Redis SubjectStore）的写入一律跳过**：monitor 在 c.Next() 后会再抹
+// 一遍 subj 字段写明细，命名缓存这层过去是它管不到的第五面。
+//
 // 媒介判定的优先级（本函数末尾的短路链）：
 //  1. 响应自带（正文 contentType / 详情的 bookTypeCode|bookType / 条目的类型字段）
 //  2. 请求 tab 命中的源声明（SearchTab.MediaType）
@@ -79,7 +85,7 @@ func observeBookList(source string, subj *base.CallSubject, items []BookItem) {
 	// 搜索结果里的书名灌进缓存：用户看完列表就会点进某本书，之后 info/chapter/content
 	// 只带标识，靠这里缓存的名字与媒介才能标出来
 	for _, it := range items {
-		base.RememberBook(source, it.BookId, it.Name, mediaOfItem(it))
+		rememberBook(source, subj, it.BookId, it.Name, mediaOfItem(it))
 	}
 }
 
@@ -101,7 +107,7 @@ func observeBookInfo(source string, subj *base.CallSubject, name, bookID, bookTy
 	if media != "" {
 		subj.Media = media
 	}
-	base.RememberBook(source, subj.BookKey, name, media)
+	rememberBook(source, subj, subj.BookKey, name, media)
 }
 
 func observeChapterList(source string, subj *base.CallSubject, items []ChapterItem) {
@@ -110,7 +116,7 @@ func observeChapterList(source string, subj *base.CallSubject, items []ChapterIt
 	}
 	subj.ResultCount = len(items)
 	for _, it := range items {
-		base.RememberChapter(source, subj.BookKey, it.ItemId, it.Title)
+		rememberChapter(source, subj, subj.BookKey, it.ItemId, it.Title)
 	}
 }
 
@@ -150,7 +156,7 @@ func observeLooseMap(source string, subj *base.CallSubject, m map[string]interfa
 			ident := base.ParamString(item, "bookId", "u", "url", "bookUrl")
 			name := base.ParamString(item, "name", "bookName", "title")
 			media := mediaFromLoose(item)
-			base.RememberBook(source, ident, name, media)
+			rememberBook(source, subj, ident, name, media)
 		}
 		return
 	}
@@ -171,7 +177,7 @@ func observeLooseMap(source string, subj *base.CallSubject, m map[string]interfa
 			if item == nil {
 				continue
 			}
-			base.RememberChapter(source, subj.BookKey,
+			rememberChapter(source, subj, subj.BookKey,
 				base.ParamString(item, "itemId", "u", "url"),
 				base.ParamString(item, "title", "n", "name"))
 		}
@@ -213,7 +219,7 @@ func resolveMedia(source string, params map[string]interface{}, subj *base.CallS
 	}
 	if subj.Media != "" {
 		if subj.BookKey != "" {
-			base.RememberBook(source, subj.BookKey, subj.BookName, subj.Media)
+			rememberBook(source, subj, subj.BookKey, subj.BookName, subj.Media)
 		}
 		return
 	}
@@ -225,7 +231,7 @@ func resolveMedia(source string, params map[string]interface{}, subj *base.CallS
 		subj.Media = meta.MediaType
 	}
 	if subj.Media != "" && subj.BookKey != "" {
-		base.RememberBook(source, subj.BookKey, subj.BookName, subj.Media)
+		rememberBook(source, subj, subj.BookKey, subj.BookName, subj.Media)
 	}
 }
 
@@ -240,6 +246,29 @@ func backfillFromCache(source string, subj *base.CallSubject) {
 	if subj.ChapterTitle == "" && subj.ChapterKey != "" && subj.BookKey != "" {
 		subj.ChapterTitle = base.LookupChapter(source, subj.BookKey, subj.ChapterKey)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 命名缓存写入闸（P113②）
+// ---------------------------------------------------------------------------
+//
+// rememberBook / rememberChapter 是 ObserveCall 内对命名缓存的唯一写口：
+// subj.ContentWithheld 为 true（用户在进 handler 前已被装配层标记为关掉留存）时一律跳过。
+// 读路径（backfillFromCache → LookupBook/LookupChapter）不拦——它只是把**已存在**的名称
+// 映射反查给本次请求展示，不引入新采集；命中后内存回填也是把已有值从 Redis 搬到内存，
+// 不写新内容。
+func rememberBook(source string, subj *base.CallSubject, ident, name, media string) {
+	if subj.ContentWithheld {
+		return
+	}
+	base.RememberBook(source, ident, name, media)
+}
+
+func rememberChapter(source string, subj *base.CallSubject, bookIdent, ident, title string) {
+	if subj.ContentWithheld {
+		return
+	}
+	base.RememberChapter(source, bookIdent, ident, title)
 }
 
 // ---------------------------------------------------------------------------

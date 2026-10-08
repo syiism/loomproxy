@@ -451,9 +451,9 @@ func (h *BaseHandler) FetchJSON(ctx context.Context, url string, headers map[str
 		return result, err
 	})
 	if err != nil {
-		// 降级：上游故障时返回过期缓存（有总比没有强）
+		// 降级：上游故障时返回过期缓存（有总比没有强）；时限由 staleLimit 控制（P112 出路②）
 		if cacheKey != "" {
-			if stale, ok := getUpstreamCacheStale(cacheKey); ok {
+			if stale, ok := getUpstreamCacheStale(cacheKey, staleLimit(h)); ok {
 				if m, ok2 := stale.(map[string]interface{}); ok2 {
 					return m, nil
 				}
@@ -462,6 +462,16 @@ func (h *BaseHandler) FetchJSON(ctx context.Context, url string, headers map[str
 		return nil, err
 	}
 	return v.(map[string]interface{}), nil
+}
+
+// staleLimit 故障降级允许端出"过期旧值"的时限：h.UpstreamCacheTTL × UPSTREAM_CACHE_STALE_MULT。
+// 配置未加载或倍数 <=0 时返回 0（不限，保持旧行为）。P112 出路②——挡的是"长期故障期间
+// 把几小时前的坏信封一直端出去"，不挡"刚写进去的坏值"（后者要等 ResponseFilter 回灌，出路①）。
+func staleLimit(h *BaseHandler) time.Duration {
+	if conf.Config == nil || conf.Config.UpstreamCacheStaleMult <= 0 {
+		return 0
+	}
+	return time.Duration(float64(h.UpstreamCacheTTL) * conf.Config.UpstreamCacheStaleMult)
 }
 
 // errBodySnippet 截取上游错误响应体前 256 字节用于错误诊断
@@ -537,7 +547,7 @@ func (h *BaseHandler) FetchText(ctx context.Context, url string, headers map[str
 	})
 	if err != nil {
 		if cacheKey != "" {
-			if stale, ok := getUpstreamCacheStale(cacheKey); ok {
+			if stale, ok := getUpstreamCacheStale(cacheKey, staleLimit(h)); ok {
 				if s, ok2 := stale.(string); ok2 {
 					return s, nil
 				}
