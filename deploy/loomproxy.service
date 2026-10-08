@@ -1,7 +1,11 @@
 [Unit]
 Description=LoomProxy - 小说书源 API 聚合代理
-After=network-online.target
+After=network-online.target loomproxy.socket
 Wants=network-online.target
+# socket activation（P115 零停机）：端口由 loomproxy.socket 持有，进程从 systemd 接过 fd。
+# 回退老形态（进程自己 bind）：删掉下面这行 Requires、删 loomproxy.socket 的启用即可，
+# 代码里 activation.Listeners 拿不到 fd 会自动回退 net.Listen。
+Requires=loomproxy.socket
 
 [Service]
 Type=simple
@@ -11,9 +15,9 @@ ExecStart=/opt/loomproxy/loomproxy-go
 Restart=on-failure
 RestartSec=3
 
-# 优雅停机：服务处理 SIGTERM，内部 5s 停机 + 监控明细 Drain 落库，
-# 留足余量再 SIGKILL
-TimeoutStopSec=25
+# 优雅停机：服务处理 SIGTERM，内部 15s Shutdown（在途请求处理完）+ 清理与监控明细落库，
+# 留足余量再 SIGKILL；30s 是在途请求上限（P115）
+TimeoutStopSec=30
 
 LimitNOFILE=65536
 NoNewPrivileges=true

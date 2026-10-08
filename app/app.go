@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/gin-gonic/gin"
 
 	"loomproxy/base"
@@ -866,23 +867,41 @@ func Run(ctx context.Context) error {
 		close(shutdownDone)
 	}()
 
+	// 监听来源有二（P115 零停机）：
+	// ① systemd socket activation——端口由 systemd 持有，进程从 LISTEN_FDS 继承 fd
+	//    （activation.Listeners 自己核对 LISTEN_PID，不是被 systemd 拉起就返回空切片）；
+	//    升级 restart 期间 socket 不断听，新连接排在 backlog 里，不会 connection refused。
+	// ② 否则自建监听（本地开发与非 systemd 部署的回退路径，行为与改造前完全一致）。
 	// 显式建监听再 Serve：日志才能报内核实际分配的地址。SERVER_PORT=0 时 addr 里的端口是 0，
 	// 跨进程测试（test/python）从这行读回真实端口，不必再自己抢一个空闲端口——那种做法是 TOCTOU，
 	// 抢到的端口在被服务 bind 之前可能被别人用掉，两个并发构建就会撞 bind: address already in use（P9）
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("监听 %s 失败: %w", addr, err)
+	var lis net.Listener
+	if activated, aerr := activation.Listeners(); aerr != nil {
+		log.Printf("ERROR: 读取 systemd socket activation fd 失败，回退自建监听: %v", aerr)
+	} else if len(activated) > 0 {
+		lis = activated[0]
+		if len(activated) > 1 {
+			log.Printf("ERROR: systemd 传入了 %d 个 socket，只使用第一个（deploy/loomproxy.socket 只应配一个 ListenStream）", len(activated))
+		}
+		log.Printf("LoomProxy starting on %s (socket activation)", lis.Addr().String())
 	}
-	log.Printf("LoomProxy starting on %s", lis.Addr().String())
+	if lis == nil {
+		var err error
+		lis, err = net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("监听 %s 失败: %w", addr, err)
+		}
+		log.Printf("LoomProxy starting on %s", lis.Addr().String())
+	}
 
-	err = srv.Serve(lis)
-	if errors.Is(err, http.ErrServerClosed) {
+	if serveErr := srv.Serve(lis); errors.Is(serveErr, http.ErrServerClosed) {
 		// 等待优雅停机与清理（含监控明细兜底落库）完成，
 		// 否则 main 的 log.Fatal 会在清理完成前 os.Exit
 		<-shutdownDone
 		return nil
+	} else {
+		return serveErr
 	}
-	return err
 }
 
 // maintenanceBlocked 维护模式是否拦这次请求（P53②）：开着时匿名与非管理员一律拦，管理员放行。

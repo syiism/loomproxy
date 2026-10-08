@@ -1,0 +1,16 @@
+[Unit]
+Description=LoomProxy HTTP socket（零停机升级的端口持有者，待办清单 P115）
+# socket 由 systemd 持有：进程重启期间 listen backlog 不清空，
+# 新连接排在队列里而不是收到 connection refused / RST。
+
+[Socket]
+# 与 .env 的 SERVER_PORT 保持一致（默认 8081）；改端口两处都要动。
+ListenStream=8081
+NoDelay=true
+Backlog=1024
+# 服务 stop 时连同 socket 一起收（仅在显式 stop socket 时生效；
+# 升级走 `systemctl restart loomproxy.service` 不动 socket）
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target
