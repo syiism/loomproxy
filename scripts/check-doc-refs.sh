@@ -74,7 +74,12 @@ def docs_paths():
             if not f.endswith('.md') or DOC_SKIP_NAME_RE.search(f):
                 continue
             rel = os.path.join(dirpath, f)
-            if rel.replace(os.sep, '/').startswith(PLAN_DOC_DIRS) or PLAN_DOC_MARK in f:
+            r = rel.replace(os.sep, '/')
+            # 豁免认两条：**目录段**或**文件名**含「方案」。原来只认文件名，于是
+            # 「把 `方案-xxx.md` 搬进 `方案/` 并去掉前缀」这一步会把一批将来时页突然变成被核对的现状页，
+            # 报出来的还是页里那些早就存在的计划路径（`sources/fq/protocol/session.go` 那类"打算新建"的文件）。
+            # 豁免跟着命名走就是脆的——这条在同一次改动里被携带分支撞到（其待办清单 S81 同族：同一份判据两处写）。
+            if r.startswith(PLAN_DOC_DIRS) or PLAN_DOC_MARK in f or PLAN_DOC_MARK in r.split('/')[:-1]:
                 continue
             out.append(rel)
     for top in ('AGENTS.md', 'README.md'):
@@ -101,7 +106,7 @@ RUNTIME_PREFIXES = ('data/',)
 # 拿现状断言去核它们，等于要求设计文档不得提到还没写的代码（第一次跨树跑就撞到这形态）。
 # 轮次记录（归档、修复报告）已经整棵跳过，这一条是同一判据的另一种形态：**页时态不是现在的，就不判**。
 PLAN_DOC_DIRS = ('docs/方案/',)
-PLAN_DOC_MARK = '方案'   # 文件名含「方案」的两类页：`方案-数据源接入-…`、`号池方案-…`（都是将来时）
+PLAN_DOC_MARK = '方案'   # 含「方案」的页都是将来时：`方案-数据源接入-…`、`号池方案-…`，以及搬进 `方案/` 后的裸名页
 
 pkg_files = {}
 for dirpath, dirnames, filenames in os.walk('.'):
