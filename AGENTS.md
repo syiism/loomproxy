@@ -90,9 +90,10 @@
 ## 8. 弹性获取栈与环境变量
 
 - 上游请求一律经 `base.BaseHandler`：短 TTL 缓存 → singleflight → 按 host 熔断 → 过期缓存降级，代理池与 UA 轮换在 `base.Fetch` 层；不要自建 http.Client。
-- 全部配置是环境变量，权威定义在 `conf/conf.go`（含默认值）；`REDIS_*` 同时承载接口缓存与「标识→名称」命名缓存的跨重启持久化。
-- `TZ_OFFSET_HOURS` 是平台时区的**唯一值**，而「今天零点」的**唯一算法**是 `utils.DayStart(days)`——额度日界、
-  榜单窗口、趋势图日标、验证码日限、统计的今日新增全走它（`make vet` 的 `tz-check` 拦住回退，P71）。
+  **带缓存的两条通路**：GET 走 `FetchJSON`/`FetchText`；POST 走 `FetchShared(key, ttl)`，**键要含会话**
+  （换了就解不开旧正文）；`ttl<=0` 只合并不缓存。
+- 全部配置是环境变量，权威定义在 `conf/conf.go`；`REDIS_*` 同时承载接口缓存、命名缓存与 `FetchShared` 的跨进程持久化。
+- `TZ_OFFSET_HOURS` 是平台时区唯一值、「今天零点」唯一算法是 `utils.DayStart(days)`（P71，`tz-check` 拦回退）。
 - 几个容易踩的默认：`REDIS_PASSWORD` 默认空（写死默认密码会让无密码 Redis 连不上）、`MONITOR_RETENTION_DAYS` 默认 0=永久保留、`DB_TYPE` 代码默认 mysql 而 `.env.example` 默认 sqlite。
 - 详情：[`docs/架构/弹性获取栈与环境变量.md`](docs/架构/弹性获取栈与环境变量.md)
 
