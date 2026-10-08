@@ -92,6 +92,10 @@ if os.path.exists(ledger):
     def wc(path, opt):
         return int(subprocess.run(['wc', opt, path], capture_output=True, text=True).stdout.split()[0])
 
+    # AGENTS_LIMIT 的唯一落点在这里：台账 rule 2 那句「AGENTS.md > 30KB」的机器形态。
+    # 分档后两棵树共用这一个数——携带树量的是同源部分，见下面那段注释。
+    AGENTS_LIMIT = 30 * 1024
+
     real_index = (wc('docs/规范/已收口索引.md', '-l'),
                   len(re.findall(r'^\| P\d+\b', open('docs/规范/已收口索引.md', encoding='utf-8').read(), re.M)))
     real_todo = (wc('docs/规范/待办清单.md', '-l'),
@@ -104,8 +108,27 @@ if os.path.exists(ledger):
     # 分支那一格因此退回量法（`wc -c AGENTS.md` + S61），这里**出声说明不核**，不静默跳过。
     agents_txt = open('AGENTS.md', encoding='utf-8').read()
     if '本分支与骨架的差异' in agents_txt:
-        print('AGENTS 体量这一项在携带分支树上不核（分支侧只按 `wc -c AGENTS.md` 量；'
-              '理由：§0 锚点每次 merge 都改，那个数无法在共用页上维持为真）。')
+        # 案 A（维护者 2026-10-08 拍：阈值按树分档）。携带树上核的不是全文，而是
+        # 「与骨架同源的那一部分」= 全文 − §0 那一节：
+        #   · 随每次 merge 漂移的是同源部分（骨架改了 §5~§13，分支就得跟着走）；
+        #   · §0 是分支自有文本，把它算进同一条线，等于让「分支存在」这件事本身常驻超线——
+        #     上一版因此只能出声说明不核，那条线在携带树上不说话（比不设线更坏）。
+        # 分档之后这条线重新拦得住东西：把同源长段留在分支树上，红的是这里，不是下次合并的冲突。
+        m0 = re.search(r'^## 0[.]', agents_txt, re.M)
+        m1 = re.search(r'^## 1[.]', agents_txt, re.M)
+        if not (m0 and m1):
+            bad.append('AGENTS.md：携带树找不到 §0/§1 的节标题，规则④ 的分档量法在这一棵树上无从下手')
+        else:
+            own = len(agents_txt[m0.start():m1.start()].encode())
+            full = len(agents_txt.encode())
+            shared = full - own
+            if shared > AGENTS_LIMIT:
+                bad.append('AGENTS.md：携带树的同源部分 %d 字节，超阈值 %d（全文 %d − §0 %d）——'
+                           '要么把那段提回 main，要么逐字搬进 docs/ 对应页，别在分支树上留着'
+                           % (shared, AGENTS_LIMIT, full, own))
+            else:
+                print('AGENTS 体量按树分档（案 A）：携带树核同源部分 %d 字节（全文 %d − §0 %d），阈值 %d —— 在线内'
+                      % (shared, full, own, AGENTS_LIMIT))
     else:
         m_agents = re.search(r'`AGENTS\.md` \*\*(\d+) 字节\*\*', txt)
         if not m_agents:
