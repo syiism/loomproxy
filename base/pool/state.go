@@ -921,7 +921,7 @@ func (w *errWindow) reset() (rate float64, n int) {
 	return
 }
 
-// —— 用量摊薄型（KindSpread）专用路径：见待办清单 P5 与 docs/数据源/号池方案-fq_hg会话池融入.md
+// —— 用量摊薄型（KindSpread）专用路径：见待办清单 P5 与 docs/数据源/方案/号池-fq_hg会话池融入.md
 
 // acquireSpreadLocked 在**全部可用号**上轮询取一个（调用方持锁）：
 // 先把到期的冷却号放回可用、再补到目标数量（冷号转正不 Claim，缺号才建号）。
