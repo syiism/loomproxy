@@ -334,3 +334,78 @@ func TestPeekSharedReadsWithoutUpstream(t *testing.T) {
 		t.Error("没注入缓存层时不该命中")
 	}
 }
+
+// TestSetSharedRules 钉的是新端口那四条"不该写"的形状。
+//
+// 加这个端口的理由是：写入点长在传输层，而有些值只有源自己算得出来（正文 v2 的章级键，
+// 见携带形态待办清单 S89）。端口一旦开出来，"什么不许写"就必须与 `FetchShared` 同一条判定——
+// 分两处写迟早漂，而漂的形状是"一条路写得进、另一路读不出"。
+func TestSetSharedRules(t *testing.T) {
+	h := &BaseHandler{}
+	cache := newMemCache()
+	SetSharedCache(cache)
+	t.Cleanup(func() { SetSharedCache(nil) })
+
+	if !h.SetShared(context.Background(), "k:ok", []byte("v"), time.Minute) {
+		t.Fatal("正常一格没写进去（端口本身没通）")
+	}
+	if v, ok := cache.Get("k:ok"); !ok || string(v) != "v" {
+		t.Errorf("读回的不是写进去的那格: ok=%v v=%q", ok, v)
+	}
+	if got := cache.ttl["k:ok"]; got != time.Minute {
+		t.Errorf("TTL 没传给这一格: %v（要逐条 TTL，不是全局 CACHE_TTL）", got)
+	}
+
+	// 四条不许写的：空键、空值、ttl<=0、键超长。每条都该返回 false 且不占集合。
+	setsBefore := cache.sets.Load()
+	bad := []struct {
+		name string
+		key  string
+		val  string
+		ttl  time.Duration
+	}{
+		{"空键", "", "v", time.Minute},
+		{"空值", "k:empty", "", time.Minute},
+		{"ttl=0（只合并不缓存那一档）", "k:zero", "v", 0},
+		{"ttl 为负", "k:neg", "v", -time.Minute},
+		{"键超长", strings.Repeat("k", maxSharedCacheKeySize+1), "v", time.Minute},
+	}
+	for _, b := range bad {
+		if h.SetShared(context.Background(), b.key, []byte(b.val), b.ttl) {
+			t.Errorf("%s：该拒的没拒（返回了 true）", b.name)
+		}
+	}
+	if n := cache.sets.Load() - setsBefore; n != 0 {
+		t.Errorf("四条该拒的形状里有 %d 次落到了 Set()——判定漏在计数之前", n)
+	}
+
+	// 未注入缓存层：不能 panic，也不能装作写成了。
+	SetSharedCache(nil)
+	if h.SetShared(context.Background(), "k:noengine", []byte("v"), time.Minute) {
+		t.Error("没有缓存层却报写成功了——调用方会以为这一格已落地")
+	}
+}
+
+// TestFetchSharedAndSetSharedAgreeOnTTLZero 是同一处判定的正面验证：
+// `ttl<=0` 在两条路上都必须"只合并、不缓存"，不许一条写一条不写。
+func TestFetchSharedAndSetSharedAgreeOnTTLZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("payload"))
+	}))
+	t.Cleanup(srv.Close)
+
+	h := &BaseHandler{}
+	cache := newMemCache()
+	SetSharedCache(cache)
+	t.Cleanup(func() { SetSharedCache(nil) })
+
+	if _, _, err := h.FetchShared(context.Background(), srv.URL, "GET", nil, nil, "k:merge-only", 0, nil); err != nil {
+		t.Fatalf("ttl=0 那一档仍要取到上游: %v", err)
+	}
+	if _, ok := cache.Get("k:merge-only"); ok {
+		t.Error("FetchShared 在 ttl=0 时写了缓存（那一档的语义是只合并）")
+	}
+	if h.SetShared(context.Background(), "k:merge-only", []byte("payload"), 0) {
+		t.Error("SetShared 在 ttl=0 时写了缓存——两条路对同一档给出了不同答案")
+	}
+}

@@ -96,9 +96,13 @@ const (
 	// nameCacheCap 单类缓存的最大条目数。按每本书记一章的读法，2 万条足够覆盖
 	// 一个进程生命周期内的活跃内容；超了按 FIFO 淘汰最老的。
 	nameCacheCap = 20000
-	// nameCacheTTL 名称的有效期：书名/章节名几乎不变，但缓存不该无限长大，
+	// NameCacheTTL 名称的有效期：书名/章节名几乎不变，但缓存不该无限长大，
 	// 隔一段时间自然过期，也让改了名的书能被刷新。
-	nameCacheTTL = 24 * time.Hour
+	//
+	// **这一份是正本，跨进程那一层（`app/subject_store.go`）引用它，不要自己再写一个数**：
+	// 先前两处各写 24 小时、注释还写着"与进程内同量级"——同一份事实两处写，一边改了另一边不会红
+	// （待办清单 P113①；与 §5「同一个判据在三个包各写一份」同族）。
+	NameCacheTTL = 24 * time.Hour
 )
 
 type namedEntry struct {
@@ -157,7 +161,7 @@ func (c *nameCache) get(key string) namedEntry {
 	if !ok {
 		return namedEntry{}
 	}
-	if time.Since(e.at) > nameCacheTTL {
+	if time.Since(e.at) > NameCacheTTL {
 		delete(c.m, key)
 		return namedEntry{}
 	}

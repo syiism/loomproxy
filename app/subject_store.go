@@ -28,10 +28,14 @@ import (
 // 读失败一律当未命中：猜一个名字比留空更糟。
 
 const (
-	subjectKeyPrefix   = "loomproxy:subject:"
-	subjectStoreTTL    = 24 * time.Hour // 与进程内 TTL 同量级：名称几乎不变，也要能跟着改名刷新
-	subjectWriteQueue  = 32768          // 队列宁大不丢：丢的是跨重启的完整度，内存里仍有一份
-	subjectWriteBatch  = 512            // 一次 pipeline 多塞几条——瓶颈是 RTT 不是条数
+	subjectKeyPrefix = "loomproxy:subject:"
+	// subjectStoreTTL **不是这里的一个数，是 `base.NameCacheTTL` 的别名**：
+	// 进程内与跨进程两层必须同一个有效期，否则"内存里还没过期、Redis 里已经没了"这种
+	// 半更新态会长期存在，而它的症状是"名称完整度莫名其妙"（待办清单 P113①）。
+	// 留个别名而不是把三处直接用 base.NameCacheTTL，是为了这一页读起来还是一份本地常量表。
+	subjectStoreTTL    = base.NameCacheTTL
+	subjectWriteQueue  = 32768 // 队列宁大不丢：丢的是跨重启的完整度，内存里仍有一份
+	subjectWriteBatch  = 512   // 一次 pipeline 多塞几条——瓶颈是 RTT 不是条数
 	subjectFlushEvery  = 200 * time.Millisecond
 	subjectExecTimeout = 3 * time.Second        // Redis 卡住时不能把写协程钉死：超时算这一批失败
 	subjectReadTimeout = 300 * time.Millisecond // 读在请求路径上：宁可当没命中，也不拖慢调用

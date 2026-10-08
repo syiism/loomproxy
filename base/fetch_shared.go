@@ -105,10 +105,10 @@ func (h *BaseHandler) FetchShared(ctx context.Context, url string, method string
 			return nil, rerr
 		}
 		b := append([]byte(nil), buf.Bytes()...)
-		worthCaching := resp.StatusCode >= 200 && resp.StatusCode < 300 && len(b) > 0 &&
+		worthCaching := resp.StatusCode >= 200 && resp.StatusCode < 300 &&
 			(cacheIf == nil || cacheIf(b))
-		if worthCaching && ttl > 0 && sc != nil {
-			sc.Set(cacheKey, b, ttl)
+		if worthCaching {
+			sharedCachePut(sc, cacheKey, b, ttl)
 		}
 		return cachedResult{body: b, status: resp.StatusCode}, nil
 	})
@@ -129,6 +129,47 @@ func (h *BaseHandler) FetchShared(ctx context.Context, url string, method string
 type cachedResult struct {
 	body   []byte
 	status int
+}
+
+// sharedCachePut 是"往跨进程缓存写一格"的唯一一处判定。
+//
+// 抽出来是因为判定有两条通路要用它（`FetchShared` 的写、`SetShared` 的写），
+// 而"同一份规则在两处各写一遍"正是会漂的那种形状（待办清单 S81 那一族）：
+// 一处放宽、另一处不变，症状就是同一键在两条路上给出不同答案。
+//
+// 四条都不写时返回 false 而不是报错——**缓存不是正确性的承担者**，
+// 写不进去的最坏结果是多打一发上游；但调用方**要检查这个返回值**，
+// 静默的 false 等于"这一格根本没落地"，而"填了没生效没人说"是本仓明令禁止的形状。
+func sharedCachePut(sc SharedCache, cacheKey string, val []byte, ttl time.Duration) bool {
+	if sc == nil || cacheKey == "" || ttl <= 0 || len(val) == 0 {
+		return false
+	}
+	// 键里可能有调用方从请求参数抄进来的片段：边界在入口，不在猜的那一层。
+	if len(cacheKey) > maxSharedCacheKeySize {
+		return false
+	}
+	sc.Set(cacheKey, val, ttl)
+	return true
+}
+
+// maxSharedCacheKeySize 是跨进程缓存键的长度上限。
+// 键由调用方拼，而有些段来自客户端（章节标识、书名一类的）——不设上限就等于
+// 让调用方拿 Redis 键空间当免费存储，且这些键一旦写进去要到过期才走。
+const maxSharedCacheKeySize = 512
+
+// SetShared 把一格**由调用方算出来的值**写进同一层跨进程缓存。
+//
+// 为什么要有它——`FetchShared` 的写入点长在传输层，存的只能是**上游原始字节**；
+// 而有些值只有源自己算得出来。携带形态的正文缓存 v2（其待办清单 S89）要存的是
+// 「上游原样的密文信封 + 那一次派生出的章级键」：那把键是解密那一刻才存在的东西，
+// 传输层既不认识、也不该认识。让源去开一层自己的缓存就是长出第二条缓存通路
+// （§8 那条「上游请求一律经 BaseHandler」的反面），所以这里补一个端口：
+// **层与判定仍然只有一份**，多出来的只是"由调用方写"这个入口。
+//
+// 语义与 `FetchShared`/`PeekShared` 逐条对齐（`ttl <= 0` 不写、未注入缓存层不写、空值不写）——
+// 三条里任何一条在两处写法不同，同一格就会出现"一条路写得进、另一路读不出"的分裂。
+func (h *BaseHandler) SetShared(_ context.Context, cacheKey string, val []byte, ttl time.Duration) bool {
+	return sharedCachePut(loadSharedCache(), cacheKey, val, ttl)
 }
 
 // PeekShared 只读地问一句"这一键在不在"：不合并、不打上游、不刷新 TTL。
