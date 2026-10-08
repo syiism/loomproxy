@@ -254,11 +254,60 @@ func (h *BaseHandler) Handle(ctx context.Context, params map[string]interface{})
 	return nil, errors.New("not implemented")
 }
 
+// maxRequestBodySize 是骨架替调用方缓冲的请求体上限。签名类源的信封都在 KB 量级，
+// 超这个数的不是正常请求；宁可报错，不发一个被截断的体出去让上游回"签名不对"。
+const maxRequestBodySize int64 = 1 << 20 // 1MB
+
+// newReplayableRequest 是 Fetch 的请求装配：**body 先读进内存**。
+//
+// 为什么要这一层：调用方给的几乎总是 `strings.NewReader(body)`，`client.Do` 一次就把它消费掉；
+// 而带代理池的那条路上，"第一发网络错误 → 换代理/回退直连再发一次"是同一段代码里的第二次 Do。
+// 第二次发出的是**空 body**——上游回"缺参数/签名不符"，读起来却像上游拒绝了我们的签名。
+// 2026-10-08 在携带形态上撞到的正是这个形状（纸间是 POST + 每次重算信封）。
+func newReplayableRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
+	var buf []byte
+	if body != nil {
+		b, err := io.ReadAll(io.LimitReader(body, maxRequestBodySize+1))
+		if err != nil {
+			return nil, NewUpstreamError(http.StatusBadRequest, "读取请求体失败", err)
+		}
+		if int64(len(b)) > maxRequestBodySize {
+			return nil, NewUpstreamError(http.StatusRequestEntityTooLarge, "请求体超出缓冲上限", nil)
+		}
+		buf = b
+	}
+	var rdr io.Reader // 无体的请求保持 Body=nil：给个零长 reader 会让某些上游把 GET 当 POST 判
+	if body != nil {
+		rdr = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
+	if err != nil {
+		return nil, err
+	}
+	// 不自己写 GetBody：`http.NewRequest` 对 *bytes.Reader 会挂上它，restartBody 用的就是那一个。
+	// 这个隐式依赖由用例钉着（TestReplayableRequestRestartsBody 断言 GetBody 非空）——
+	// 换成不可重放的体形态时，红的是那条用例，不是线上第一次代理重试。
+	return req, nil
+}
+
+// restartBody 把请求体倒回起点，供重试那一发使用。GetBody 不在（无体的请求）就是 no-op。
+func restartBody(req *http.Request) error {
+	if req.GetBody == nil {
+		return nil
+	}
+	b, err := req.GetBody()
+	if err != nil {
+		return err
+	}
+	req.Body = b
+	return nil
+}
+
 func (h *BaseHandler) Fetch(ctx context.Context, url string, method string, headers map[string]string, body io.Reader) (*http.Response, error) {
 	if method == "" {
 		method = "GET"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	req, err := newReplayableRequest(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +354,10 @@ func (h *BaseHandler) Fetch(ctx context.Context, url string, method string, head
 		if p2 := pickProxyExcluding(failed); p2 != "" {
 			client = clientForProxy(p2)
 			proxyUsed = p2
+		}
+		// 第一发已经把 body 消费掉了：不倒回去的话，重试那一次发的是空体
+		if rerr := restartBody(req); rerr != nil {
+			return nil, rerr
 		}
 		resp, err = client.Do(req)
 	}
