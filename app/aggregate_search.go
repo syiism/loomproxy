@@ -21,6 +21,7 @@ import (
 
 	"loomproxy/base"
 	"loomproxy/base/legado"
+	"loomproxy/conf"
 	"loomproxy/gate"
 	"loomproxy/middleware"
 	mws "loomproxy/middleware/source"
@@ -33,8 +34,8 @@ const (
 	// 但它必须存在：没有上限时一个挂死的源会把整条聚合拖到下游自己超时，
 	// 而那时调用方看到的是一句「搜索失败」，不是「某个源没回」。
 	aggregateTargetTimeout = 20 * time.Second
-	// aggregateConcurrency 同时在飞的源数上限。聚合请求把 1 条变 N 条上游调用，
-	// 不设闸的话几个并发用户就能把某个源的连接池占满——那是拿别人的额度给自己开路。
+	// aggregateConcurrency 是**每个源**同时在飞的上限（默认值；可用
+	// `AGGREGATE_PER_SOURCE_MAX` 覆盖）。跨请求共享，见下面 aggregateAcquire 那段。
 	aggregateConcurrency = 4
 )
 
@@ -51,6 +52,7 @@ const (
 	aggHandlerMissing  = "handler_missing"
 	aggUnsafeBaseURL   = "unsafe_base_url"
 	aggUpstreamFailed  = "upstream_failed"
+	aggCanceled        = "canceled"         // 客户端在排队阶段就走了：这一源根本没碰上游，不能算 upstream_failed
 	aggInternalFailure = "internal_failure" // 源自己 panic：详情只进服务端日志
 )
 
@@ -104,15 +106,23 @@ func runAggregateSearch(c *gin.Context, routeSource, action string, routeParams 
 	statuses := make([]string, len(targets))
 	results := make([]interface{}, len(targets))
 	targetErrs := make([]error, len(targets))
-	sem := make(chan struct{}, aggregateConcurrency)
 	var wg sync.WaitGroup
 
 	for i, name := range targets {
 		wg.Add(1)
 		go func(i int, name string) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			// 闸是**按源、跨请求**的（待办清单 P110 的①）：原来这道 `sem` 建在每个请求里，
+			// 挡得住"一个请求同时打 8 个源"，挡不住"N 个用户各发一个聚合请求打同一个源"——
+			// 而旁边那句注释写的威胁本来就是跨请求的，注释与实现差了整整一层。
+			// 排队而非拒绝：聚合的语义就是"能回多少回多少"；但客户端已经走了就别替它等。
+			release, aerr := aggregateAcquire(c.Request.Context(), name)
+			if aerr != nil {
+				statuses[i] = aggCanceled
+				targetErrs[i] = aerr
+				return
+			}
+			defer release()
 
 			res, status, callErr := runAggregateTarget(c, name, action, uid, caller, query, routeParams, routeSource == name)
 			statuses[i] = status
@@ -256,4 +266,44 @@ func callSourceHandler(ctx context.Context, handler base.Handler, params map[str
 		}
 	}()
 	return handler.Handle(ctx, params)
+}
+
+// ---------------------------------------------------------------------------
+// 按源的在飞闸门（跨请求共享）
+// ---------------------------------------------------------------------------
+
+var (
+	aggregateGateMu    sync.Mutex
+	aggregateGateCache = map[string]chan struct{}{}
+)
+
+// aggregateConcurrencyNow 每次取闸门时读一遍上限，改配置后新出现的源就用新值；
+// 已经建好的闸门不重建（重建等于把在飞的那几发放回自由）。
+func aggregateConcurrencyNow() int {
+	if conf.Config != nil && conf.Config.AggregatePerSourceMax > 0 {
+		return conf.Config.AggregatePerSourceMax
+	}
+	return aggregateConcurrency
+}
+
+func aggregateGate(source string) chan struct{} {
+	aggregateGateMu.Lock()
+	defer aggregateGateMu.Unlock()
+	if g, ok := aggregateGateCache[source]; ok {
+		return g
+	}
+	g := make(chan struct{}, aggregateConcurrencyNow())
+	aggregateGateCache[source] = g
+	return g
+}
+
+// aggregateAcquire 取一枚该源的在飞许可；ctx 取消立刻回错误，不替已走的客户端排队。
+func aggregateAcquire(ctx context.Context, source string) (func(), error) {
+	g := aggregateGate(source)
+	select {
+	case g <- struct{}{}:
+		return func() { <-g }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }

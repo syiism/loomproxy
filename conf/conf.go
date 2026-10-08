@@ -100,6 +100,9 @@ type ConfMgr struct {
 	// 热号到期前多少秒续领（领取叠加无损耗）
 	PoolRenewBeforeSec int
 	PoolHookTimeoutSec int
+	// AggregatePerSourceMax 是聚合搜索**每个源**同时在飞的上限（跨请求共享，0/负数按默认 4）。
+	// 待办清单 P110：原来那道闸建在每个请求里，挡不住"N 个用户各发一个聚合请求打同一个源"。
+	AggregatePerSourceMax int
 	// 维护协程巡检间隔（秒）
 	PoolMaintainSec int
 
@@ -295,13 +298,14 @@ func Load() {
 		AdminUsername: envStr("ADMIN_USERNAME", ""),
 		AdminPassword: envStr("ADMIN_PASSWORD", ""),
 
-		PoolEnabled:        envBool("POOL_ENABLED", true),
-		PoolColdSpares:     envInt("POOL_COLD_SPARES", 2),
-		PoolMaxHot:         envInt("POOL_MAX_HOT", 3),
-		PoolMaxDead:        envInt("POOL_MAX_DEAD", 10),
-		PoolRenewBeforeSec: envInt("POOL_RENEW_BEFORE_SEC", 300),
-		PoolHookTimeoutSec: envInt("POOL_HOOK_TIMEOUT_SEC", 30),
-		PoolMaintainSec:    envInt("POOL_MAINTAIN_SEC", 60),
+		PoolEnabled:           envBool("POOL_ENABLED", true),
+		PoolColdSpares:        envInt("POOL_COLD_SPARES", 2),
+		PoolMaxHot:            envInt("POOL_MAX_HOT", 3),
+		PoolMaxDead:           envInt("POOL_MAX_DEAD", 10),
+		PoolRenewBeforeSec:    envInt("POOL_RENEW_BEFORE_SEC", 300),
+		PoolHookTimeoutSec:    envInt("POOL_HOOK_TIMEOUT_SEC", 30),
+		AggregatePerSourceMax: envInt("AGGREGATE_PER_SOURCE_MAX", 4),
+		PoolMaintainSec:       envInt("POOL_MAINTAIN_SEC", 60),
 
 		RetiredSources: envList("RETIRED_SOURCES", ""),
 	}
