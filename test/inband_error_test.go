@@ -7,6 +7,7 @@ package test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,6 +112,33 @@ func TestInBandErrorEndToEnd(t *testing.T) {
 		}
 	}
 	t.Fatal("环形缓冲里没有 fake_b/content 的明细")
+}
+
+// TestInBandErrorScrubbedAtOutlet 钉住分支 S55 的前提：带内错误正文里内嵌完整请求 URL
+// （`*url.Error` 的默认文案，签名站会带出 app_key/sign 一类参数）时，**骨架出口 `scrubInBandMsg`
+// 确实接得住**——响应里只剩通用文案。这条绿之后，shuqi/qimao 各自手写的 `sanitizeURLErr`
+// 才是可删的冗余（同一判据两处实现会漂移；「先有接得住的用例，再删当前有效的防护」）。
+// 文案与 URL 都是编造的：真实签名参数不进仓库（AGENTS §11）。
+func TestInBandErrorScrubbedAtOutlet(t *testing.T) {
+	srv := newTestServer(t)
+
+	up := staticUpstream(t, `{"contentType":"error","data":{"message":"Get \"https://fake-upstream.example/ep?app_key=FAKEKEY&sign=FAKESIGN\": EOF"}}`)
+	setPlatformUpstream(t, "fake_b", up.URL)
+
+	admin := authHeader(adminToken(t, srv))
+	status, raw := doRaw(t, srv, http.MethodGet, "/fake_b/content?bookId=b1&itemId=i1", nil, admin)
+	body := string(raw)
+	if status != http.StatusOK {
+		t.Fatalf("带内错误应仍以 200 出下游，实为 %d（body=%s）", status, body)
+	}
+	for _, leak := range []string{"app_key", "sign", "FAKEKEY", "FAKESIGN", "://", "fake-upstream.example"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("带内错误正文泄漏了 %q：body=%q", leak, body)
+		}
+	}
+	if !strings.Contains(body, "上游请求失败，请稍后重试") {
+		t.Fatalf("message 应被换成通用文案，实为 body=%q", body)
+	}
 }
 
 // TestCoverageCountsInBandError 覆盖率表要能数到带内失败：一格不满到底是因为
