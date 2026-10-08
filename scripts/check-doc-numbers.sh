@@ -95,6 +95,9 @@ if os.path.exists(ledger):
     # AGENTS_LIMIT 的唯一落点在这里：台账 rule 2 那句「AGENTS.md > 30KB」的机器形态。
     # 分档后两棵树共用这一个数——携带树量的是同源部分，见下面那段注释。
     AGENTS_LIMIT = 30 * 1024
+    # CARRY_EXTRA_BUDGET 是口径、不是读数：允许分支在 §1~§13 里写多少自有句子。
+    # 0.5KB 够放三句许可与推送边界那种长度的补充，又不足以让一段骨架长文本蒙混进去。
+    CARRY_EXTRA_BUDGET = 512
 
     real_index = (wc('docs/规范/已收口索引.md', '-l'),
                   len(re.findall(r'^\| P\d+\b', open('docs/规范/已收口索引.md', encoding='utf-8').read(), re.M)))
@@ -108,27 +111,38 @@ if os.path.exists(ledger):
     # 分支那一格因此退回量法（`wc -c AGENTS.md` + S61），这里**出声说明不核**，不静默跳过。
     agents_txt = open('AGENTS.md', encoding='utf-8').read()
     if '本分支与骨架的差异' in agents_txt:
-        # 案 A（维护者 2026-10-08 拍：阈值按树分档）。携带树上核的不是全文，而是
-        # 「与骨架同源的那一部分」= 全文 − §0 那一节：
-        #   · 随每次 merge 漂移的是同源部分（骨架改了 §5~§13，分支就得跟着走）；
-        #   · §0 是分支自有文本，把它算进同一条线，等于让「分支存在」这件事本身常驻超线——
-        #     上一版因此只能出声说明不核，那条线在携带树上不说话（比不设线更坏）。
-        # 分档之后这条线重新拦得住东西：把同源长段留在分支树上，红的是这里，不是下次合并的冲突。
+        # 案 A（维护者 2026-10-08 拍：阈值按树分档）。携带树上核的**不是绝对体量**，而是
+        # **「分支往与骨架同源的章节里添了多少」**：
+        #     delta = (全文 − §0 那一节) − 基线 tag 上的 AGENTS 全文
+        # 为什么不是绝对数：上一版那么写，第一次跑就红在携带树上——超的那 268 字节不是
+        # "分支留了一段骨架长文本"，而是分支在 §11/§12/头部补的三句许可与推送边界，
+        # 那些**本来就该在携带树上**。绝对阈值会把它误判成违规，而误判的门禁第二次就被无视。
+        # 骨架自己长多少不该由这条线管（那是 main 的 §5~§13，它有自己的那一格），
+        # 这条线只管"分支在共用章节里加戏"——所以拿基线 tag 当尺子，不拿一个手抄的数。
         m0 = re.search(r'^## 0[.]', agents_txt, re.M)
         m1 = re.search(r'^## 1[.]', agents_txt, re.M)
-        if not (m0 and m1):
-            bad.append('AGENTS.md：携带树找不到 §0/§1 的节标题，规则④ 的分档量法在这一棵树上无从下手')
+        mtag = re.search(r'git diff (skeleton-v\d+)\.\.\.HEAD', agents_txt)
+        if not (m0 and m1 and mtag):
+            bad.append('AGENTS.md：携带树找不到 §0/§1 的节标题或 §0 里的基线 tag，'
+                       '规则④ 的分档量法在这一棵树上无从下手（§0 那条命令要维持 `git diff skeleton-vNN...HEAD` 的形状）')
         else:
             own = len(agents_txt[m0.start():m1.start()].encode())
-            full = len(agents_txt.encode())
-            shared = full - own
-            if shared > AGENTS_LIMIT:
-                bad.append('AGENTS.md：携带树的同源部分 %d 字节，超阈值 %d（全文 %d − §0 %d）——'
-                           '要么把那段提回 main，要么逐字搬进 docs/ 对应页，别在分支树上留着'
-                           % (shared, AGENTS_LIMIT, full, own))
+            carry = len(agents_txt.encode()) - own
+            base = subprocess.run(['git', 'show', '%s^{commit}:AGENTS.md' % mtag.group(1)],
+                                  capture_output=True).stdout
+            if not base:
+                bad.append('AGENTS.md：基线 tag %s 上取不到 AGENTS.md，分档量法失去尺子' % mtag.group(1))
             else:
-                print('AGENTS 体量按树分档（案 A）：携带树核同源部分 %d 字节（全文 %d − §0 %d），阈值 %d —— 在线内'
-                      % (shared, full, own, AGENTS_LIMIT))
+                delta = carry - len(base)
+                if delta > CARRY_EXTRA_BUDGET:
+                    bad.append('AGENTS.md：分支在共用章节里添了 %d 字节（携带树同源 %d − 基线 %s 的 %d），'
+                               '超过预算 %d——要么提回 main，要么搬进 §0 或 docs/数据源/ 对应页'
+                               % (delta, carry, mtag.group(1), len(base), CARRY_EXTRA_BUDGET))
+                else:
+                    print('AGENTS 体量按树分档（案 A）：携带树同源 %d 字节（全文 %d − §0 %d），'
+                          '基线 %s 的 AGENTS 是 %d 字节，分支在共用章节添了 %d 字节，预算 %d —— 在预算内'
+                          % (carry, len(agents_txt.encode()), own, mtag.group(1), len(base),
+                             delta, CARRY_EXTRA_BUDGET))
     else:
         m_agents = re.search(r'`AGENTS\.md` \*\*(\d+) 字节\*\*', txt)
         if not m_agents:
