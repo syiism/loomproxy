@@ -23,6 +23,13 @@ type SharedCache interface {
 	Set(key string, val []byte, ttl time.Duration)
 }
 
+// ResponseFilter 是调用方对「这一份响应值不值得进缓存」的判定。
+//
+// 为什么要有它而不让骨架自己判：**骨架不认识任何一个源的成功形状**。
+// 信封站（业务码在 body 里、HTTP 恒 200）与状态码站（4xx/5xx 就是失败）是两类判法，
+// 把任何一类写死进骨架，另一类就会把失败当成功存起来。
+type ResponseFilter func(body []byte) bool
+
 // 存法用互斥而不是 atomic.Value：**atomic.Value 要求每次存的具体类型一致**，
 // 而这里天生要往同一个槽里放「适配器」与「清空用的哨兵」两种类型——
 // 第一版那么写，用例一 cleanup 就 panic（`store of inconsistently typed value`）。
@@ -60,11 +67,15 @@ func loadSharedCache() SharedCache {
 //     解它要用当时那枚会话的键，所以键里要带 sessionID；换了会话还复用旧条目就是解不开，
 //     而不是"读到旧正文"。
 //   - `ttl <= 0` = 只合并、不缓存（想省上游但不想留内容面就用这一档）。
-//   - 只有 **2xx 且非空**的响应会写缓存；401/403/5xx 与任何错误都不写——
-//     否则一次风控拒绝会被缓存成"这本书读不了"（同族：S54「超限报错而不是截断」，
-//     坏结果一旦进缓存就比没有缓存更难看）。
+//   - 进缓存的门槛：**2xx 且非空，且 `cacheIf` 认可**（传 nil 就只看前两条）。
+//     为什么状态码不够——**信封站的业务失败照样回 HTTP 200**，`{code:4001}` 那种坏信封
+//     一旦进缓存，就等于替上游把"这一章读不了"钉满整个 TTL。这条不是推演：
+//     2026-10-08 携带形态实测，一枚业务失败被同章的后续 15 个请求命中、每个 2ms 返回，
+//     而它们本该各自重试上游。成功与否只有调用方读得懂（它认识那个信封），所以判定交给调用方。
+//     （同族：S54「超限要报错不要截断」——坏结果进缓存比没有缓存更难看。）
 func (h *BaseHandler) FetchShared(ctx context.Context, url string, method string,
-	headers map[string]string, body io.Reader, cacheKey string, ttl time.Duration) ([]byte, int, error) {
+	headers map[string]string, body io.Reader, cacheKey string, ttl time.Duration,
+	cacheIf ResponseFilter) ([]byte, int, error) {
 
 	if cacheKey == "" {
 		return nil, 0, NewUpstreamError(http.StatusInternalServerError, "FetchShared 需要显式 cacheKey", nil)
@@ -94,7 +105,9 @@ func (h *BaseHandler) FetchShared(ctx context.Context, url string, method string
 			return nil, rerr
 		}
 		b := append([]byte(nil), buf.Bytes()...)
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 && len(b) > 0 && ttl > 0 && sc != nil {
+		worthCaching := resp.StatusCode >= 200 && resp.StatusCode < 300 && len(b) > 0 &&
+			(cacheIf == nil || cacheIf(b))
+		if worthCaching && ttl > 0 && sc != nil {
 			sc.Set(cacheKey, b, ttl)
 		}
 		return cachedResult{body: b, status: resp.StatusCode}, nil
