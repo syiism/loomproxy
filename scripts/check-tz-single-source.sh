@@ -17,8 +17,10 @@ set -euo pipefail
 
 cd "${PRECHECK_SCAN_ROOT:-$(dirname "$0")/..}"  # 预检携带分支时由 precheck-branch.sh 指到分支树，默认仍是本仓根
 
-# 只扫 .go，排除测试（测试里为了验证口径会故意造时区）、前端产物、以及携带形态的源目录
-files=$(find . -name '*.go' -not -name '*_test.go' -not -path './web/*' -not -path './sources/*' | sort)
+# 只扫 .go，排除测试（测试里为了验证口径会故意造时区）、前端产物、携带形态的源目录，
+# 以及**点目录**——`.qoder/worktrees/` 里的并行 worktree 会塞进整份副本，`go ./...` 本来就无视它们；
+# 不排除的话别人的在飞分支会让全仓所有人的 `make build` 第一条就红。
+files=$(find . -name '*.go' -not -path './.*' -not -name '*_test.go' -not -path './web/*' -not -path './sources/*' | sort)
 
 hits=$(grep -n -E 'FixedZone\(|time\.Local|utils\.TZShanghai\(' $files \
   | grep -v '^./utils/norm.go:' || true)
