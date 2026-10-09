@@ -690,7 +690,10 @@ func (p *Pool) createColdLocked() (*models.PoolDevice, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := &models.PoolDevice{Pool: p.Name(), Ident: dev.Ident, Status: StatusCold, Attrs: encodeAttrs(dev.Attrs)}
+	// dev.Payload 随建行落库：Provider 的 Create 在框架持锁路径里，它自己不能调 UpdatePayload
+	// （同一把非重入锁，纸间槽位池 2026-10-09 用它撞出过自死锁）。凭证型池不必再各自找补写时机。
+	row := &models.PoolDevice{Pool: p.Name(), Ident: dev.Ident, Status: StatusCold,
+		Attrs: encodeAttrs(dev.Attrs), Payload: string(dev.Payload)}
 	if err := db.DB.Create(row).Error; err != nil {
 		return nil, err
 	}
