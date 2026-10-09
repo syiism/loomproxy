@@ -1,30 +1,29 @@
 [Unit]
-Description=LoomProxy - 小说书源 API 聚合代理
-After=network-online.target loomproxy.socket
-Wants=network-online.target
+Description=LoomProxy Service
+After=network.target mysql.service redis-server.service loomproxy.socket
 # socket activation（P115 零停机）：端口由 loomproxy.socket 持有，进程从 systemd 接过 fd。
-# 回退老形态（进程自己 bind）：删掉下面这行 Requires、删 loomproxy.socket 的启用即可，
+# 回退老形态（进程自己 bind）：删 Requires 行与 After 里的 loomproxy.socket、disable socket 即可，
 # 代码里 activation.Listeners 拿不到 fd 会自动回退 net.Listen。
 Requires=loomproxy.socket
 
 [Service]
 Type=simple
-# 部署目录内含：loomproxy-go 二进制、.env、data/、favicon.svg
-WorkingDirectory=/opt/loomproxy
-ExecStart=/opt/loomproxy/loomproxy-go
-Restart=on-failure
+# 线上实态（hk：/www/go_project/loomproxy，二进制名 loomproxy；本文件与 /etc/systemd/system/loomproxy.service 保持一致）
+WorkingDirectory=/www/go_project/loomproxy
+ExecStart=/www/go_project/loomproxy/loomproxy
+Restart=always
 RestartSec=3
+StandardOutput=journal
+StandardError=journal
 
-# 优雅停机：服务处理 SIGTERM，内部 15s Shutdown（在途请求处理完）+ 清理与监控明细落库，
-# 留足余量再 SIGKILL；30s 是在途请求上限（P115）
+# 优雅停机：SIGTERM → 内部 15s Shutdown（在途请求处理完）→ 清理与监控明细落库；
+# 30s 是在途请求上限，超过才 SIGKILL（P115）
 TimeoutStopSec=30
 
-LimitNOFILE=65536
+# === 安全加固 ===
+User=loomproxy
+Group=loomproxy
 NoNewPrivileges=true
-
-# 如需非 root 运行，取消注释并 chown -R loomproxy /opt/loomproxy：
-# User=loomproxy
-# Group=loomproxy
 
 [Install]
 WantedBy=multi-user.target
