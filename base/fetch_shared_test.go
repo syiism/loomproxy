@@ -13,11 +13,12 @@ import (
 )
 
 type memCache struct {
-	mu   sync.Mutex
-	m    map[string]string
-	ttl  map[string]time.Duration
-	gets atomic.Int64
-	sets atomic.Int64
+	mu      sync.Mutex
+	m       map[string]string
+	ttl     map[string]time.Duration
+	gets    atomic.Int64
+	sets    atomic.Int64
+	touches atomic.Int64
 }
 
 func newMemCache() *memCache {
@@ -38,6 +39,21 @@ func (c *memCache) Set(key string, val []byte, ttl time.Duration) {
 	defer c.mu.Unlock()
 	c.m[key] = string(val)
 	c.ttl[key] = ttl
+}
+
+// Touch 与端口逐条对齐：只续已存在的格，不新建。
+// （把这里改成"顺手新建一格"，TestTouchNeverCreates 会红。）
+func (c *memCache) Touch(key string, ttl time.Duration) {
+	if ttl <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.m[key]; !ok {
+		return
+	}
+	c.ttl[key] = ttl
+	c.touches.Add(1)
 }
 
 func (c *memCache) peek(t *testing.T, key string) (string, bool) {
@@ -407,5 +423,49 @@ func TestFetchSharedAndSetSharedAgreeOnTTLZero(t *testing.T) {
 	}
 	if h.SetShared(context.Background(), "k:merge-only", []byte("payload"), 0) {
 		t.Error("SetShared 在 ttl=0 时写了缓存——两条路对同一档给出了不同答案")
+	}
+}
+
+// TestSlidingTTLTouchesOnEveryHit 钉住"读命中即续期"的四条语义：
+// 未命中不 touch（touch 不是新建）；FetchShared 命中一次续一次；PeekShared 命中同样续；
+// ttl<=0 那一档既不读也不续。摘掉三处 sc.Touch 里的任何一处，对应计数就是红的起点。
+func TestSlidingTTLTouchesOnEveryHit(t *testing.T) {
+	srv, hits := sharedUpstream(t, http.StatusOK, "正文内容", 0)
+	cache := newMemCache()
+	SetSharedCache(cache)
+	t.Cleanup(func() { SetSharedCache(nil) })
+
+	h := &BaseHandler{Path: "/demo/content"}
+	key := "content:demo:slide"
+	ctx := context.Background()
+
+	if _, _, err := h.FetchShared(ctx, srv.URL, "POST", nil, nil, key, 30*time.Second, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := cache.touches.Load(); n != 0 {
+		t.Errorf("首次未命中不该 touch（touch 等于新建就是第二份写入口）：%d", n)
+	}
+	for i := 0; i < 3; i++ {
+		if _, _, err := h.FetchShared(ctx, srv.URL, "POST", nil, nil, key, 30*time.Second, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hits.Load() != 1 {
+		t.Errorf("命中不该打上游，共 %d 次", hits.Load())
+	}
+	if n := cache.touches.Load(); n != 3 {
+		t.Errorf("FetchShared 命中 3 次应续期 3 次，实际 %d", n)
+	}
+	if _, ok := h.PeekShared(ctx, key, 30*time.Second); !ok {
+		t.Fatal("PeekShared 应命中")
+	}
+	if n := cache.touches.Load(); n != 4 {
+		t.Errorf("PeekShared 命中也要续期，touches=%d", n)
+	}
+	if _, ok := h.PeekShared(ctx, key, 0); ok {
+		t.Error("ttl<=0 一律算未命中（那一档本来就不存东西）")
+	}
+	if n := cache.touches.Load(); n != 4 {
+		t.Errorf("ttl<=0 不该续期，touches=%d", n)
 	}
 }

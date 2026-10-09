@@ -52,4 +52,10 @@ func (sharedContentCache) Set(key string, val []byte, ttl time.Duration) {
 	utils.DefaultCache().SetTTL(key, string(val), ttl)
 }
 
+// Touch 把命中的那一格续到 now+ttl（只续期不写值；键不在不动作）。
+// 语义与 base 端口逐字对齐：续期的判定只有一处，这里只是接过去。
+func (sharedContentCache) Touch(key string, ttl time.Duration) {
+	utils.DefaultCache().Touch(key, ttl)
+}
+
 var _ base.SharedCache = sharedContentCache{}

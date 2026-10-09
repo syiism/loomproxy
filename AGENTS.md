@@ -84,7 +84,8 @@
 
 - 上游请求一律经 `base.BaseHandler`：短 TTL 缓存 → singleflight → 按 host 熔断 → 过期缓存降级，代理池与 UA 轮换在 `base.Fetch` 层；不要自建 http.Client。
   **带缓存的两条通路**：GET 走 `FetchJSON`/`FetchText`；POST 走 `FetchShared(key, ttl, cacheIf)`，**键要含会话**、
-  **成败判定归调用方**；`ttl<=0` 只合并不缓存。
+  **成败判定归调用方**；`ttl<=0` 只合并不缓存。**这一层读命中即续期**（`Touch`：热格滑到"最后一次使用+TTL"，
+  冷格自然走；只续不建）——但**验证材料那族不适用**（站方判死的 token 续了只是攒注定被拒的凭证）。详情：[`docs/架构/弹性获取栈与环境变量.md`](docs/架构/弹性获取栈与环境变量.md)
 - 全部配置是环境变量，权威定义在 `conf/conf.go`；`REDIS_*` 同时承载接口缓存、命名缓存与 `FetchShared` 的跨进程持久化。
 - `TZ_OFFSET_HOURS` 是平台时区唯一值、「今天零点」唯一算法是 `utils.DayStart(days)`（P71，`tz-check` 拦回退）。
 - 几个容易踩的默认：`REDIS_PASSWORD` 默认空（写死默认密码会让无密码 Redis 连不上）、`MONITOR_RETENTION_DAYS` 默认 0=永久保留、`DB_TYPE` 代码默认 mysql 而 `.env.example` 默认 sqlite。

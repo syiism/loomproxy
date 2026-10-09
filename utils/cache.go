@@ -40,7 +40,7 @@ type Cache struct {
 	// 接口缓存的 Redis 那一段坏掉时，原来**一个字都不说**：`Set` 连返回的错误都没接，
 	// `Get` 把「连不上」和「没命中」回成同一个 (nil,false)（判据同 P56 那条「返回值两种含义」）。
 	// 症状是"缓存好像没在工作"却查不出为什么——所以这里只加两件东西：计数 + 状态翻转时出声。
-	rSet, rGet, rDel redisState
+	rSet, rGet, rDel, rTouch redisState
 }
 
 // redisState 一段 Redis 调用的健康状态：累计失败次数，且**只在坏↔好翻转时出声**。
@@ -195,6 +195,49 @@ func (c *Cache) SetTTL(key string, value interface{}, ttl time.Duration) {
 			delete(c.items, oldest.Value.(*cacheEntry).key)
 		}
 	}
+}
+
+// Touch 把**已存在**的一格的存活时间续到 now+ttl——只续期、不写值。
+//
+// 给"被重复命中的缓存"用（`base.SharedCache` 的读命中路径）：热的一直在、冷的自然走。
+// 值重写的代价是要带着 value 走一遍序列化（正文条目是几十 KB 的密文信封），
+// EXPIRE / 改 expires 只要一次往返/一次赋值。
+//
+// 键不存在（或内存模式已过期）返回 false 且**不新建**——续期不是写入，
+// 把"要不要存"的判断留在写入口那一份（`sharedCachePut`），这里不长出第二份。
+// Redis 续期失败的最坏后果是"这一格照常到期"——不影响正确性只影响命中率，
+// 但它仍按读/写/失效同族登记一份状态（只在翻转时出声；判据是 P36/P48 那条）。
+func (c *Cache) Touch(key string, ttl time.Duration) bool {
+	if ttl <= 0 {
+		return false // 那一档本来就不存东西，也无从续期
+	}
+	if c.useRedis {
+		ok, err := c.redis.Expire(context.Background(), key, ttl).Result()
+		if err != nil {
+			if !errors.Is(err, redis.Nil) {
+				c.rTouch.fail("续期", err)
+			}
+			return false
+		}
+		c.rTouch.ok("续期")
+		return ok
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	elem, ok := c.items[key]
+	if !ok {
+		return false
+	}
+	entry := elem.Value.(*cacheEntry)
+	if time.Now().After(entry.expires) {
+		c.lruList.Remove(elem)
+		delete(c.items, key)
+		return false
+	}
+	entry.expires = time.Now().Add(ttl)
+	c.lruList.MoveToFront(elem)
+	return true
 }
 
 func (c *Cache) Del(key string) {

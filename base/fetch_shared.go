@@ -21,6 +21,9 @@ import (
 type SharedCache interface {
 	Get(key string) ([]byte, bool)
 	Set(key string, val []byte, ttl time.Duration)
+	// Touch 把**已存在**的一格续到 now+ttl；键不存在返回 false，绝不新建。
+	// 读命中路径调它——被反复命中的热格不再"写入时刻起算到期"，而是"最后一次使用起算"。
+	Touch(key string, ttl time.Duration)
 }
 
 // ResponseFilter 是调用方对「这一份响应值不值得进缓存」的判定。
@@ -83,6 +86,7 @@ func (h *BaseHandler) FetchShared(ctx context.Context, url string, method string
 	sc := loadSharedCache()
 	if ttl > 0 && sc != nil {
 		if val, ok := sc.Get(cacheKey); ok && len(val) > 0 {
+			sc.Touch(cacheKey, ttl)
 			return val, http.StatusOK, nil
 		}
 	}
@@ -91,6 +95,7 @@ func (h *BaseHandler) FetchShared(ctx context.Context, url string, method string
 		// double-check：等锁期间先行者可能刚把同一条塞进缓存
 		if ttl > 0 && sc != nil {
 			if val, ok := sc.Get(cacheKey); ok && len(val) > 0 {
+				sc.Touch(cacheKey, ttl)
 				return cachedResult{body: val, status: http.StatusOK}, nil
 			}
 		}
@@ -172,7 +177,12 @@ func (h *BaseHandler) SetShared(_ context.Context, cacheKey string, val []byte, 
 	return sharedCachePut(loadSharedCache(), cacheKey, val, ttl)
 }
 
-// PeekShared 只读地问一句"这一键在不在"：不合并、不打上游、不刷新 TTL。
+// PeekShared 只读地问一句"这一键在不在"：不合并、不打上游。
+// **命中会续期**（滑到 now+ttl）：被反复问到的热格不该在最后一次使用之前先到期——
+// 正文缓存要付的到期代价是整本重拉（S97 实测 96 次/天 ≈ 8266 发上游只为重数目录），
+// 固定 TTL 会把"还在被读"的热门也照这个价付掉；续期只救热格，冷格仍按原窗口走。
+// 验证材料那一族不适用：ALTCHA 的 captcha_token 到期由**站方**说了算，客户端续期只会
+// 攒出一枚注定被拒的过期凭证——所以 `zj_novel` 的 token 缓存不接这一层（见其 S100 邻近实现）。
 //
 // 为什么要有它——**读缓存的时机必须在"取验证材料"之前**。带验证的源（纸间是 ALTCHA：取挑战 →
 // 本地解 PoW → verify → 才轮到那一发被缓存的正文）如果先解验证再问缓存，
@@ -193,5 +203,6 @@ func (h *BaseHandler) PeekShared(_ context.Context, cacheKey string, ttl time.Du
 	if !ok || len(val) == 0 {
 		return nil, false
 	}
+	sc.Touch(cacheKey, ttl)
 	return val, true
 }
