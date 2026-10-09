@@ -90,6 +90,15 @@ type agg struct {
 	Latency  int64  `gorm:"column:latency"`
 	Max      int64  `gorm:"column:max"`
 	Empty    int64  `gorm:"column:empty_count"`
+	// LastID 与 IdentID 是榜尾那两栏的**同趟聚合**（待办清单 P118 ①）：
+	// 原来这两个值靠循环里逐条 `ORDER BY id DESC LIMIT 1` 回取，公开榜一次请求 40~60 条单查。
+	// 聚合里取的是 **id** 不是时间——`MAX(id)` 与原 `ORDER BY id DESC` 命中同一条（id 自增），
+	// 值本身留给下面一次主键点查取回。**不走 `MAX(created_at)` 那条路**：聚合表达式在 SQLite 上
+	// 丢掉列的类型亲和，返回文本、扫不进 `time.Time`（MySQL/PostgreSQL 给的是 time.Time，
+	// 所以这一格只在 `make build` 的 sqlite 测试段红，现网永远不会暴露它）。
+	// `book_ident` 在旧行是 NULL，`NULL <> ''` 不成立，那些行天然不进候选（与原写法同一口径）。
+	LastID  uint `gorm:"column:last_id"`
+	IdentID uint `gorm:"column:ident_id"`
 }
 
 // NormalizeDays 收敛天数入参：越界回落 7，上限 365
@@ -155,13 +164,23 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 	}
 
 	var aggs []agg
+	// 榜尾那两栏（最近调用时间、书目标识）并进这一趟聚合：它们问的是**同一批行**，
+	// 分成循环里的单查只是把一次范围扫描换成 N 次主键反向扫描（待办清单 P118 ①）。
+	// **随之一处口径收窄**：聚合带着 allowSources，而原榜尾单查不带——于是公开榜上这两个字段
+	// 的总体与它的计数一致了（管理员传 nil，无变化；公开榜只下发 book_id，见 handlers/rank 的 boardEntry）。
+	// 为什么取 `MAX(id)` 而不是 `MAX(created_at)`：见 agg 结构体那一格（SQLite 的聚合表达式丢类型亲和）。
+	selects := "MAX(id) AS last_id"
+	if key == "book" {
+		selects += ", MAX(CASE WHEN book_ident <> '' THEN id ELSE 0 END) AS ident_id"
+	}
 	if err := db.DB.Model(&models.ApiCallLog{}).
 		Select(dim.Column+" AS name, source, COUNT(*) AS total, "+
 			"COUNT(DISTINCT "+visitorExpr+") AS visitors, "+
 			// 成功 = 2xx 且非带内失败（P22）；IS NOT TRUE 对 NULL 成立，旧行仍按纯 HTTP 口径
 			"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success, "+
 			"COALESCE(SUM(latency_ms), 0) AS latency, COALESCE(MAX(latency_ms), 0) AS max, "+
-			"SUM(CASE WHEN status >= 200 AND status < 300 AND result_count = 0 THEN 1 ELSE 0 END) AS empty_count").
+			"SUM(CASE WHEN status >= 200 AND status < 300 AND result_count = 0 THEN 1 ELSE 0 END) AS empty_count, "+
+			selects).
 		Where(cond, args...).
 		Group(dim.Column + ", source").
 		Scan(&aggs).Error; err != nil {
@@ -171,29 +190,38 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 	type acc struct {
 		requests, visitors, success, latency, max, empty int64
 		sources                                          map[string]bool
+		lastID                                           uint
+		identID                                          uint
 	}
 	merged := map[string]*acc{}
-	take := func(name, src string, requests, visitors, success, latency, max, empty int64) *acc {
-		a := merged[name]
+	take := func(r agg) *acc {
+		a := merged[r.Name]
 		if a == nil {
 			a = &acc{sources: map[string]bool{}}
-			merged[name] = a
+			merged[r.Name] = a
 		}
-		a.requests += requests
-		a.visitors += visitors
-		a.success += success
-		a.latency += latency
-		a.empty += empty
-		if max > a.max {
-			a.max = max
+		a.requests += r.Total
+		a.visitors += r.Visitors
+		a.success += r.Success
+		a.latency += r.Latency
+		a.empty += r.Empty
+		if r.Max > a.max {
+			a.max = r.Max
 		}
-		if src != "" {
-			a.sources[src] = true
+		// 跨源合并取的是**同一条口径的极值**：id 自增，最大 id 就是最新那一行（与原逐条 `ORDER BY id DESC` 同一条）
+		if r.LastID > a.lastID {
+			a.lastID = r.LastID
+		}
+		if r.IdentID > a.identID {
+			a.identID = r.IdentID
+		}
+		if r.Source != "" {
+			a.sources[r.Source] = true
 		}
 		return a
 	}
 	for _, r := range aggs {
-		take(r.Name, r.Source, r.Total, r.Visitors, r.Success, r.Latency, r.Max, r.Empty)
+		take(r)
 	}
 
 	// 合并内存中尚未落库的明细（缓冲满 250 条才批量落库，低流量时近期记录几乎都在内存里）
@@ -219,10 +247,21 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 			seen[id] = true
 			visitors = 1
 		}
-		take(rc.Name, rc.Source, 1, visitors, success, rc.LatencyMs, rc.LatencyMs, empty)
+		// 内存里这些**尚未落库**的明细不进 last_called/ident 两栏：与原榜尾单查同口径
+		// （那圈只读库）。要不要把它们的时间算进来是另一件事，登记在待办清单 P118。
+		take(agg{Name: rc.Name, Source: rc.Source, Total: 1, Visitors: visitors,
+			Success: success, Latency: rc.LatencyMs, Max: rc.LatencyMs, Empty: empty})
 	}
 
-	items := make([]Item, 0, len(merged))
+	// 聚合只拿到两个 id（最新一行、最近一条带标识的行），**值本身整页一次主键点查取回**
+	// （判据正本：踩坑判据「列表端点的关联名称要整页一次取回」）。
+	// id 必须跟着行走——它在排序之前算出来，用下标做映射键就会错位。
+	type boardRow struct {
+		Item
+		lastID  uint
+		identID uint
+	}
+	rows := make([]boardRow, 0, len(merged))
 	for name, a := range merged {
 		if a.requests == 0 {
 			continue
@@ -248,48 +287,60 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 		if key == "media" {
 			it.Label = base.MediaLabel(name)
 		}
-		items = append(items, it)
+		rows = append(rows, boardRow{Item: it, lastID: a.lastID, identID: a.identID})
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Total != items[j].Total {
-			return items[i].Total > items[j].Total
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Total != rows[j].Total {
+			return rows[i].Total > rows[j].Total
 		}
-		return items[i].Name < items[j].Name
+		return rows[i].Name < rows[j].Name
 	})
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
 	}
 
-	for i := range items {
-		var last models.ApiCallLog
-		q := db.DB.Model(&models.ApiCallLog{}).
-			Where("created_at >= ? AND "+dim.Column+" = ?", from, items[i].Name)
-		if key == "book" {
-			// 书目标识另取「最近一条带标识的」：LastCalledAt 要的是任何一条正文明细，
-			// 两者问的不是同一件事，混在一个查询里会让其中一个说谎
-			var withIdent models.ApiCallLog
-			iq := db.DB.Model(&models.ApiCallLog{}).
-				Where("created_at >= ? AND "+dim.Column+" = ? AND book_ident <> ''", from, items[i].Name)
-			if sourceFilter != "" {
-				iq = iq.Where("source = ?", sourceFilter)
-			}
-			if mediaFilter != "" {
-				iq = iq.Where("media = ?", mediaFilter)
-			}
-			if err := iq.Order("id DESC").First(&withIdent).Error; err == nil {
-				items[i].BookID = withIdent.BookIdent
+	// 一行可能同时是"某个条目的最新行"和"某个条目的最近带标识行"，两类角色各一张表；
+	// 同一条明细的 id 只会落进一个条目（它就是那一行的名字），所以两张表都是 id → 条目下标。
+	byLastID := make(map[uint]int, len(rows))
+	byIdentID := map[uint]int{}
+	ids := make([]uint, 0, len(rows)*2)
+	for i, r := range rows {
+		if r.lastID > 0 {
+			byLastID[r.lastID] = i
+			ids = append(ids, r.lastID)
+		}
+		if key == "book" && r.identID > 0 {
+			byIdentID[r.identID] = i
+			if r.identID != r.lastID { // 同一条明细不必进两次 IN 列表
+				ids = append(ids, r.identID)
 			}
 		}
-		if sourceFilter != "" {
-			q = q.Where("source = ?", sourceFilter)
+	}
+	if len(ids) > 0 {
+		var tail []struct {
+			ID        uint      `gorm:"column:id"`
+			CreatedAt time.Time `gorm:"column:created_at"`
+			Ident     string    `gorm:"column:book_ident"`
 		}
-		if mediaFilter != "" {
-			q = q.Where("media = ?", mediaFilter)
+		if err := db.DB.Model(&models.ApiCallLog{}).
+			Select("id, created_at, book_ident").Where("id IN ?", ids).
+			Scan(&tail).Error; err != nil {
+			// 只影响两栏显示、不影响榜单本身，但同一份原因必须落在服务端日志里（P67 镜像那半）
+			db.LogReadFail("subjectrank-board-tail", err)
 		}
-		if err := q.Order("id DESC").First(&last).Error; err == nil {
-			t := last.CreatedAt
-			items[i].LastCalledAt = &t
+		for _, r := range tail {
+			if i, ok := byLastID[r.ID]; ok {
+				t := r.CreatedAt
+				rows[i].LastCalledAt = &t
+			}
+			if i, ok := byIdentID[r.ID]; ok {
+				rows[i].BookID = r.Ident
+			}
 		}
+	}
+	items := make([]Item, len(rows))
+	for i, r := range rows {
+		items[i] = r.Item
 	}
 	return items, nil
 }
