@@ -13,15 +13,19 @@ package rank
 
 import (
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"loomproxy/base"
+	"loomproxy/conf"
 	"loomproxy/db"
 	"loomproxy/handlers/auth"
 	"loomproxy/handlers/subjectrank"
 	"loomproxy/models"
+	"loomproxy/utils"
 )
 
 // settingPublicSources 源级白名单：逗号分隔的数据源码，**留空=不对普通用户开放任何榜单**。
@@ -42,6 +46,79 @@ var boards = []struct {
 }
 
 const boardLimit = 20
+
+// 榜单的聚合结果缓存（待办清单 P118 ③）。
+//
+// 为什么缓存放在这一层而不是 subjectrank.Query 里：Query 的返回值要被两个权限档位消费，
+// 管理端那一份带 `last_called_at`（陈旧的调用时间等于给排障的人一个假时刻），而 Redis 段
+// 读回来的值是解码后的通用形状——`[]Item` 那种类型断言在内存段命中、在 Redis 段必然落空，
+// 于是"加了缓存"在生产上静默等于没加。放在出口层，缓存的就是要发出去的那份响应体，两段同形。
+//
+// **只缓存两张榜的行**，不缓存 `sources` 与 `medias`：那两样是数据源表的当前状态，
+// 不该跟着 TTL 一起变旧（下架一个源，下拉框里还留着它 = 用一个缓存把一个已下架的东西端回面板）。
+// TTL 由 `RANK_CACHE_SEC` 决定（<=0 每次真算）；陈旧的只有榜本身的计数，
+// 响应里带 `cache_ttl_sec` 把这件事如实说出来，面板不必自己抄这个数（与 P46 的 `filters_meta` 同一口径）。
+const (
+	// BoardsCachePrefix 是这一层缓存键的公共前缀段。**键的拼法只有这一处**——
+	// 用例与将来的失效口都从这里取，复制一份字面量就等于给它第二个正本（P39 那一族：
+	// 键拼法长出第二份，失效就会打空而构建照样绿）。
+	BoardsCachePrefix = "rank:boards:"
+	// 管理员（不限源）与公开榜（按白名单）**不共用一个键段**：少这一段就是 P84 那一族——
+	// 管理员那次「全部数据源」的合并结果被发给只看得到两个源的普通用户，未授权源的热度就漏出去了。
+	boardsCachePrefixAll = BoardsCachePrefix + "all:"
+	boardsCachePrefixPub = BoardsCachePrefix + "pub:"
+)
+
+// boardDimsKey 缓存键里的"榜的形状"那一段：由 boards 现算，不手抄——
+// 以后往 boards 里加一个维度，键会自动换，而不是让新维度吃到旧维度的缓存。
+var boardDimsKey = func() string {
+	names := make([]string, 0, len(boards))
+	for _, b := range boards {
+		names = append(names, b.Dim)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}()
+
+// boardsCacheKey 组装缓存键。**原料里缺任何一段，那段就是"看不见的一致性"**：
+//   - admin / allow：这条响应属于谁（allow 先排序，同一个名单换个顺序不该各占一格）；
+//   - days 与 from：窗口不是 days 的纯函数——`WindowStart` 取平台时区当日零点，
+//     跨了日界同样的 days 问的是另一个总体，所以两个都要进键；
+//   - source / media / limit：筛法不同就是不同的榜。
+func boardsCacheKey(admin bool, allow []string, days int, sourceFilter, mediaFilter string) string {
+	// nil 与空切片要保留区别：nil=不限源（管理员），空集=零个源可见（公开榜拿到空名单是 403，
+	// 但这一层不该把两者当同一个东西）。CacheKey 走 json.Marshal，null 与 [] 天然不同形。
+	sorted := append([]string(nil), allow...)
+	sort.Strings(sorted)
+	prefix := boardsCachePrefixPub
+	if admin {
+		prefix = boardsCachePrefixAll
+	}
+	params := map[string]interface{}{
+		"admin":  admin,
+		"allow":  sorted,
+		"days":   days,
+		"from":   subjectrank.WindowStart(days).Unix(),
+		"source": sourceFilter,
+		"media":  mediaFilter,
+		"limit":  boardLimit,
+		"dims":   boardDimsKey,
+	}
+	return prefix + utils.CacheKey(prefix, params)
+}
+
+// cachedBoardRows 把读回来的缓存值认成"能直接发出去的那两样形状"：
+// 内存段是写入时那份 `[]boardPayload`，Redis 段是 JSON 解码后的 `[]interface{}`。
+// 认不出来就当未命中重算——**不是**把来路不明的值端出去。
+func cachedBoardRows(v interface{}) (interface{}, bool) {
+	switch t := v.(type) {
+	case []boardPayload:
+		return t, true
+	case []interface{}:
+		return t, true
+	}
+	return nil, false
+}
 
 // sourceOption 数据源筛选项：code 用于查询、name 用于展示。
 // 候选只取启用中的数据源——已下线的源即便窗口里还剩历史明细，也不该出现在下拉里，
@@ -150,6 +227,21 @@ func GetBoards(c *gin.Context) {
 	}
 
 	out := make([]boardPayload, 0, len(boards))
+	// 缓存的读命中放在参数校验之后、聚合之前：校验不过的请求不该污染任何一格，也不该拿到值。
+	ttlSec := conf.Config.RankCacheSec
+	if ttlSec < 0 {
+		ttlSec = 0 // 负数与 0 同一档：每次真算
+	}
+	var cacheKey string
+	if ttlSec > 0 {
+		cacheKey = boardsCacheKey(admin, allow, days, sourceFilter, mediaFilter)
+		if cached, ok := utils.DefaultCache().Get(cacheKey); ok {
+			if rows, hit := cachedBoardRows(cached); hit {
+				respondBoards(c, rows, admin, days, sourceFilter, mediaFilter, sources, ttlSec)
+				return
+			}
+		}
+	}
 	for _, b := range boards {
 		items, err := subjectrank.Query(b.Dim, days, sourceFilter, mediaFilter, boardLimit, allow)
 		if err != nil {
@@ -165,10 +257,22 @@ func GetBoards(c *gin.Context) {
 		}
 		out = append(out, boardPayload{Dim: b.Dim, Title: b.Title, Metric: b.Metric, Unit: b.Unit, Rows: rows})
 	}
+	if cacheKey != "" {
+		// 失败不出声：写不进去的最坏后果是"下一次照样真算"（与 utils.Cache 那三档状态同族，
+		// 由 Cache 内部按翻转出声，这里不复制一份判断）。
+		utils.DefaultCache().SetTTL(cacheKey, out, time.Duration(ttlSec)*time.Second)
+	}
+	respondBoards(c, out, admin, days, sourceFilter, mediaFilter, sources, ttlSec)
+}
+
+// respondBoards 组装响应。`sources`/`medias` 每次现取（它们不是缓存的一部分：下架一个源
+// 不该让下拉框再陈旧一个 TTL）；`cache_ttl_sec` 把"这份榜最长可能陈旧多久"如实发出去。
+func respondBoards(c *gin.Context, rows interface{}, admin bool, days int, sourceFilter, mediaFilter string, sources []sourceOption, ttlSec int) {
 	auth.Ok(c, gin.H{
-		"days": days, "boards": out, "limit": boardLimit,
+		"days": days, "boards": rows, "limit": boardLimit,
 		"source": sourceFilter, "sources": sources, "unrestricted": admin,
 		"media": mediaFilter, "medias": base.MediaCandidates(),
+		"cache_ttl_sec": ttlSec,
 	})
 }
 

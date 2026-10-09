@@ -107,6 +107,13 @@ type ConfMgr struct {
 	// AggregatePerSourceMax 是聚合搜索**每个源**同时在飞的上限（跨请求共享，0/负数按默认 4）。
 	// 待办清单 P110：原来那道闸建在每个请求里，挡不住"N 个用户各发一个聚合请求打同一个源"。
 	AggregatePerSourceMax int
+	// RankCacheSec 是**公开榜** `/rank/boards` 那一张聚合结果的存活秒数，**<=0 就是每次真算**。
+	// 管理端 `/admin/monitor/subjects` 不在它管辖内（那一档带 `last_called_at`，陈旧的语义不同，本轮不缓存）。
+	// 待办清单 P118 ③：那两趟主聚合扫的是窗口内的明细行数，现网 p50 522ms / p90 1.49s 的大头在它身上，
+	// 而同一份结果在被改动之前被反复重算（当时零缓存）。
+	// 缓存键的原料见 handlers/rank 的 boardsCacheKey——**里面必须有"这条响应属于谁"那一段**
+	// （待办清单 P84 那一族：少一段不是命中率低，是把未授权源的热度发给你）。
+	RankCacheSec int
 	// 维护协程巡检间隔（秒）
 	PoolMaintainSec int
 

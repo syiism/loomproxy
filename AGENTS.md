@@ -129,6 +129,9 @@
 - 公开榜单的放行名单只有一个真相：设置项 `rank_public_sources`。**编辑入口只有一处**——数据源列表每行的
   「榜单可见」开关（`PATCH /admin/data-sources/:id {rank_public}`）；设置页那份复选组已收掉（P17），只显示只读摘要 + 跳转。
   删源时后端顺带把该源码从名单摘掉；`PUT /admin/settings/rank_public_sources` 仍是全量入口，留给脚本与部署用。
+  **公开榜那一层有缓存**（`RANK_CACHE_SEC`，默认 60 秒、<=0 每次真算）：键带窗口起点与 `allowSources` 的散列、
+  并分「管理员 / 公开榜」两段，所以换白名单就是换键；陈旧只在榜的计数上，`sources` 下拉每次现取，
+  响应带 `cache_ttl_sec` 说出陈旧窗口（细节见待办清单 P118 ③）。
 - 详情：[`docs/架构/管控-额度限流与监控.md`](docs/架构/管控-额度限流与监控.md)
 
 
