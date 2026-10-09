@@ -8,7 +8,7 @@
 
 - 一句话：上游接口的**代理与治理平台**——代理/内联第三方接口、归一异构响应，并做鉴权、计费、限流、监控与生命周期管理；底座不携带任何上游接口实现。
 - Legado 只是内置的一种**下游输出契约**（`base/legado` 五动作），动作集与输出形状由接口包自己声明，底座不做书源特例分支。
-- 接入一个源 = 新建 `sources/<源>` 包自注册 + `sources/all.go` 加一行空白导入 + `make build`；`app.go` 与 `db/seed.go` 免改。
+- 接入一个源**不在本仓**：源包与携带清单在装配仓 `loomproxy-deploy`（新建 `sources/<源>` 自注册 + `sources/deploy_all.go` 加一行 + 该仓 `make build`）；骨架的 `sources/` 只是空包边界标记，`app.go` 与 `db/seed.go` 也不因新源而改（P116 定案，细节见 `docs/方案/骨架当库-数据源当应用.md`）。
 - 搜索响应**自带来源**：每条书目项的 `source` 与 `kind` 首项由平台在出口统一打（`StampSearchSource`），
   源不必自己填、填了也会被覆盖——下游（含聚合书源）拿它把详情/目录/正文路由回正确的源。
 - 详情：[`docs/架构/项目定位与能力清单.md`](docs/架构/项目定位与能力清单.md)
@@ -35,7 +35,7 @@
 
 ## 4. 目录结构与模块边界
 
-- 分层事实：`app/` 装配、`base/` 核心与获取栈、`base/legado/` DTO 与五基础处理器、`handlers/` 控制面、`sources/` 数据面、`middleware/`+`gate/` 链与闸门、`db/`+`models/`、`utils/`、`web/`、`test/`+`testkit/`。
+- 分层事实：`app/` 装配、`base/` 核心与获取栈、`base/legado/` DTO 与五基础处理器、`handlers/` 控制面、`sources/` 数据面（**本仓这份是空包边界标记**，实现在装配仓 `loomproxy-deploy/sources/`）、`middleware/`+`gate/` 链与闸门、`db/`+`models/`、`utils/`、`web/`、`test/`+`testkit/`。
 - 两条硬边界：`middleware` 根包是叶子包（不得导入子包或 `gate`，否则成环）；`base` 不得反向导入 `base/legado` 与 `utils`。
 - 详情：[`docs/架构/目录结构与模块边界.md`](docs/架构/目录结构与模块边界.md)
 
@@ -190,7 +190,7 @@
 
 - 处理器间传参用 `map[string]interface{}`；SSRF 的 DNS 结果永久缓存；配额计费按请求（含上游缓存命中）。
 - `docs/归档/` 里的激进方案（unsafe 字段映射、工作窃取调度等）不落地。
-- 无 CI：构建纪律靠 Makefile，部署靠脚本，分支纪律靠基线 tag 的三点 diff（tag 已推 gitee）。`main` 与骨架 tag 可由维护者推送；携带数据源的 `sources/*` 分支只进**私有远端**（git.syiism.cc.cd），不进公开远端。
+- 无 CI：构建纪律靠 Makefile，部署靠脚本。**携带形态已换成独立仓 `loomproxy-deploy`（P116），它只进私有远端（git.syiism.cc.cd），永不进公开远端**；老形态 `sources/*` 分支与基线 tag 的三点 diff 随之退役为回退留底（回退方法见 `docs/方案/数据源仓库-落地清单.md`）。`main` 与骨架 tag 可由维护者推送。
 - 详情：[`docs/规范/已知取舍.md`](docs/规范/已知取舍.md)
 
 ## 13. 文档与知识库的分工
