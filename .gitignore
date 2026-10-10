@@ -41,5 +41,8 @@ data/state.json
 # 测试服务入口产物（test/python 用）
 /loomproxy-fakegateway
 
-# 本地代理工作区（方案与记忆文档，不入库）
-.qoder/
+# 本地代理工作区（方案与记忆文档，不入库）——`plans/`、`worktrees/` 仍然整目录排除。
+# 唯一的例外是会话钩子的项目级配置：它是团队门禁的一部分，不是某个人的本地状态（待办清单 P109）。
+# 改成 `.qoder/*` 而不是留 `.qoder/` 是因为**被排除的目录 git 根本不会进去**，写在里面的否定式不生效。
+.qoder/*
+!.qoder/settings.json

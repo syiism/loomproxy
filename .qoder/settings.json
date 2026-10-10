@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${QODER_PROJECT_DIR}\"/scripts/check-gate-run-shape.sh",
+            "if": "Bash(make:*)",
+            "name": "gate-run-shape",
+            "statusMessage": "核对 make 的退出码会不会被管道吃掉",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
