@@ -45,7 +45,16 @@ for path in reports:
             sec8 = i
             break
     if sec8 is not None:
-        blocks = sum(1 for l in lines[sec8:] if l.startswith('### '))
+        # 只数**这一节之内**的 `### ` 块：判据正本（本脚本头部规则①）写的是「那一节里 `### ` 块的个数」，
+        # 而 `lines[sec8:]` 会一路数到文件结尾——于是 §20 之后随便一个 `### 20.1 小注` 都会算成"§8 多了一条决策项"。
+        # 现场版：2026-10-10 报告加了 §20.1，检查报「抬头写 9 / 实测 10」，而那 10 里有一条根本不是决策项。
+        # 停止条件是"下一个 `## ` 二级标题"，不是"下一个 `## 9.`"——报告号更早的那份 §8 后面接什么小节都不该被牵连。
+        blocks = 0
+        for l in lines[sec8 + 1:]:
+            if l.startswith('## '):
+                break
+            if l.startswith('### '):
+                blocks += 1
         m = re.search(r'共 (\d+) 条', lines[sec8])
         if not m:
             bad.append('%s：§8 抬头没有「共 N 条」——这一节的条目数就没人负责说清' % path)
