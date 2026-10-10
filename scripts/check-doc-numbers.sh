@@ -75,10 +75,19 @@ for path in reports:
 # 规则 ③：归档 README 的索引行——「N 条已收口原文」要等于那个文件里的 `## P` 条目数
 readme = 'docs/归档/README.md'
 if os.path.exists(readme):
+    checked_rows = 0
     for i, rl in enumerate(open(readme, encoding='utf-8').read().split('\n'), 1):
+        # **先数这一行里有几条索引行**：下面的 `re.match` 锚在行首，两条并成一条时它只看得到第一条，
+        # 剩下几条从此是"没被看过"而不是"查过了没问题"。现场版（2026-10-10）：改 README 的那一次吃掉两个换行，
+        # 四条索引行并成一条 1207 字节的行，检查照绿——**行数没人数，绿就没人怀疑**。
+        if len(re.findall(r'\| `(?:待办清单-[^`]+\.md)`', rl)) > 1:
+            bad.append('%s:%d：这一行并了不止一条索引行——行首锚定的数法只会看到第一条，'
+                       '其余几条不是"查过了"而是"没被看过"（换行通常是被改这份文件的那一次吃掉的）'
+                       % (readme, i))
         m = re.match(r'^\| `(待办清单-[^`]+\.md)` \| ([一二三四五六七八九十\d]+) ?条已收口原文', rl)
         if not m:
             continue
+        checked_rows += 1
         fname, declared = m.group(1), as_int(m.group(2))
         found = [d + fname for d in glob.glob('docs/归档/*/') if os.path.exists(d + fname)]
         if not found:
@@ -88,6 +97,8 @@ if os.path.exists(readme):
         if declared != real:
             bad.append('%s:%d：那行写「%s 条已收口原文」，%s 里实测 %d 个 `## P` 条目'
                        % (readme, i, m.group(2), fname, real))
+    # 对象数要随行报出来：「跑一遍没输出」和「通过」长得一样，而这里第三种失效是**对象少了几条**。
+    print('规则③ 当场核了 %d 条索引行（这个数变了要说为什么——并行了它就变小）' % checked_rows)
 
 # 规则 ④（2026-10-06 加）：门禁台账 rule 2 那三条**体量读数**必须等于现测。
 # 加这条的经过本身就是判据：台账那句「清单页 585 行 / 在册 9 条」是一小时前按 `wc -l` 写的，

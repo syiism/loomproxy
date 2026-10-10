@@ -1,5 +1,8 @@
 # 环境变量与密钥（含 API_KEYS / ADMIN_PASSWORD / JWT_SECRET）
 .env
+# 备份同样不能进仓库（一次 `git add -A` 就带走口令）；而未跟踪文件也算 Go 的 `vcs.modified`，
+# 留着它构建出来的产物 mod 行永远是 `+dirty` —— 装配仓那侧同一个坑今天刚踩（deploy `3cfded0c`，待办清单 P121 的延伸）。
+.env.bak*
 
 # Go 构建产物
 /loomproxy
