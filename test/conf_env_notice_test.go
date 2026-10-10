@@ -139,6 +139,7 @@ func TestEnvDocumentedDefaults(t *testing.T) {
 		"MONITOR_RETENTION_DAYS", "MONITOR_BACKFILL_SEC", "BILLING_DEDUPE_SEC",
 		"CACHE_TTL", "UPSTREAM_CACHE_TTL", "DB_TYPE", "AUTH_ENABLED", "TZ_OFFSET_HOURS",
 		"REDIS_PASSWORD", "POOL_RENEW_BEFORE_SEC", "POOL_HOOK_TIMEOUT_SEC",
+		"RANK_CACHE_SEC", // 待办清单 P124：这一位曾经**只声明没装配**，见下面那一格的注释
 	} {
 		t.Setenv(key, "") // env* 把空串当未设置
 	}
@@ -163,10 +164,42 @@ func TestEnvDocumentedDefaults(t *testing.T) {
 		{"RedisPassword", conf.Config.RedisPassword, "", "默认空密码——写死一个等于让无密码的 Redis 连不上"},
 		{"PoolRenewBeforeSec", conf.Config.PoolRenewBeforeSec, 300, "号池临期续领提前量"},
 		{"PoolHookTimeoutSec", conf.Config.PoolHookTimeoutSec, 30, "持锁调源钩子的截止（P81）"},
+		// P124：这一格是本轮补的**装配钉子**。`RankCacheSec` 曾经声明了、`handlers/rank` 读了它，
+		// 但 `conf.Load()` 的装配块里没有写入方——Go 给零值 0，而 0 的语义是"每次真算"，
+		// 于是 P118 ③ 那颗缓存装了等于没装，而 `.env.example` 那句 `RANK_CACHE_SEC=60` 只是展示。
+		// **为什么四条榜用例没抓到**：它们都直接 `conf.Config.RankCacheSec = sec` 改全局再跑，
+		// 那条通路测的是"值怎么用"，永远不经过装配块——同族那句「读的是测试脚手架的零值」在这里第二次成立。
+		{"RankCacheSec", conf.Config.RankCacheSec, 60, "公开榜出口层缓存的存活秒数（P118 ③），<=0 才是每次真算"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
 			t.Errorf("%s 默认值应为 %v（%s），实为 %v", c.name, c.want, c.why, c.got)
 		}
+	}
+}
+
+// 待办清单 P124 的第二条腿：默认值钉住之后，还要证明**环境变量真的能改到它**。
+// 只钉默认的那一半会漏掉另一种坏法：装配块里写了 `envInt("RANK_CACHE_SEC", 60)`，
+// 但键名拼错（`RANK_CACHE_SECONDS`）——默认照样是 60、这条用例照样绿，而 .env 改成什么都不算。
+// 所以这里三个值一起走真 `conf.Load()`：未设置=60、显式 120=120、显式 0=0（0 有业务含义：每次真算）。
+func TestRankCacheSecEnvKeyActuallyReachesTheField(t *testing.T) {
+	t.Setenv("JWT_SECRET", "unit-test-secret-not-a-real-one")
+
+	t.Setenv("RANK_CACHE_SEC", "")
+	loadConfIsolated(t)
+	if got := conf.Config.RankCacheSec; got != 60 {
+		t.Errorf("未设置时 RANK_CACHE_SEC 应为默认 60，实为 %d", got)
+	}
+
+	t.Setenv("RANK_CACHE_SEC", "120")
+	loadConfIsolated(t)
+	if got := conf.Config.RankCacheSec; got != 120 {
+		t.Errorf("环境变量写着 120，读出来却是 %d——键名或装配块对不上（P124 的那一半）", got)
+	}
+
+	t.Setenv("RANK_CACHE_SEC", "0")
+	loadConfIsolated(t)
+	if got := conf.Config.RankCacheSec; got != 0 {
+		t.Errorf("0 是合法值（每次真算），不该被兜底成默认，实为 %d", got)
 	}
 }

@@ -285,6 +285,10 @@ func Load() {
 		MonitorRetentionDays: envInt("MONITOR_RETENTION_DAYS", 0),
 		MonitorBackfillSec:   envInt("MONITOR_BACKFILL_SEC", 900),
 		BillingDedupeSec:     envInt("BILLING_DEDUPE_SEC", 300),
+		// 待办清单 P124：这一行以前**不存在**——字段声明了、`handlers/rank` 读了它，装配块里却没有写入方，
+		// 于是 Go 给的是零值 0，而 0 的语义就是"每次真算"：P118 ③ 那颗缓存**装了等于没装**。
+		// `.env.example` 那句 `RANK_CACHE_SEC=60` 也一并只是展示。判据见踩坑页「读了没人写」那一条的镜像。
+		RankCacheSec: envInt("RANK_CACHE_SEC", 60),
 
 		AuthEnabled:   envBool("AUTH_ENABLED", false),
 		APIKeys:       envList("API_KEYS", ""),

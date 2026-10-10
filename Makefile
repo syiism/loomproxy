@@ -16,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check goroutine-guard-check tag-sync-check script-syntax-check
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check goroutine-guard-check tag-sync-check script-syntax-check config-wired-check
 
 build: web vet test go-build
 
@@ -52,6 +52,7 @@ vet:
 	@$(MAKE) --no-print-directory nav-check
 	@$(MAKE) --no-print-directory test-order-check
 	@$(MAKE) --no-print-directory settings-readers-check
+	@$(MAKE) --no-print-directory config-wired-check
 	@$(MAKE) --no-print-directory judgment-count-check
 	@$(MAKE) --no-print-directory doc-numbers-check
 	@$(MAKE) --no-print-directory todo-status-check
@@ -105,6 +106,13 @@ test-order-check:
 # 确实只给展示或脚本用的键，写进脚本里的 EXEMPT 并留一句理由。
 settings-readers-check:
 	@./scripts/check-setting-readers.sh
+
+# `settings-readers-check` 的镜像（待办清单 P124）：那一头管"设置键没人读"，这一头管"配置字段没人装配"。
+# 动因是 P118 ③ 自己踩的那格：`RankCacheSec` 声明了、`handlers/rank` 读了它，装配块里却没有那一行，
+# 于是 Go 给零值 0 而 0 的语义正是"每次真算"——公开榜缓存装了等于没装，四条榜用例还全绿
+# （它们直接改 `conf.Config` 再跑，那条通路根本不经过 `conf.Load()`）。上线那次实测漏 0 个，先不误报。
+config-wired-check:
+	@./scripts/check-config-wired.sh
 
 # 判据页顶上那句「N 条：a 已 / b 部分 / c 未」必须等于当场数出来的，且全页只许有一句。
 # 触发它的经验写在那一页自己的《先删后加》段里：同一段曾排过七句各自自称实测的分布，

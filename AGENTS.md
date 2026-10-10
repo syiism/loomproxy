@@ -27,6 +27,9 @@
   **`test/` 现在是两组**（`test/` + `test/groupb/`，待办清单 P104）：`go test ./...` 跨包并行，门禁 test 段 470.7s → 253.4s。
   夹具的正本只有 `testkit` 一处，两组各留一份同名转发只为不动存量用例；**新写用例直接调 testkit 的导出名**，新增一包 = 一份转发 + 一个 `fakesource.Register()` 的 init。
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
+  **但生产产物来自装配仓 `loomproxy-deploy`**：骨架这棵树的 `sources/all.go` 按设计是空携带清单，
+  所以 `deploy.sh` 现在构建前先数携带数，为 0 即拒装（`--allow-no-sources` 才放行）——
+  否则会装上一颗"门禁绿、服务 active、而 `/datasources` 是空的"的机器（待办清单 P123）。
 - 升级零停机走 **systemd socket activation**（待办清单 P115）：`deploy/loomproxy.socket` 持有端口，进程在 `app.Run` 里先试继承 fd、拿不到回退 `net.Listen`；restart 只重启 service 不动 socket。详情：[`docs/架构/部署-零停机.md`](docs/架构/部署-零停机.md)
 - 配置优先级：进程环境变量 > 工作目录 `.env` > 可执行文件目录 `.env`。
 - 手工换装（不走 `scripts/deploy.sh`）有三查：**备份先验非空**、**核 md5 与 install 在同一条远端命令里、装完复算目标文件**（后台传输没收到完成通知就不算传完）、**重启后按启动契约核对日志关键行**而非只看 `is-active`（`Restart=always` 会把崩溃循环伪装成运行中）。
@@ -156,6 +159,9 @@
 - **配置填了却没生效要说一声，也要有人听**：上限类设置被兜底替换时经 `db.NoticeReplacedSetting` 出一条 ERROR，
   **同一种替换只喊一次**（读配置在热路径上，每请求一条会泡坏读数）；反向的那半句由构建兜：**seed 里每个键必须有后端读取方**
   （`make vet` 的 `settings-readers-check` 第一条），只给展示/脚本用的写进脚本 `EXEMPT` 并留理由（P53）。
+  **镜像那条同样有人管**：`conf/conf.go` 的 `ConfMgr` 里声明的每个字段都必须有写入方
+  （`make vet` 的 `config-wired-check`，P124）——只声明不装配 = Go 给零值，而零值在配置里几乎总有业务含义
+  （`RANK_CACHE_SEC` 那一格就是这么"装了等于没装"的）。
   同一个脚本的**第二条**管读法：出现 `Atoi(db.GetSetting(` 或本地 `settingInt` 函数即红（P61）。
 - **下发位置是部署事实，不做设置项**：书源 JSON 走静态托管 `GET /data/shuyuan/bookSource.json`（免鉴权、原样直出），
   `GET /user/import-config` 只回路径与 `ready`（判据是 `json.Valid`）；绝对地址由前端 `window.location.origin` 拼，

@@ -5,6 +5,7 @@
 #   sudo scripts/deploy.sh                 systemd 模式（默认）：构建后安装到 DEPLOY_DIR 并 systemctl restart
 #   scripts/deploy.sh --local              原地模式：在仓库目录就地备份切换，pkill + nohup 重启（免 systemd）
 #   scripts/deploy.sh --skip-tests         跳过整串门禁（make vet + make test，紧急发版，慎用）
+#   scripts/deploy.sh --allow-no-sources   明知这一颗不带任何数据源也照装（默认拒装，见下面那条检查）
 #   scripts/deploy.sh -h                   帮助
 #
 # 环境变量：
@@ -16,12 +17,14 @@ set -euo pipefail
 
 MODE=systemd
 SKIP_TESTS=0
+ALLOW_NO_SOURCES=0
 for arg in "$@"; do
 	case "$arg" in
 	--local) MODE=local ;;
 	--skip-tests) SKIP_TESTS=1 ;;
+	--allow-no-sources) ALLOW_NO_SOURCES=1 ;;
 	-h | --help)
-		sed -n '2,17p' "$0"
+		sed -n '2,18p' "$0"
 		exit 0
 		;;
 	*) echo "未知参数: $arg（-h 查看帮助）" >&2; exit 2 ;;
@@ -66,6 +69,18 @@ place() {
 	md5_dst=$($SUDO md5sum "$dst" | cut -d' ' -f1)
 	[ "$md5_src" = "$md5_dst" ] || die "安装后 md5 不一致（源 $md5_src / 目标 $md5_dst）——不重启"
 	log "已落地 $(basename "$dst")（md5 $md5_dst）"
+	# md5 只证明"传对了"，不证明"装的是谁"（待办清单 P121 的 ②、判据页「线上那颗二进制是谁」那一条）。
+	# 所以把 Go 自带的 VCS 指纹一起打出来，让台账那一格能同时抄两个数；读不出就出声，不静默跳过。
+	if command -v go >/dev/null 2>&1; then
+		mod_line=$(go version -m "$src" 2>/dev/null | awk '$1=="mod"{print $2" "$3; exit}')
+		[ -n "$mod_line" ] || mod_line="(读不到 mod 行)"
+		case "$mod_line" in
+			*+dirty*) log "⚠ 这一颗是从**未提交的工作树**构建的：$mod_line —— 台账要写清它认不出提交号" ;;
+			*)        log "构建来源：$mod_line" ;;
+		esac
+	else
+		log "⚠ 本机没有 go，读不出 mod 行：装的是谁只能靠提交号 + 备份名两件套来钉"
+	fi
 }
 
 # 冒烟端口：环境变量 > 部署目录 .env > 默认
@@ -79,6 +94,19 @@ detect_port() {
 	echo 8081
 }
 PORT="$(detect_port)"
+
+# ===== 0. 携带清单（待办清单 P123）=====
+# 「骨架为库、数据源为应用」之后，本仓的 sources/all.go **按设计是空清单**。
+# 于是这条部署路径上出现了一种新的坏发布：门禁绿、md5 对、服务 active、启动契约行也在，
+# 而 `/datasources` 是空的、每个 /{source}/{action} 都 404——**每一步都像成功**。
+# 判据页那一族（写了没人读 / 不在门禁面上的 defence）这次长在部署脚本里，所以在花掉构建之前先问一句。
+carry=$(grep -h '^[[:space:]]*_[[:space:]]*"' "$REPO_ROOT"/sources/*.go 2>/dev/null | wc -l)
+if [ "$carry" -eq 0 ] && [ "$ALLOW_NO_SOURCES" -ne 1 ]; then
+	die "这一棵树携带 **0 个数据源**（$REPO_ROOT/sources/all.go 是空清单）。
+	      骨架仓现在只是库：生产产物要来自装配仓 loomproxy-deploy（那份 deploy_all.go 才带源，现测 16 个）。
+	      确实要装一颗不带源的底座，就明说：scripts/deploy.sh --allow-no-sources"
+fi
+log "携带数据源 $carry 个"
 
 # ===== 1. 构建 =====
 log "构建前端（web/dist 供 go:embed 打包）..."
@@ -103,6 +131,13 @@ if [ -f "$DEPLOY_DIR/$BIN" ]; then
 	LATEST_BACKUP="$DEPLOY_DIR/$BIN.bak.$(date +%Y%m%d-%H%M%S)"
 	log "备份旧版本 → $(basename "$LATEST_BACKUP")"
 	$SUDO cp "$DEPLOY_DIR/$BIN" "$LATEST_BACKUP"
+	# 备份先验非空、且与换装前那颗同大小（待办清单 P121 的 ②：那次没留 .bak 的换装，
+	# 代价不是"回滚不可用"这一件，是**之后没人能说出线上是谁**——所以这一步不许省，也不许只 ls 一眼）
+	live_size=$($SUDO stat -c %s "$DEPLOY_DIR/$BIN" 2>/dev/null || echo 0)
+	bak_size=$($SUDO stat -c %s "$LATEST_BACKUP" 2>/dev/null || echo 0)
+	[ "$bak_size" -gt 0 ] || die "备份为空或不存在：$LATEST_BACKUP —— 不继续安装"
+	[ "$bak_size" = "$live_size" ] || die "备份大小与换装前那颗不符（备份 $bak_size / 线上 $live_size）—— 不继续安装"
+	log "备份已验：$bak_size 字节（与换装前一致）"
 	# 轮换清理旧备份
 	ls -1t "$DEPLOY_DIR/$BIN".bak.* 2>/dev/null | tail -n "+$((KEEP_BACKUPS + 1))" | while read -r old; do
 		log "清理旧备份 $(basename "$old")"
