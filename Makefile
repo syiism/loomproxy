@@ -65,7 +65,13 @@ vet:
 	@$(MAKE) --no-print-directory ticker-stop-check
 	@$(MAKE) --no-print-directory lock-defer-check
 	@$(MAKE) --no-print-directory goroutine-guard-check
+	@$(MAKE) --no-print-directory observe-contract-check
 	@$(MAKE) --no-print-directory script-syntax-check
+
+# 观测契约对齐检（待办清单 P127①）：信封与明细字段增删必须同批改契约页——
+# 声明位是唯一口子，改实现不改文档当场红；「源填没填值」那半靠用例与样本守卫（检不了）。
+observe-contract-check:
+	@./scripts/check-observe-contract.sh
 
 # ticker 必须 Stop：这条形状被处理过两次（P80 给号池巡检协程补 defer Stop；第三十遍发现
 # app.prewarmCache 是全仓 8 个 ticker 里唯一漏的那个），第三次不再靠人想起来
