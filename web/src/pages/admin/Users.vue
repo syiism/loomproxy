@@ -18,6 +18,15 @@
       <button @click="resetFilters" class="btn-ghost whitespace-nowrap" :disabled="!hasAnyFilter">清空筛选</button>
     </div>
 
+    <!-- 已激活筛选 chips：收起折叠块也能看到"现在按什么在筛"，点 × 单独移除一项，不用展开再找下拉 -->
+    <div v-if="activeFilterChips.length" class="reveal flex flex-wrap items-center gap-2 mb-3">
+      <button v-for="(c, i) in activeFilterChips" :key="i" @click="c.clear(); apply()"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-alt border border-border text-xs text-text-muted hover:text-text hover:border-text transition-colors">
+        {{ c.label }}
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+
     <!-- 九个筛选条件收在折叠块里（P30 的窄屏纪律：收起态给读数摘要，不是藏信息）。
          条件是即时生效的：下拉改完还要再点一次「搜索」，那是把「没生效」做成常态。 -->
     <UiCollapse title="筛选条件" :summary="filterSummary" storage-key="admin-users-filters">
@@ -468,6 +477,30 @@ const filterSummary = computed(() => {
   }
   if (filters.value.overCap) parts.push('会话数超上限')
   return parts.length ? parts.join(' · ') : '未筛选（全部用户）'
+})
+
+// 折叠块外的可点删 chips：与 filterSummary 同源派生（label 不抄第二份），
+// 每个 chip 带一个 clear——点 × 只清这一项再 apply，不必展开折叠块找对应下拉。
+const activeFilterChips = computed(() => {
+  const out = []
+  const kw = keyword.value.trim()
+  if (kw) out.push({ label: '关键词: ' + kw, clear: () => { keyword.value = '' } })
+  for (const f of STATIC_FILTERS.value) {
+    const v = filters.value[f.key]
+    if (!v) continue
+    const hit = f.options.find(o => o.value === v)
+    out.push({ label: f.label + ': ' + (hit ? hit.label : v), clear: () => { filters.value[f.key] = '' } })
+  }
+  if (filters.value.plan) {
+    const p = allPlans.value.find(x => String(x.id) === filters.value.plan)
+    out.push({ label: '套餐: ' + (p ? p.name : '已下架'), clear: () => { filters.value.plan = '' } })
+  }
+  if (filters.value.role) {
+    const r = allRoles.value.find(x => x.code === filters.value.role)
+    out.push({ label: '角色: ' + (r ? (r.name || r.code) : filters.value.role), clear: () => { filters.value.role = '' } })
+  }
+  if (filters.value.overCap) out.push({ label: '会话数超上限', clear: () => { filters.value.overCap = false } })
+  return out
 })
 
 const apply = () => { page.value = 1; load() }

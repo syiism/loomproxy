@@ -39,7 +39,9 @@
   .table-wrap { @apply bg-surface border border-border rounded-xl overflow-x-auto; }
   .table-base { @apply w-full text-sm; }
   .table-base thead { @apply bg-surface-alt; }
-  .table-base th { @apply font-mono text-xs uppercase tracking-wider text-text-muted px-3 md:px-5 py-3 md:py-4 text-left font-medium; }
+  /* 表头吸顶：长表向下滚动时列名粘在粘性顶栏下方（桌面端表格专用，移动端是卡片流无此问题）。
+     粘性设在 th 上（thead 本身不是 sticky 友好元素）；top 对齐顶栏 md:py-4 的总高约 64px。 */
+  .table-base th { @apply font-mono text-xs uppercase tracking-wider text-text-muted px-3 md:px-5 py-3 md:py-4 text-left font-medium; position: sticky; top: 64px; z-index: 5; }
   .table-base td { @apply px-3 md:px-5 py-3 md:py-4; }
   .table-base tbody tr { @apply border-b border-border last:border-b-0 hover:bg-surface-alt/50 transition-colors; }
 
