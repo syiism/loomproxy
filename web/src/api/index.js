@@ -156,6 +156,9 @@ export const quotaApi = {
   // 转移历史（P97 的「人也要能查」那一半）：只读，三形态统一可用；回显不带操作者身份，只有 via
   myTransfers: ({ page = 1, pageSize = 5 } = {}) =>
     request('/quota/transfers', { query: { page, page_size: pageSize } }),
+  // 清除本人的转移记录（待办清单 P119 ④ 的 C 档：软删）。**只认会话**——
+  // 与 POST /quota/transfer 同一守卫口径：长期密钥能读自己挪过什么，不能销毁记录。
+  clearTransfers: () => request('/quota/transfers', { method: 'DELETE' }),
 }
 
 export const miscApi = {

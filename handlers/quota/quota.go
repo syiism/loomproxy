@@ -108,6 +108,8 @@ func RegisterRoutes(r *gin.Engine) {
 	// 再由端点拒绝"的两张脸，日志里看到的是端点拒绝、审计里看到的却是另一个人。
 	// 一条端点一个守卫，谁的口径谁负责。
 	r.POST("/quota/transfer", auth.AuthRequired(), TransferMyQuota)
+	// 清除记录同样只认会话（理由与上一行一样，见 handlers/quota/transfers.go 的 ClearMyQuotaTransfers）
+	r.DELETE("/quota/transfers", auth.AuthRequired(), ClearMyQuotaTransfers)
 }
 
 func Dashboard(c *gin.Context) {

@@ -659,6 +659,10 @@ func ListUserQuotaTransfers(c *gin.Context) {
 			"from_override": r.FromOverride,
 			"to_override":   r.ToOverride,
 			"created_at":    r.CreatedAt,
+			// 管理端**不过滤** cleared_at（P119 ④ 的 C 档：审计面留着），但要把"这个人自己清过没有"说出来——
+			// 不然管理员看到的是一份已经被本人动过的列表却以为它是原始记录，那比过滤更糟。
+			"cleared":    r.ClearedAt != nil,
+			"cleared_at": r.ClearedAt,
 		})
 	}
 	auth.Ok(c, gin.H{"list": list, "total": total, "page": page, "page_size": pageSize,

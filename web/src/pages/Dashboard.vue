@@ -68,6 +68,20 @@
              （几笔 + 最近一笔的时刻与数字），展开才出列表。「清除这一列」不在本格——它要先拍 A/B/C
              （审计留档表能不能被本人清空），见待办清单 P119 ④。 -->
         <UiCollapse v-if="tfHistory.length" class="mt-5" title="最近转移" :summary="tfHistorySummary" storage-key="dashboard-quota-transfer-history">
+          <!-- 清除（待办清单 P119 ④ 的 C 档＝软删）：行留在库里、管理端仍可查，只是本人不再看见。
+               这一步要做**两步确认**——它动的是记录可见性，一键就没是 §10 那条「一键撤销」的反面；
+               按钮套既有 btn-ghost / btn-danger / btn-sm，不新造样式（css-check 会抓不存在的类名）。 -->
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <p class="min-w-0 flex-1 text-xs text-text-muted leading-relaxed">清除后这一列不再显示；记录本身留在库里，管理端仍可查。</p>
+            <button v-if="!tfClearConfirm" type="button" class="btn-ghost btn-sm shrink-0" @click="tfClearConfirm = true">清除</button>
+            <div v-else class="flex items-center gap-2 shrink-0">
+              <span class="text-xs text-text-muted">确定清除这 {{ tfHistoryTotal }} 笔？</span>
+              <button type="button" class="btn-ghost btn-sm" @click="tfClearConfirm = false">取消</button>
+              <button type="button" class="btn-danger btn-sm" :disabled="tfClearing" @click="onClearTransfers">
+                {{ tfClearing ? '清除中' : '确认清除' }}
+              </button>
+            </div>
+          </div>
           <div class="space-y-1.5 text-sm pb-2">
             <div v-for="h in tfHistory" :key="h.id" class="flex flex-wrap items-baseline justify-between gap-x-3">
               <span class="font-mono text-xs text-text-muted">{{ fmtDate(h.created_at) }}</span>
@@ -243,6 +257,8 @@ const tf = ref({ from: '', to: '', amount: 10, saving: false, result: null })
 // 半年后"这个源怎么是 0"的人，最该在这一眼看到原因，而不是去怀疑源坏了。
 const tfHistory = ref([])
 const tfHistoryTotal = ref(0) // 服务端给的总笔数（本页只取最近 5 条，摘要要说清两件事）
+const tfClearConfirm = ref(false) // 两步确认的中间态：默认关，点了才出「确认清除」
+const tfClearing = ref(false)
 // 收起态摘要：读数而不是形容词（UiCollapse 顶部那条设计约束）
 const tfHistorySummary = computed(() => {
   const list = tfHistory.value
@@ -432,11 +448,28 @@ const load = async () => {
   if (!isAdmin.value) loadTransfers()
 }
 
+const onClearTransfers = async () => {
+  if (tfClearing.value) return
+  tfClearing.value = true
+  try {
+    const data = await quotaApi.clearTransfers()
+    tfClearConfirm.value = false
+    // cleared=0 是合法读数（已经清过或本来就没有），照实刷新而不是报"清除失败"
+    toast(`已清除 ${data && data.cleared != null ? data.cleared : 0} 笔记录（记录仍在管理端可查）`, 'success')
+    await loadTransfers()
+  } catch (e) {
+    toast(e && e.message ? e.message : '清除失败', 'error')
+  } finally {
+    tfClearing.value = false
+  }
+}
+
 const loadTransfers = async () => {
   try {
     const data = await quotaApi.myTransfers({ page: 1, pageSize: 5 })
     tfHistory.value = data.list || []
     tfHistoryTotal.value = Number(data.total) || tfHistory.value.length
+    tfClearConfirm.value = false // 列表变了（含清空），确认态不留
   } catch (e) { /* 历史读不到不影响转移与卡片读数 */ }
 }
 

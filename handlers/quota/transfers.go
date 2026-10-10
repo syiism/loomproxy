@@ -8,7 +8,9 @@ package quota
 // 所以记录不能只写不读。
 
 import (
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -28,7 +30,10 @@ func MyQuotaTransfers(c *gin.Context) {
 	uid, _ := userID.(uint)
 
 	page, pageSize := utils.Paginate(c.DefaultQuery("page", "1"), c.DefaultQuery("page_size", "10"), 10)
-	q := db.DB.Model(&models.QuotaTransferLog{}).Where("user_id = ?", uid)
+	// 本人视角只看"没被自己清掉"的那些（P119 ④：清除是软删，行仍在库里、管理端仍可查）。
+	// `IS NULL` 三种方言都认，不写反引号（判据页那条 PostgreSQL 只认双引号）。
+	q := db.DB.Model(&models.QuotaTransferLog{}).
+		Where("user_id = ? AND cleared_at IS NULL", uid)
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "读取失败")
@@ -61,4 +66,33 @@ func MyQuotaTransfers(c *gin.Context) {
 		"page_size": pageSize,
 		"scope":     "转移改的是日限额的覆盖增量，**不随每日刷新回退**；要恢复只能再转回来",
 	})
+}
+
+// ClearMyQuotaTransfers 把**本人**的转移记录一次性标记为已清除（`DELETE /quota/transfers`）。
+//
+// 三条口径写在这里而不是散在调用方：
+//   - **只认会话**：这条挂在 `/quota` 那组外面（与 POST /quota/transfer 同一形状，§7 那两张脸的教训）。
+//     长期密钥不该能销毁审计面留下的痕迹——它能读，不能清。
+//   - **软删**：`UPDATE ... SET cleared_at = now`，行不删。审计面（管理端列表）不过滤，
+//     所以"清除"的效果是"本人不再看见"，不是"这件事没发生过"。
+//   - **只动自己的行**：`user_id = ?` 是唯一的归属条件，越权的形状在这里应当是 0 行而不是报错。
+//
+// 返回清除的笔数：0 是合法读数（已经清过、或本来就没有），不报错也不假装成功做了什么。
+func ClearMyQuotaTransfers(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	uid, _ := userID.(uint)
+	if uid == 0 {
+		auth.Fail(c, http.StatusUnauthorized, "未登录")
+		return
+	}
+	res := db.DB.Model(&models.QuotaTransferLog{}).
+		Where("user_id = ? AND cleared_at IS NULL", uid).
+		Updates(map[string]interface{}{"cleared_at": time.Now()})
+	if res.Error != nil {
+		// 给用户固定句、给服务端完整原因（§10 那条镜像：给用户的不泄，给运维的有声）
+		log.Printf("ERROR: 清除本人转移记录失败 user=%d: %v", uid, res.Error)
+		auth.Fail(c, http.StatusInternalServerError, "清除失败")
+		return
+	}
+	auth.Ok(c, gin.H{"cleared": res.RowsAffected})
 }

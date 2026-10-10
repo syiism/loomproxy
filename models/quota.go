@@ -233,6 +233,13 @@ type QuotaTransferLog struct {
 	FromOverride int64     `json:"from_override"` // 转移后写入（或删除）的那个增量
 	ToOverride   int64     `json:"to_override"`
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
+	// ClearedAt 是**本人把这条记录从自己的列表里清掉**的时刻（待办清单 P119 ④ 的 C 档：软删）。
+	// 存在的理由是这张表的身份：它是审计留档，不是判定输入（判定读的是 quota_limits 覆盖行），
+	// 所以"用户侧看不见"不该以"事后查不到是谁挪的"为代价。本人端默认过滤掉这一格非空的行，
+	// **管理端一概不过滤**——审计面留着，只是换了个读者。
+	// 用指针而不是非零值哨兵：NULL 才是"从没清过"，而零值时间会被 GORM 的 default 那一族坑到
+	// （判据页《代码里写的 0 落到库里变成 1》）。
+	ClearedAt *time.Time `gorm:"index" json:"cleared_at,omitempty"`
 }
 
 func (QuotaTransferLog) TableName() string {
