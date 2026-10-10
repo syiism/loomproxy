@@ -16,7 +16,7 @@ RELEASE_BINARY := loomproxy-go-release
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
-.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check goroutine-guard-check tag-sync-check
+.PHONY: build web vet fmt-check sql-check css-check nav-check test go-build run docker clean lock-defer-check todo-status-check viewport-check goroutine-guard-check tag-sync-check script-syntax-check
 
 build: web vet test go-build
 
@@ -64,9 +64,16 @@ vet:
 	@$(MAKE) --no-print-directory ticker-stop-check
 	@$(MAKE) --no-print-directory lock-defer-check
 	@$(MAKE) --no-print-directory goroutine-guard-check
+	@$(MAKE) --no-print-directory script-syntax-check
 
 # ticker 必须 Stop：这条形状被处理过两次（P80 给号池巡检协程补 defer Stop；第三十遍发现
 # app.prewarmCache 是全仓 8 个 ticker 里唯一漏的那个），第三次不再靠人想起来
+# 脚本语法门（待办清单 P120 的出路 B）：scripts/ 下不进 vet 的那些脚本，坏了没人报过——
+# 探针从 2026-10-07 起解析不过，直到下一次有人想起来跑它。这条只查解析（bash -n / node --check），
+# 不查风格：风格规则的第一条假警报就会教人无视整条检查。
+script-syntax-check:
+	@./scripts/check-script-syntax.sh
+
 ticker-stop-check:
 	@./scripts/check-ticker-stopped.sh
 
