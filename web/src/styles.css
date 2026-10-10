@@ -77,9 +77,14 @@
   .table-wrap { @apply bg-surface border border-border rounded-xl overflow-x-auto; }
   .table-base { @apply w-full text-sm; }
   .table-base thead { @apply bg-surface-alt; }
-  /* 表头吸顶：长表向下滚动时列名粘在粘性顶栏下方（桌面端表格专用，移动端是卡片流无此问题）。
-     粘性设在 th 上（thead 本身不是 sticky 友好元素）；top 对齐顶栏 md:py-4 的总高约 64px。 */
-  .table-base th { @apply font-mono text-xs uppercase tracking-wider text-text-muted px-3 md:px-5 py-3 md:py-4 text-left font-medium; position: sticky; top: 64px; z-index: 5; }
+  /* 表头吸顶。两条同时成立才叫"吸顶"，少一条就只是把表头推下去：
+     ① `top` 必须相对**最近的滚动口**给——`.table-wrap` 的 overflow-x-auto 就是那个滚动口
+       （CSS 规定一个轴非 visible 时另一个也算 auto），所以这里只能是 `top: 0`，写 64px 会把整行表头
+       推下 64 像素压住第一行（2026-10-10 就这么上线过一次，实测 shift=64、overlap=64，而且一次也没吸住）；
+     ② 那个滚动口自己得会纵向滚——见文件末尾那条 `@media (min-width: 768px)` 给的 max-height。
+     背景要设在 th 上而不是只靠 thead：粘住之后 thead 的底色跟着内容滚走，行会从字底下穿过去。
+     量它的脚本：scripts/header-geometry-probe.mjs（带 STICKY=1 时这一条是硬要求）。 */
+  .table-base th { @apply font-mono text-xs uppercase tracking-wider text-text-muted px-3 md:px-5 py-3 md:py-4 text-left font-medium bg-surface-alt; position: sticky; top: 0; z-index: 5; }
   .table-base td { @apply px-3 md:px-5 py-3 md:py-4; }
   .table-base tbody tr { @apply border-b border-border last:border-b-0 hover:bg-surface-alt/50 transition-colors; }
 
@@ -163,4 +168,13 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
     width: 20px;
     height: 20px;
   }
+}
+
+/* 桌面端：长表在卡片内部滚，表头因此才有一个"钉住的位置"可钉（吸顶的另一半，见 @layer 里那条）。
+   9rem ≈ 粘性顶栏(实测 69px) + 页面上下留白 + 页标题那一行；这个数不是契约，探针验的是
+   "卡片滚起来之后 th 还贴在卡片顶边"，不是某个像素高度。窄屏不给 max-height：
+   小屏上切出一块矮滚动区比页面变长更糟，而 top:0 在那里只是不吸顶、不会把表头推走。
+   overscroll-behavior: contain = 滚到底不把滚动传给页面（内滚区最常见的抱怨）。 */
+@media (min-width: 768px) {
+  .table-wrap { max-height: calc(100vh - 9rem); overscroll-behavior: contain; }
 }

@@ -8,6 +8,7 @@
 # 用法：
 #   make viewport-check            # 或 ./scripts/run-viewport-probe.sh
 #   WIDTHS=390 SEED_USERS=0 ./scripts/run-viewport-probe.sh
+#   PROBE=scripts/header-geometry-probe.mjs WIDTHS=1280 ./scripts/run-viewport-probe.sh   # 换一支探针，实例只起一次
 #
 # 前提（脚本会自己说清缺哪一条，不写"本环境没有浏览器"这种无证据的断言）：
 #   - 已 make build（需要 ./loomproxy-go，面板是 go:embed 进去的）
@@ -20,6 +21,9 @@ BIN="$REPO_ROOT/loomproxy-go"
 WIDTHS="${WIDTHS:-390,1280}"
 SEED_USERS="${SEED_USERS:-6}"
 PW_CORE="${PW_CORE:-/tmp/node_modules/playwright-core}"
+# 同一份临时实例可以喂给别的"按视口量一次"的探针（比如表头几何那支），所以探针名可换、实例只起一次。
+# 复制一份起实例的脚本 = 长出第二个事实来源，收尾那半（ kill 要打到 exec 过的那颗 pid）就会漏。
+PROBE="${PROBE:-scripts/viewport-probe.mjs}"
 
 [ -x "$BIN" ] || { echo "找不到 $BIN——先 make build（面板产物是 go:embed 进二进制的）"; exit 2; }
 [ -d "$PW_CORE" ] || { echo "缺 $PW_CORE——跑一次：npm --prefix /tmp i playwright-core"; exit 2; }
@@ -28,9 +32,9 @@ PW_CORE="${PW_CORE:-/tmp/node_modules/playwright-core}"
 # 代价是它坏了没有任何东西会报——2026-10-07 那颗提交把一段带反引号的注释写进了模板字符串里，
 # 整个脚本从那天起语法坏掉，直到 2026-10-10 下一次真要用它才发现（待办清单 P120）。
 # 判据：**不进门禁的检查，至少要在自己开工前过一次语法门**——`node --check` 两行成本，换掉"静默坏掉三周"。
-if ! node --check "$REPO_ROOT/scripts/viewport-probe.mjs" >/dev/null 2>&1; then
-  echo "探针脚本自身解析不过——先修 scripts/viewport-probe.mjs，别起实例（起了也只会跑到一半报语法错）" >&2
-  node --check "$REPO_ROOT/scripts/viewport-probe.mjs" 2>&1 | head -5 >&2
+if ! node --check "$REPO_ROOT/$PROBE" >/dev/null 2>&1; then
+  echo "探针脚本自身解析不过——先修 $PROBE，别起实例（起了也只会跑到一半报语法错）" >&2
+  node --check "$REPO_ROOT/$PROBE" 2>&1 | head -5 >&2
   exit 2
 fi
 
@@ -93,8 +97,9 @@ if [ "$SEED_USERS" != "0" ]; then
 fi
 
 cd "$REPO_ROOT"
-BASE="$BASE" ADMIN_USER=admin ADMIN_PASS="$ADMIN_PASS" WIDTHS="$WIDTHS" \
-  PW_CORE="$PW_CORE" OUT="${OUT:-/tmp/viewport-probe}" node scripts/viewport-probe.mjs
+BASE="$BASE" ADMIN_USER=admin ADMIN_PASS="$ADMIN_PASS" WIDTHS="$WIDTHS" ROUTES="${ROUTES:-}" \
+  STICKY="${STICKY:-}" \
+  PW_CORE="$PW_CORE" OUT="${OUT:-/tmp/viewport-probe}" node "$REPO_ROOT/$PROBE"
 RC=$?
-echo "viewport-probe 退出码 $RC（0=两档视口下每条路由都不溢出、本页请求无 ≥400；1=有未达标项，上面逐行点名；2=起不来）"
+echo "$PROBE 退出码 $RC（0=两档视口下每条路由都不溢出、本页请求无 ≥400；1=有未达标项，上面逐行点名；2=起不来）"
 exit $RC
