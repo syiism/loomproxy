@@ -117,7 +117,10 @@ const MEASURE = `(() => {
     if (!tops.some((t) => t.right >= b.right && t.width >= b.width)) tops.push(b);
   }
   const text = (document.querySelector('main') || document.body).innerText.replace(/\\s+/g, ' ').slice(0, 60);
-  // 注意：`main` 取到的文字**不含弹窗内容**（UiModal 渲染在 main 之外）。
+  // 注意：「main」取到的文字**不含弹窗内容**（UiModal 渲染在 main 之外）。
+  //   ——这里原本写的是反引号，而**整段是一个模板字符串**：反引号会提前终结它，
+  //   整个探针从 2026-10-07 那颗提交起就是语法坏的状态而没人发现（它刻意不进 make build）。
+  //   所以这段注释里永远不要再出现反引号，要引用名字用「」。
   // 这一格本轮骗过我们一次：验证「限制项」表格里的一句话时读 main，读不到，判成假红
   // ——文字在页上但不在测量范围内。溢出那半边不受影响（它扫的是 body *）。
   return { page, offenders: tops, scrolledCount, text, loc: location.pathname };

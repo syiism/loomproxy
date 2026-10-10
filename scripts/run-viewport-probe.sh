@@ -24,6 +24,16 @@ PW_CORE="${PW_CORE:-/tmp/node_modules/playwright-core}"
 [ -x "$BIN" ] || { echo "找不到 $BIN——先 make build（面板产物是 go:embed 进二进制的）"; exit 2; }
 [ -d "$PW_CORE" ] || { echo "缺 $PW_CORE——跑一次：npm --prefix /tmp i playwright-core"; exit 2; }
 
+# **先解析再起实例**：这条探针刻意不进 make build（它要浏览器与一份临时实例，挂进门禁会把门禁变成等待），
+# 代价是它坏了没有任何东西会报——2026-10-07 那颗提交把一段带反引号的注释写进了模板字符串里，
+# 整个脚本从那天起语法坏掉，直到 2026-10-10 下一次真要用它才发现（待办清单 P120）。
+# 判据：**不进门禁的检查，至少要在自己开工前过一次语法门**——`node --check` 两行成本，换掉"静默坏掉三周"。
+if ! node --check "$REPO_ROOT/scripts/viewport-probe.mjs" >/dev/null 2>&1; then
+  echo "探针脚本自身解析不过——先修 scripts/viewport-probe.mjs，别起实例（起了也只会跑到一半报语法错）" >&2
+  node --check "$REPO_ROOT/scripts/viewport-probe.mjs" 2>&1 | head -5 >&2
+  exit 2
+fi
+
 TMP="$(mktemp -d /tmp/loom-viewport.XXXXXX)"
 ADMIN_PASS="vp$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"   # 一次性口令，不进仓库、不打印
 cat > "$TMP/.env" <<EOF
