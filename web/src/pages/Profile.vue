@@ -66,37 +66,10 @@
         </div>
       </section>
 
-      <!-- 单日额度的清零钟点（待办清单 P106）：唯一写入口 POST /auth/quota-cycle（只认会话）。
-           模式、锚点钟点、下一次可切换时刻全部由后端下发——面板不自己拿 created_at 推时区，也不自己抄那 30 天。 -->
-      <section class="reveal">
-        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">额度清零时间</h2>
-        <p class="text-sm text-text-muted leading-relaxed mb-4">
-          每日额度默认在<strong>平台时区 0 点</strong>清零。也可以改为按<strong>你注册那一刻的钟点</strong>
-          （当前为 <span class="font-mono">{{ me.quota_cycle_anchor || '—' }}</span>）每 24 小时清零一次。
-          <strong>这只移动清零的时刻，不改变限额数字，也不改变「一日」这个窗口长度。</strong>
-        </p>
-        <div class="space-y-2 mb-4">
-          <label class="flex items-start gap-2">
-            <input type="radio" value="day" v-model="cycleForm.mode" class="mt-0.5" :disabled="cycleLocked || savingCycle">
-            <span class="text-sm">按自然日 0 点清零（默认）</span>
-          </label>
-          <label class="flex items-start gap-2">
-            <input type="radio" value="subscription" v-model="cycleForm.mode" class="mt-0.5" :disabled="cycleLocked || savingCycle">
-            <span class="text-sm">按注册钟点 <span class="font-mono">{{ me.quota_cycle_anchor || '—' }}</span> 清零</span>
-          </label>
-        </div>
-        <p v-if="cycleLocked" class="text-xs text-text-muted leading-relaxed mb-4">
-          每 30 天只能切换一次，下一次可切换时间：<span class="font-mono">{{ me.quota_cycle_next_switch_at }}</span>。
-        </p>
-        <div class="flex items-center gap-3">
-          <button type="button" class="btn-primary" :disabled="savingCycle || cycleLocked || cycleForm.mode === me.quota_cycle_mode" @click="onSaveCycle">
-            {{ savingCycle ? '保存中' : '保存设置' }}
-          </button>
-          <span v-if="!cycleLocked && cycleForm.mode !== (me.quota_cycle_mode || 'day')" class="text-xs text-text-muted">
-            切换不会撤销本次已用的额度，但会把今天这一轮的起算点移到新钟点。
-          </span>
-        </div>
-      </section>
+      <!-- 「额度清零时间」这一格按待办清单 P119 ① 从个人中心摘掉（面板不再给切换入口）。
+           服务端能力原样留着：POST /auth/quota-cycle 与 /auth/me 的 quota_cycle_* 三个字段不动——
+           **已经切到 subscription 的人继续按其注册钟点清零**，这是 A 档的定案理由（回落等于在
+           用户不知情时改他的额度窗口）。要重新给入口时，本节的历史形状在 2026-10-10 之前的 git 里。 -->
 
       <!-- 显示别名（待办清单 P43）：只改「你看到的称呼」。默认名在 quota_plans/roles 两张全局表里，
            这里一概不动；管理员视图同时显示默认名与你的别名，所以别名不会把你的真实档位藏起来。 -->
@@ -212,21 +185,24 @@
       </div>
     </section>
 
-    <!-- 数据源 BaseURL 配置 -->
-    <section class="mt-12 md:mt-16 reveal">
-      <div class="flex items-end justify-between mb-5 pb-3 border-b border-border">
-        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">数据源地址</h2>
-        <button v-if="sourceConfigDirty" class="btn-primary btn-sm" :disabled="savingSourceConfig" @click="onSaveSourceConfig">保存配置</button>
+    <!-- 数据源 BaseURL 配置：默认折叠（待办清单 P119 ②，维护者点名这一格挡视线）。
+         折叠只是省滚动、不是藏信息——收起态那行摘要给的是读数（几个源、几个已自定义、有没有未保存改动），
+         不是"暂无"这种形容词（判据正本在 UiCollapse.vue 顶部那两条设计约束）。
+         保存按钮留在展开态里：dirty 只可能在展开之后发生，所以收起态不会有"改了却没处保存"。 -->
+    <UiCollapse title="数据源地址" :summary="sourceConfigSummary" storage-key="profile-source-config">
+      <div class="flex items-end justify-between mb-4 gap-3">
+        <p class="text-xs text-text-muted leading-relaxed">留空即使用该源的平台默认地址；改动要按「保存配置」才写入。</p>
+        <button v-if="sourceConfigDirty" class="btn-primary btn-sm shrink-0" :disabled="savingSourceConfig" @click="onSaveSourceConfig">保存配置</button>
       </div>
       <UiSpinner v-if="sourceConfigs === null" />
       <div v-else class="space-y-3">
         <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="card !p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div class="font-mono text-sm min-w-[140px]">{{ cfg.source_display }}</div>
-          <div class="font-mono text-xs text-text-muted min-w-[100px]">{{ cfg.source_name }}</div>
-          <input v-model="cfg.base_url" class="input flex-1 font-mono text-sm" placeholder="留空则使用平台默认地址" @input="sourceConfigDirty = true">
+          <div class="font-mono text-sm min-w-0 flex-1 sm:flex-none sm:w-[140px] truncate">{{ cfg.source_display }}</div>
+          <div class="font-mono text-xs text-text-muted sm:min-w-[100px]">{{ cfg.source_name }}</div>
+          <input v-model="cfg.base_url" class="input min-w-0 flex-1 font-mono text-sm" placeholder="留空则使用平台默认地址" @input="sourceConfigDirty = true">
         </div>
       </div>
-    </section>
+    </UiCollapse>
 
     <!-- 退出其他设备确认 -->
     <UiModal :open="revokeOthersOpen" title="退出其他设备" @close="revokeOthersOpen = false" @confirm="onRevokeOthers" confirm-text="全部退出" :confirm-loading="revokingOthers">
@@ -261,6 +237,7 @@ import UiTag from '../components/UiTag.vue'
 import UiModal from '../components/UiModal.vue'
 import UiSpinner from '../components/UiSpinner.vue'
 import UiEmpty from '../components/UiEmpty.vue'
+import UiCollapse from '../components/UiCollapse.vue'
 import { authApi, userConfigApi, apikeyApi, clearToken } from '../api/index.js'
 import { session } from '../store.js'
 import { fmtDate, roleTone, toast, revealObserve } from '../utils.js'
@@ -271,16 +248,6 @@ const profileForm = ref({ username: '', nickname: '', email: '', token_expire_ho
 // 老会话缓存里没这个键时读成 undefined，`!== false` 按默认档（同意）走
 const privacyForm = ref({ content_consent: true })
 const savingPrivacy = ref(false)
-// 单日额度清零钟点的模式（待办清单 P106）：值只有 day / subscription 两个词，读的是服务端下发的有效值
-const cycleForm = ref({ mode: 'day' })
-const savingCycle = ref(false)
-// 限频的判据也在服务端算：这一刻还没到 = 锁住。面板不自己加 30 天（抄一份就会漂）。
-const cycleLocked = computed(() => {
-  const v = (me.value || {}).quota_cycle_next_switch_at
-  if (!v) return false
-  const t = new Date(v).getTime()
-  return !Number.isNaN(t) && t > Date.now()
-})
 // 显示别名（待办清单 P43）：资格判据与后端一致——绑定了非免费套餐才能改
 const savingAlias = ref(false)
 const aliasTargets = ref([])
@@ -330,6 +297,14 @@ const revokingOthers = ref(false)
 const revokeOthersOpen = ref(false)
 const sourceConfigs = ref(null)
 const sourceConfigDirty = ref(false)
+// 收起态摘要：读数而不是形容词（0 个已自定义也要说出来——"一个都没配"本身就是信息）
+const sourceConfigSummary = computed(() => {
+  const list = sourceConfigs.value
+  if (list === null) return '加载中'
+  const custom = list.filter((c) => (c.base_url || '').trim() !== '').length
+  const dirty = sourceConfigDirty.value ? '，有未保存改动' : ''
+  return `共 ${list.length} 个源，已自定义 ${custom} 个${dirty}`
+})
 const savingSourceConfig = ref(false)
 // 书源导入：绝对地址由当前站点拼（同源即用户真实到达的域），就绪与否由后端看文件
 const bookSourceUrl = ref('')
@@ -389,28 +364,10 @@ const load = async () => {
     buildAliasTargets()
     profileForm.value = { username: me.value.username || '', nickname: me.value.nickname || '', email: me.value.email || '', token_expire_hours: me.value.token_expire_hours || 0 }
     privacyForm.value.content_consent = me.value.content_consent !== false
-    cycleForm.value.mode = me.value.quota_cycle_mode || 'day'
   } catch (e) { /* 401 已由客户端处理 */ }
   nextTick(revealObserve)
 }
 
-const onSaveCycle = async () => {
-  if (savingCycle.value || cycleLocked.value) return
-  const want = cycleForm.value.mode
-  savingCycle.value = true
-  try {
-    const data = await authApi.updateQuotaCycle(want)
-    me.value = { ...me.value, quota_cycle_mode: data.mode, quota_cycle_anchor: data.anchor || '', quota_cycle_next_switch_at: data.next_switch_at || null }
-    session.user = me.value
-    toast(data.changed ? '已切换额度清零时间' : '当前已是该模式，未做变更', 'success')
-  } catch (err) {
-    // 失败要把开关拨回服务端的事实——这一项直接影响"今天这一轮从几点算"，不能让用户以为已经生效
-    cycleForm.value.mode = me.value.quota_cycle_mode || 'day'
-    toast(err.message, 'error')
-  } finally {
-    savingCycle.value = false
-  }
-}
 
 const onSaveProfile = async () => {
   if (savingProfile.value) return

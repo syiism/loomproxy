@@ -63,16 +63,18 @@
           {{ groupNameOf(tf.result.to.code) }} {{ tf.result.to.before }}→{{ tf.result.to.after }}（共 {{ tf.result.amount }}）。上方卡片与下拉已按服务端重算刷新。
         </p>
         <!-- 历史来自 GET /quota/transfers（服务端分页，这里只取最近 5 条）；口径由响应的 scope 一格下发，
-             面板不自己复述"改的是增量还是当日已用"。空列表整块不渲染——从没转过的页面上它是噪声。 -->
-        <div v-if="tfHistory.length" class="mt-5">
-          <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-2">最近转移</div>
-          <div class="space-y-1.5 text-sm">
+             面板不自己复述"改的是增量还是当日已用"。空列表整块不渲染——从没转过的页面上它是噪声。
+             2026-10-10 按待办清单 P119 ④ 改成**默认折叠**：折叠只省滚动，收起态那行摘要给读数
+             （几笔 + 最近一笔的时刻与数字），展开才出列表。「清除这一列」不在本格——它要先拍 A/B/C
+             （审计留档表能不能被本人清空），见待办清单 P119 ④。 -->
+        <UiCollapse v-if="tfHistory.length" class="mt-5" title="最近转移" :summary="tfHistorySummary" storage-key="dashboard-quota-transfer-history">
+          <div class="space-y-1.5 text-sm pb-2">
             <div v-for="h in tfHistory" :key="h.id" class="flex flex-wrap items-baseline justify-between gap-x-3">
               <span class="font-mono text-xs text-text-muted">{{ fmtDate(h.created_at) }}</span>
-              <span>{{ groupNameOf(h.from) }} <span class="font-mono">{{ h.from_before }}→{{ h.from_after }}</span>，{{ groupNameOf(h.to) }} <span class="font-mono">{{ h.to_before }}→{{ h.to_after }}</span>（{{ h.amount }}）</span>
+              <span class="min-w-0">{{ groupNameOf(h.from) }} <span class="font-mono">{{ h.from_before }}→{{ h.from_after }}</span>，{{ groupNameOf(h.to) }} <span class="font-mono">{{ h.to_before }}→{{ h.to_after }}</span>（{{ h.amount }}）</span>
             </div>
           </div>
-        </div>
+        </UiCollapse>
       </section>
 
       <!-- 筛选栏：分组（归类视图）+ 名称/源码/分组名搜索 -->
@@ -227,6 +229,7 @@ import PageHeader from '../components/PageHeader.vue'
 import UiTag from '../components/UiTag.vue'
 import UiSpinner from '../components/UiSpinner.vue'
 import UiEmpty from '../components/UiEmpty.vue'
+import UiCollapse from '../components/UiCollapse.vue'
 import UiPagination from '../components/UiPagination.vue'
 import { quotaApi, adminApi, userConfigApi } from '../api/index.js'
 import { fmtDate, revealObserve, quotaBand, remainingPct, quotaLitCount, QUOTA_DOT_CLASS, toast } from '../utils.js'
@@ -239,6 +242,15 @@ const tf = ref({ from: '', to: '', amount: 10, saving: false, result: null })
 // 转移历史（P97 的「人也要能查」那一半）：转移改的是**永久**的日限额增量，不随每日刷新回退——
 // 半年后"这个源怎么是 0"的人，最该在这一眼看到原因，而不是去怀疑源坏了。
 const tfHistory = ref([])
+const tfHistoryTotal = ref(0) // 服务端给的总笔数（本页只取最近 5 条，摘要要说清两件事）
+// 收起态摘要：读数而不是形容词（UiCollapse 顶部那条设计约束）
+const tfHistorySummary = computed(() => {
+  const list = tfHistory.value
+  if (!list.length) return ''
+  const last = list[0]
+  const head = tfHistoryTotal.value > list.length ? `共 ${tfHistoryTotal.value} 笔，这里最近 ${list.length} 笔` : `共 ${list.length} 笔`
+  return `${head}：最近一笔 ${fmtDate(last.created_at)} ${groupNameOf(last.from)} ${last.from_before}→${last.from_after}`
+})
 const tfReady = computed(() => !!tf.value.from && !!tf.value.to && tf.value.from !== tf.value.to && (tf.value.amount | 0) > 0)
 const groups = ref([])
 const ungroupedCount = ref(0)
@@ -424,6 +436,7 @@ const loadTransfers = async () => {
   try {
     const data = await quotaApi.myTransfers({ page: 1, pageSize: 5 })
     tfHistory.value = data.list || []
+    tfHistoryTotal.value = Number(data.total) || tfHistory.value.length
   } catch (e) { /* 历史读不到不影响转移与卡片读数 */ }
 }
 

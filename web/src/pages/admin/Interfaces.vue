@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="接口管理" subtitle="配置接口消耗和速率限制。默认值由「默认」Tab 编辑，每个套餐可通过「按套餐」Tab 单独覆盖。限流两种口径：窗口计数（如 30 次/60 秒，允许突发）优先于固定间隔（每 N 秒 1 次，不可突发），两项都填 0 为不限。" />
+    <PageHeader title="接口管理" subtitle="配置接口消耗和速率限制。默认值由「默认」Tab 编辑，每个套餐可通过「按套餐」Tab 单独覆盖。限流口径：窗口计数（如 30 次/60 秒，允许突发），填 0 为不限。库里另有「固定间隔（每 N 秒 1 次，不可突发）」这一档仍存在且优先度低于窗口计数，但面板不再提供输入框（待办清单 P119 ③），已有的值会继续生效并照常显示。" />
 
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
@@ -79,9 +79,11 @@
                     <span class="text-xs text-text-muted">次/</span>
                     <input v-model.number="iface.editWindowSec" type="number" min="1" class="input input-sm w-14 font-mono" title="窗口长度（秒）">
                     <span class="text-xs text-text-muted">秒</span>
-                    <span class="text-xs text-text-muted mx-0.5">或每</span>
-                    <input v-model.number="iface.editInterval" type="number" min="0" class="input input-sm w-14 font-mono" title="固定间隔（秒），0=不限">
-                    <span class="text-xs text-text-muted">秒 1 次</span>
+                    <!-- 「固定间隔（每 N 秒 1 次）」的输入框按待办清单 P119 ③ 从面板去掉（A 档）：
+                         后端字段 quota_costs.interval / quota_costs_plans.interval 与 specFrom 的判定**都原样保留**，
+                         所以库里已有的间隔配置继续生效、formatLimit 也继续如实显示"每 N 秒 1 次"。
+                         代价要写明：**面板从此清不掉一个已存在的 interval 值**（要清只能改库）。
+                         这不是缺陷而是这一档的定义——B 档（连判定一起摘）等于放宽限流，是对外可见的变更，没拍。-->
                   </div>
                   <span v-else class="font-mono text-xs">{{ formatLimit(iface) }}</span>
                 </td>
