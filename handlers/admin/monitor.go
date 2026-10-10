@@ -152,6 +152,12 @@ func GetMonitorHistory(c *gin.Context) {
 	if media := c.Query("media_type"); media != "" {
 		q = q.Where("media = ?", media)
 	}
+	// 带内失败的业务码等值筛选（待办清单 P122）：取证「站方到底回了哪一档」用。
+	// 只在带内失败的行上有值，筛它天然把范围缩到带内失败；等值而不是 contains——
+	// 码是一档一档的枚举，不是文本
+	if v := c.Query("in_band_code"); v != "" {
+		q = q.Where("in_band_code = ?", v)
+	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		auth.Fail(c, http.StatusInternalServerError, "数据库错误: "+err.Error())

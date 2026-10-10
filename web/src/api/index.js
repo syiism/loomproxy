@@ -111,13 +111,14 @@ export const adminApi = {
     request('/admin/monitor/subjects', { query: { dim, days: days || undefined, source: source || undefined, media: media || undefined } }),
   listPools: () => request('/admin/pools'),
   resetMonitor: () => request('/admin/monitor/reset', { method: 'POST' }),
-  getMonitorHistory: ({ page = 1, pageSize = 20, source, username, action, keyword, bookName, chapterTitle, mediaType } = {}) =>
+  getMonitorHistory: ({ page = 1, pageSize = 20, source, username, action, keyword, bookName, chapterTitle, mediaType, inBandCode } = {}) =>
     request('/admin/monitor/history', {
       query: {
         page, page_size: pageSize,
         source: source || undefined, username: username || undefined, action: action || undefined,
         keyword: keyword || undefined, book_name: bookName || undefined,
         chapter_title: chapterTitle || undefined, media_type: mediaType || undefined,
+        in_band_code: inBandCode || undefined,
       },
     }),
   // 卡密（套餐兑换）

@@ -31,6 +31,10 @@ func TestObserveCallMarksInBandError(t *testing.T) {
 	if s.BookName != "" {
 		t.Errorf("带内错误不该抽到书名，实为 %q", s.BookName)
 	}
+	// 信封没给业务码：空是合法状态（旧行形状），读数按空值处理、不猜（P122）
+	if s.InBandCode != "" {
+		t.Errorf("没给 code 应留空，实为 %q", s.InBandCode)
+	}
 
 	// 源自己拼 map（松散信封）的路径要走到同一处标记
 	s = observeOne(t, "fake_a", nil, map[string]interface{}{
@@ -41,11 +45,52 @@ func TestObserveCallMarksInBandError(t *testing.T) {
 		t.Error("松散 map 的 contentType==error 也应标 InBandError")
 	}
 
+	// 业务码（P122）：信封给 code 就照抄——数字型（JSON 解出来是 float64）也收
+	s = observeOne(t, "fake_a", map[string]interface{}{"itemId": "i1", "bookId": "b1"},
+		legado.ContentResponse{ContentType: "error", Data: map[string]interface{}{"message": "denied", "reason": "upstream_status", "code": 401}})
+	if s.InBandCode != "401" || s.InBandReason != "upstream_status" {
+		t.Errorf("业务码与成因应照抄，实为 reason=%q code=%q", s.InBandReason, s.InBandCode)
+	}
+	// 字符串型 code 同样照抄；reason 没给就留空（两格互不牵连）
+	s = observeOne(t, "fake_a", nil, map[string]interface{}{
+		"contentType": "error",
+		"data":        map[string]interface{}{"message": "denied", "code": "4001"},
+	})
+	if s.InBandCode != "4001" || s.InBandReason != "" {
+		t.Errorf("字符串型 code 应照抄、reason 没给应留空，实为 reason=%q code=%q", s.InBandReason, s.InBandCode)
+	}
+
 	// 正常正文不受影响
 	s = observeOne(t, "fake_a", map[string]interface{}{"itemId": "i1"},
 		legado.ContentResponse{ContentType: "text", Data: map[string]interface{}{"content": "正文"}})
 	if s.InBandError {
 		t.Error("正常正文不该标 InBandError")
+	}
+	if s.InBandCode != "" {
+		t.Errorf("正常正文不该有业务码，实为 %q", s.InBandCode)
+	}
+}
+
+// TestWithholdContentKeepsInBandBusinessCode P37 在 P122 上的判：同意位关闭抹的是
+// 内容维度（七列含标识），业务码不是内容维度——抹了它「站方到底回了哪一档」就没人答得上来，
+// 而留它不带出用户读了什么。
+func TestWithholdContentKeepsInBandBusinessCode(t *testing.T) {
+	s := &base.CallSubject{
+		InBandError: true, InBandReason: "upstream_status", InBandCode: "401",
+		Keyword: "词", BookName: "书", ChapterTitle: "章", Media: base.MediaNovel,
+		ResultCount: 3, BookKey: "bk1", ChapterKey: "c1",
+	}
+	s.WithholdContent()
+	if !s.InBandError || s.InBandReason != "upstream_status" || s.InBandCode != "401" {
+		t.Errorf("带内业务读数不该被 WithholdContent 抹掉: err=%v reason=%q code=%q",
+			s.InBandError, s.InBandReason, s.InBandCode)
+	}
+	if s.Keyword != "" || s.BookName != "" || s.ChapterTitle != "" || s.Media != "" ||
+		s.ResultCount != 0 || s.BookKey != "" || s.ChapterKey != "" {
+		t.Errorf("内容维度该被抹干净（含标识）: %+v", s)
+	}
+	if !s.ContentWithheld {
+		t.Error("WithholdContent 后应带上 withheld 标记")
 	}
 }
 
@@ -86,7 +131,7 @@ func TestInBandErrorEndToEnd(t *testing.T) {
 	base.ResetMetrics()
 	base.DrainRecentCalls()
 
-	up := staticUpstream(t, `{"contentType":"error","data":{"message":"missing itemId or bookId parameter"}}`)
+	up := staticUpstream(t, `{"contentType":"error","data":{"message":"missing itemId or bookId parameter","reason":"upstream_status","code":401}}`)
 	setPlatformUpstream(t, "fake_b", up.URL)
 
 	admin := authHeader(adminToken(t, srv))
@@ -102,11 +147,14 @@ func TestInBandErrorEndToEnd(t *testing.T) {
 		t.Fatalf("fake_b/content = total %d failed %d, want 1/1", m.Total, m.Failed)
 	}
 
-	// 最近调用明细带标记（面板据此显示「带内失败」）
+	// 最近调用明细带标记与业务读数（面板据此显示「带内失败·upstream_status·401」）
 	for _, rc := range base.RecentCalls(10) {
 		if rc.Source == "fake_b" && rc.Action == "content" {
 			if !rc.InBandError {
 				t.Fatal("全链路后 RecentCall 丢了 in_band_error 标记")
+			}
+			if rc.InBandReason != "upstream_status" || rc.InBandCode != "401" {
+				t.Fatalf("全链路后 RecentCall 丢了业务读数: reason=%q code=%q", rc.InBandReason, rc.InBandCode)
 			}
 			return
 		}

@@ -30,7 +30,9 @@ type RecentCall struct {
 	InBandError bool `json:"in_band_error,omitempty"`
 	// InBandReason 带内失败成因（P22②-b 的 ②-b1），源在错误正文里给 reason 键时才有值
 	InBandReason string `json:"in_band_reason,omitempty"`
-	LatencyMs    int64  `json:"latency_ms"`
+	// InBandCode 带内失败里站方信封的业务码（待办清单 P122），空=源没给
+	InBandCode string `json:"in_band_code,omitempty"`
+	LatencyMs  int64  `json:"latency_ms"`
 	// 内容维度（由 legado.ObserveCall 从规范化响应回填；没抽到就是空串）
 	Keyword      string `json:"keyword,omitempty"`
 	BookName     string `json:"book_name,omitempty"`
@@ -139,6 +141,7 @@ func recordCallLocked(source, action, username, ip string, status int, ms int64,
 	}
 	if subject != nil {
 		rc.InBandReason = subject.InBandReason
+		rc.InBandCode = subject.InBandCode
 		rc.Keyword = subject.Keyword
 		rc.BookName = subject.BookName
 		rc.ChapterTitle = subject.ChapterTitle

@@ -245,7 +245,7 @@
         <div v-for="(r, i) in recent" :key="'k' + i" class="card reveal">
           <div class="flex items-baseline justify-between gap-2">
             <div class="font-mono text-xs text-text-muted">{{ fmtDate(r.time) }}</div>
-            <div class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></div>
+            <div class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span><template v-if="inBandDetail(r)"> <span class="text-text-muted">{{ inBandDetail(r) }}</span></template></template></div>
           </div>
           <div class="mt-1.5 flex items-center gap-1.5 flex-wrap text-sm">
             <span v-if="r.username" class="font-medium">{{ r.username }}</span>
@@ -281,7 +281,7 @@
               <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
               <td><UiTag tone="blue" :label="r.source" /></td>
               <td class="font-mono text-xs">{{ r.action }}</td>
-              <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></td>
+              <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span><template v-if="inBandDetail(r)"> <span class="text-text-muted">{{ inBandDetail(r) }}</span></template></template></td>
               <td class="hidden md:table-cell font-mono text-xs">{{ r.latency_ms }}ms</td>
               <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
               <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
@@ -294,13 +294,14 @@
       </div>
     </template>
 
-    <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-3 reveal">
+    <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-3 reveal flex-wrap">
       <div class="font-serif text-lg font-medium tracking-tight flex-1">历史调用</div>
       <input v-model="historyFilter.source" list="source-options" placeholder="数据源"
              class="input input-sm sm:w-36 font-mono" @keydown.enter="loadHistory(1)" @change="loadHistory(1)">
       <input v-model="historyFilter.username" placeholder="调用者" class="input input-sm sm:w-32 font-mono" @keydown.enter="loadHistory(1)">
       <input v-model="historyFilter.keyword" placeholder="搜索词" class="input input-sm sm:w-32" @keydown.enter="loadHistory(1)">
       <input v-model="historyFilter.bookName" placeholder="书名" class="input input-sm sm:w-32" @keydown.enter="loadHistory(1)">
+      <input v-model="historyFilter.inBandCode" placeholder="带内码" class="input input-sm sm:w-24 font-mono" @keydown.enter="loadHistory(1)">
       <select v-model="historyFilter.mediaType" class="input input-sm sm:w-28" @change="loadHistory(1)">
         <option value="">全部媒介</option>
         <option v-for="m in MEDIAS" :key="m.value" :value="m.value">{{ m.label }}</option>
@@ -321,7 +322,7 @@
         <div v-for="(r, i) in history" :key="'k' + i" class="card reveal">
           <div class="flex items-baseline justify-between gap-2">
             <div class="font-mono text-xs text-text-muted">{{ fmtDate(r.time) }}</div>
-            <div class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></div>
+            <div class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span><template v-if="inBandDetail(r)"> <span class="text-text-muted">{{ inBandDetail(r) }}</span></template></template></div>
           </div>
           <div class="mt-1.5 flex items-center gap-1.5 flex-wrap text-sm">
             <span v-if="r.username" class="font-medium">{{ r.username }}</span>
@@ -358,7 +359,7 @@
             <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.ip || '—' }}</td>
             <td><UiTag tone="blue" :label="r.source" /></td>
             <td class="font-mono text-xs">{{ r.action }}</td>
-            <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span></template></td>
+            <td class="font-mono text-xs" :style="{ color: statusColor(r.status) }">{{ r.status }}<template v-if="r.in_band_error"> <span class="text-pale-red-fg">·带内失败</span><template v-if="inBandDetail(r)"> <span class="text-text-muted">{{ inBandDetail(r) }}</span></template></template></td>
             <td class="hidden md:table-cell font-mono text-xs">{{ r.latency_ms }}ms</td>
             <td><div class="max-w-36 truncate text-sm" :title="r.keyword">{{ r.keyword || '—' }}</div></td>
             <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
@@ -411,7 +412,7 @@ const history = ref([])
 const historyPage = ref(1)
 const historyTotal = ref(0)
 const historyPageSize = 20
-const historyFilter = ref({ source: '', username: '', keyword: '', bookName: '', mediaType: '' })
+const historyFilter = ref({ source: '', username: '', keyword: '', bookName: '', mediaType: '', inBandCode: '' })
 const subjectDim = ref('keyword')
 const subjectDays = ref(7)
 const subjectSource = ref('')
@@ -492,6 +493,9 @@ const subjectSummary = computed(() => {
 
 const rateColor = (r) => r >= 95 ? 'rgb(var(--c-pale-green-fg))' : r >= 80 ? 'rgb(var(--c-pale-yellow-fg))' : 'rgb(var(--c-pale-red-fg))'
 const statusColor = (s) => s >= 500 ? 'rgb(var(--c-pale-red-fg))' : s >= 400 ? 'rgb(var(--c-pale-yellow-fg))' : 'rgb(var(--c-pale-green-fg))'
+// 带内失败的明细标注（待办清单 P122）：成因分类与业务码，谁有值显谁——
+// 「站方到底回了哪一档」在状态列一眼可见，不用再去库里翻
+const inBandDetail = (r) => [r.in_band_reason, r.in_band_code].filter(Boolean).join('·')
 
 const load = async (silent) => {
   if (!silent) loading.value = true
@@ -538,6 +542,7 @@ const loadHistory = async (page) => {
       keyword: f.keyword || undefined,
       bookName: f.bookName || undefined,
       mediaType: f.mediaType || undefined,
+      inBandCode: f.inBandCode || undefined,
     })
     history.value = data.list || []
     historyTotal.value = data.total || 0

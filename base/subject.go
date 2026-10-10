@@ -38,6 +38,11 @@ type CallSubject struct {
 	// **今天现网读到的必然是空串**——还没有源报这个键，②-b 那次定案靠的是读日志定性；
 	// 这一列是「下次不再定性」的基础设施，空是"源没给"而不是"没坏"。
 	InBandReason string `json:"-"`
+	// InBandCode 带内失败里站方信封的业务码（待办清单 P122）：源在错误正文 Data 里给
+	// code 键时照抄（zj_novel 一族是 0/4001/401/403/429 这一档），骨架只搬运不解释。
+	// 与 InBandReason 同形状——空=源没给，是合法状态，读数按空值处理、不猜。
+	// 有了它「会话被拒（401/403）」与「配额/风控 429」才分得开：reason 只说"是上游回的错误"。
+	InBandCode string `json:"-"`
 	// 内部标识：只用于查命名缓存，不对外暴露（面板展示的是名称）
 	BookKey    string `json:"-"`
 	ChapterKey string `json:"-"`
@@ -58,6 +63,10 @@ type CallSubject struct {
 //
 // InBandError 保留：它说的是这次请求成没成，不是用户读了什么，
 // 清掉它会让成功率读数对退出用户说谎。
+// InBandReason / InBandCode 同理保留（待办清单 P122 里把这一格判死）：
+// 成因分类与业务码说的是「站方回了哪一档」，不是内容维度——
+// 抹了它们，S104 取证那种「会话被拒还是配额 429」就永远分不开，
+// 而留着它们不会带出用户读了什么。
 func (s *CallSubject) WithholdContent() {
 	if s == nil {
 		return

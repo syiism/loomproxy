@@ -35,6 +35,14 @@ func initMonitorPersistence() {
 	})
 }
 
+// PersistCallLogs 把一批明细写进 api_call_logs（导出位，同 PurgeExpiredCallLogs 的先例）。
+// flusher 由 app.Run 的 initMonitorPersistence 接线，而测试夹具只建 CreateApp——
+// 不导出这一层，集成测试就永远钉不住「RecentCall → 明细列」的落库映射
+// （断言只到内存那一段，映射行删了也不会红，正是 P124 那一族「声明了、没人装配」的形状）。
+func PersistCallLogs(calls []base.RecentCall) {
+	persistCallLogs(calls)
+}
+
 // persistCallLogs 批量写入调用明细，并顺带清理超过保留期的历史记录
 func persistCallLogs(calls []base.RecentCall) {
 	if len(calls) == 0 || db.DB == nil {
@@ -50,6 +58,7 @@ func persistCallLogs(calls []base.RecentCall) {
 			Status:       rc.Status,
 			InBandError:  rc.InBandError,
 			InBandReason: rc.InBandReason,
+			InBandCode:   rc.InBandCode,
 			LatencyMs:    rc.LatencyMs,
 			CreatedAt:    rc.Time,
 			Keyword:      rc.Keyword,

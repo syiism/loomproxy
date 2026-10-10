@@ -129,6 +129,10 @@ func observeContent(source string, subj *base.CallSubject, contentType string, d
 		// 成因分类（P22②-b 的 ②-b1）：源在 Data 里给 reason 键时照抄，没给就留空——
 		// 空是合法状态（今天的源都还不认这个键），读数按空值处理，不猜
 		subj.InBandReason = base.ParamString(data, "reason")
+		// 业务码（待办清单 P122）：站方信封的 code（0/4001/401/403/429 一档）照抄，
+		// 与 reason 同形状——空=源没给。reason 只说"是上游回的错误"，
+		// 分不出「会话被拒」与「配额/风控 429」，业务码才是那半格
+		subj.InBandCode = base.ParamString(data, "code")
 	}
 	media := base.MediaFromContentType(contentType)
 	if media == "" {

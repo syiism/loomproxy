@@ -19,9 +19,13 @@ type ApiCallLog struct {
 	// 列 NOT NULL 默认 false——成功/失败口径在 SQL 里直接用它，NULL 会把旧行读成第三种状态。
 	InBandError bool `gorm:"not null;default:false" json:"in_band_error"`
 	// InBandReason 带内失败成因（P22②-b 的 ②-b1），源在错误正文里给 reason 键时才有值，空=源没给
-	InBandReason string    `gorm:"size:32" json:"in_band_reason"`
-	LatencyMs    int64     `json:"latency_ms"`              // 耗时（毫秒）
-	CreatedAt    time.Time `gorm:"index" json:"created_at"` // 调用时间
+	InBandReason string `gorm:"size:32" json:"in_band_reason"`
+	// InBandCode 带内失败里站方信封的业务码（待办清单 P122），源给 code 键时照抄，空=源没给。
+	// **不是内容维度**：同意位关闭时不清这一格（WithholdContent 只抹内容维度）——
+	// 它说的是「站方回了哪一档」，不带出用户读了什么
+	InBandCode string    `gorm:"size:32" json:"in_band_code"`
+	LatencyMs  int64     `json:"latency_ms"`              // 耗时（毫秒）
+	CreatedAt  time.Time `gorm:"index" json:"created_at"` // 调用时间
 	// 内容维度：由 base/legado 从规范化响应回填，没抽到就是空串（不建 index——
 	// 面板是 contains LIKE 筛选，B-tree 用不上，只换来写放大）
 	Keyword      string `gorm:"size:128" json:"keyword"`       // 搜索词
