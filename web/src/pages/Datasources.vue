@@ -23,13 +23,13 @@
     <!-- 鉴权方式 -->
     <section class="reveal mb-10 md:mb-12">
       <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">鉴权方式</h2>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
         <div class="card card-hover reveal flex flex-col">
           <UiTag tone="green" label="推荐" class="self-start mb-3" />
           <div class="font-medium mb-2">Token</div>
           <p class="text-sm text-text-muted mb-4 flex-1">请求头携带 <code class="font-mono text-xs">Authorization: Bearer &lt;token&gt;</code>。当前登录凭证：</p>
           <div class="flex items-center gap-2">
-            <code class="font-mono text-xs bg-surface-alt border border-border rounded px-2 py-1.5 flex-1 truncate">{{ maskedToken }}</code>
+            <code class="font-mono text-xs bg-surface-alt border border-border rounded px-2 py-1.5 flex-1 truncate select-all">{{ maskedToken }}</code>
             <button class="btn-ghost btn-sm" @click="copy(token, 'Token')">复制</button>
           </div>
           <p class="text-xs text-text-muted mt-3">有效期 7 天，过期后重新登录获取。</p>

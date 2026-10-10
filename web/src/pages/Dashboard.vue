@@ -26,6 +26,10 @@
         <div v-for="c in summaryCards" :key="c.label" class="card reveal">
           <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">{{ c.label }}</div>
           <div class="font-serif text-3xl md:text-4xl font-medium tracking-tighter">{{ c.value }}</div>
+          <!-- 已用占比细条：与源卡同色同款，读数即卡上数字的比例 -->
+          <div v-if="c.pct != null" class="mt-4 h-1.5 bg-border rounded-full overflow-hidden">
+            <div class="h-full bg-text transition-all duration-500" :style="{ width: Math.min(100, c.pct) + '%' }"></div>
+          </div>
         </div>
       </div>
 
@@ -231,7 +235,13 @@
         <!-- 管理员视角收成「最近 5 条 + 跳转」：整表本来就是 /admin/usage-logs 的无筛选子集，
            在两页各显示一遍只会漂移（待办清单 P28·B1，收法照 P17）。普通用户仍看自己的全量分页。 -->
         <router-link v-if="isAdmin" to="/admin/usage-logs" class="inline-block mt-3 text-xs text-text-muted hover:text-text transition-colors">{{ logsTotal < 0 ? '条数不可用（本次读取失败）' : `共 ${logsTotal} 条` }} · 全部流水与筛选在「调用流水」页 ↗</router-link>
-        <UiPagination v-else :page="logsPage" :total="logsTotal" :page-size="logsPageSize" @change="goLogsPage" />
+        <template v-else>
+          <!-- 用户视角：默认预览前 5 条，多于一页才出现「展开全部」，展开后给分页 -->
+          <UiPagination v-if="logsExpanded" :page="logsPage" :total="logsTotal" :page-size="logsPageSize" @change="goLogsPage" />
+          <button v-if="logsTotal > logsPageSize" @click="logsExpanded = !logsExpanded" class="mt-3 text-xs text-text-muted hover:text-text transition-colors">
+            {{ logsExpanded ? '收起 ↑' : `展开全部 ${logsTotal} 条 ↓` }}
+          </button>
+        </template>
       </template>
     </section>
   </div>
@@ -279,8 +289,12 @@ const activeUsers = ref(0)
 const callCount = ref(0)
 const logs = ref([])
 // 管理员只看最近 5 条——整表在「调用流水」页有带筛选的全量版，这里显示 20 条同内容就是第二份事实（P28·B1）。
-// 普通用户看自己的流水，分页照旧，不受这条影响。
-const visibleLogs = computed(() => (isAdmin.value ? logs.value.slice(0, 5) : logs.value))
+// 普通用户看自己的流水：默认只预览前 5 条，展开后才出分页全量（页面太长的收敛）。
+const logsExpanded = ref(false)
+const visibleLogs = computed(() => {
+  if (isAdmin.value) return logs.value.slice(0, 5)
+  return logsExpanded.value ? logs.value : logs.value.slice(0, 5)
+})
 const logsTotal = ref(0)
 const logsPage = ref(1)
 const logsPageSize = ref(10)
@@ -316,10 +330,12 @@ const summaryCards = computed(() => {
     total = limited.reduce((n, s) => n + (s.effective_total || 0), 0)
     remaining = limited.reduce((n, s) => n + (s.remaining || 0), 0)
   }
+  // 已用占比：只对"有限额"口径算，总额度为「不限」时不画条（无分母可画）
+  const pct = limited.length === 0 ? null : (used + remaining > 0 ? (used / (used + remaining)) * 100 : 0)
   return [
     { label: '平台数', value: sources.value.length },
     { label: '今日总额度', value: total },
-    { label: '今日已用', value: used },
+    { label: '今日已用', value: used, pct },
     { label: '今日剩余', value: remaining },
   ]
 })

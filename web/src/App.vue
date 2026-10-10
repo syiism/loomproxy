@@ -13,15 +13,30 @@
           <router-link to="/dashboard" class="text-sm transition-colors" :class="navClass('/dashboard')">概览</router-link>
           <router-link to="/ranking" class="text-sm transition-colors" :class="navClass('/ranking')">排行榜</router-link>
           <router-link to="/datasources" class="text-sm transition-colors" :class="navClass('/datasources')">接入指南</router-link>
-          <router-link to="/profile" class="text-sm transition-colors" :class="navClass('/profile')">个人中心</router-link>
           <router-link v-if="admin" to="/admin" class="text-sm transition-colors" :class="navClass('/admin', true)">管理</router-link>
         </nav>
         <div class="flex items-center gap-2 md:gap-3">
-          <div class="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1 md:py-1.5 border border-border rounded-md bg-surface">
-            <span class="text-xs md:text-sm font-medium">{{ displayName }}</span>
-            <UiTag v-if="primaryRole" :tone="roleTone(primaryRole)" :label="primaryRole" />
+          <!-- 头像下拉：个人中心与退出收进这里，顶栏导航不再单挂「个人中心」 -->
+          <div class="relative">
+            <button @click="userMenuOpen = !userMenuOpen"
+                    class="w-9 h-9 rounded-full bg-surface-alt border border-border flex items-center justify-center font-serif text-sm hover:border-text transition-colors"
+                    :title="displayName" aria-label="账户菜单">
+              {{ initial }}
+            </button>
+            <div v-if="userMenuOpen" class="fixed inset-0 z-40" @click="userMenuOpen = false"></div>
+            <div v-if="userMenuOpen" class="absolute right-0 top-full mt-2 w-52 card !p-0 overflow-hidden z-50 animate-rise">
+              <div class="px-4 py-3 border-b border-border">
+                <div class="font-medium text-sm truncate">{{ displayName }}</div>
+                <div class="font-mono text-xs text-text-muted truncate mt-0.5">@{{ session.user && session.user.username }}</div>
+              </div>
+              <router-link to="/profile" @click="userMenuOpen = false"
+                           class="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-surface-alt transition-colors">
+                个人中心
+                <span v-if="primaryRole" class=""><UiTag :tone="roleTone(primaryRole)" :label="primaryRole" /></span>
+              </router-link>
+              <button @click="onLogout" class="block w-full text-left px-4 py-2.5 text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">退出登录</button>
+            </div>
           </div>
-          <button @click="onLogout" class="hidden md:block text-xs md:text-sm text-text-muted hover:text-text transition-colors">退出</button>
           <button class="md:hidden p-2.5 -mr-2.5 text-text-muted hover:text-text transition-colors" @click="mobileOpen = !mobileOpen" aria-label="菜单">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16"></path></svg>
           </button>
@@ -71,10 +86,15 @@
           <template v-if="admin">
             <div class="mt-4 pt-4 border-t border-border">
               <div class="font-mono text-xs text-text-muted uppercase tracking-wider mb-2 px-3">管理</div>
-              <router-link v-for="t in adminTabs" :key="t.to" :to="t.to" @click="mobileOpen = false" class="block px-3 py-2 rounded-lg text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">{{ t.label }}</router-link>
+              <template v-for="grp in adminNavGroups" :key="grp.label || 'root'">
+                <div v-if="grp.label" class="text-xs text-text-muted/70 px-3 mt-3 mb-1">{{ grp.label }}</div>
+                <router-link v-for="t in grp.items" :key="t.to" :to="t.to" @click="mobileOpen = false" class="block px-3 py-2 rounded-lg text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">{{ t.label }}</router-link>
+              </template>
             </div>
           </template>
           <div class="mt-4 pt-4 border-t border-border">
+            <div class="font-mono text-xs text-text-muted uppercase tracking-wider mb-2 px-3">账户</div>
+            <router-link to="/profile" @click="mobileOpen = false" class="block px-3 py-2 rounded-lg text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">个人中心</router-link>
             <button @click="onLogout" class="block w-full text-left px-3 py-2 rounded-lg text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">退出登录</button>
           </div>
         </div>
@@ -94,24 +114,27 @@
           <div class="mt-1" :class="sidebarCollapsed ? 'flex flex-col items-center' : ''">
             <div v-if="!sidebarCollapsed" class="font-mono text-xs uppercase tracking-wider text-text-muted mb-3 px-3">管理</div>
             <nav :class="sidebarCollapsed ? 'space-y-1' : 'space-y-0.5'">
-              <router-link
-                v-for="t in adminTabs"
-                :key="t.to"
-                :to="t.to"
-                :title="sidebarCollapsed ? t.label : ''"
-                :class="[
-                  'block text-sm transition-colors rounded-lg flex',
-                  sidebarCollapsed ? 'h-9 justify-center px-0' : 'px-3 py-2',
-                  isTabActive(t)
-                    ? (sidebarCollapsed ? 'text-text' : 'bg-surface border border-border text-text font-medium')
-                    : 'text-text-muted hover:text-text hover:bg-surface-alt',
-                ]"
-              >
-                <span class="shrink-0" :class="sidebarCollapsed ? 'w-5 h-5 flex items-center justify-center' : 'mr-2.5 w-4 h-4'">
-                  <SidebarIcon :name="tabIconMap[t.to]" :size="sidebarCollapsed ? 20 : 16" :stroke-width="1.5" />
-                </span>
-                <template v-if="!sidebarCollapsed">{{ t.label }}</template>
-              </router-link>
+              <template v-for="grp in adminNavGroups" :key="grp.label || 'root'">
+                <div v-if="!sidebarCollapsed && grp.label" class="font-mono text-xs uppercase tracking-wider text-text-muted px-3 mt-4 mb-1.5 first:mt-0">{{ grp.label }}</div>
+                <router-link
+                  v-for="t in grp.items"
+                  :key="t.to"
+                  :to="t.to"
+                  :title="sidebarCollapsed ? t.label : ''"
+                  :class="[
+                    'block text-sm transition-colors rounded-lg flex',
+                    sidebarCollapsed ? 'h-9 justify-center px-0' : 'px-3 py-2',
+                    isTabActive(t)
+                      ? (sidebarCollapsed ? 'text-text' : 'bg-surface border border-border text-text font-medium')
+                      : 'text-text-muted hover:text-text hover:bg-surface-alt',
+                  ]"
+                >
+                  <span class="shrink-0" :class="sidebarCollapsed ? 'w-5 h-5 flex items-center justify-center' : 'mr-2.5 w-4 h-4'">
+                    <SidebarIcon :name="tabIconMap[t.to]" :size="sidebarCollapsed ? 20 : 16" :stroke-width="1.5" />
+                  </span>
+                  <template v-if="!sidebarCollapsed">{{ t.label }}</template>
+                </router-link>
+              </template>
             </nav>
           </div>
         </aside>
@@ -200,27 +223,37 @@ watch(mobileOpen, (on) => {
   document.body.style.overflow = on ? 'hidden' : ''
 })
 const sidebarCollapsed = ref(false)
+const userMenuOpen = ref(false)
 const userTabs = [
   { to: '/dashboard', label: '概览' },
   // 排行榜取自 /admin/monitor/subjects（后端 AdminRequired），数据是用户阅读行为，只给管理员看
   { to: '/ranking', label: '排行榜' },
   { to: '/datasources', label: '接入指南' },
-  { to: '/profile', label: '个人中心' },
+  // 「个人中心」不占顶部导航，收进头像下拉与抽屉「账户」组
 ]
-const adminTabs = [
-  { to: '/admin', label: '总览', exact: true },
-  { to: '/admin/users', label: '用户' },
-  { to: '/admin/roles', label: '角色' },
-  { to: '/admin/quotas', label: '套餐' },
-  { to: '/admin/datasources', label: '数据源' },
-  { to: '/admin/interfaces', label: '接口' },
-  { to: '/admin/usage-logs', label: '用量流水' },
-  { to: '/admin/redeem-codes', label: '卡密' },
-  { to: '/admin/monitor', label: '监控' },
-  { to: '/admin/pools', label: '号池' },
-  { to: '/admin/blocked-ips', label: 'IP 拉黑' },
-  { to: '/admin/devices', label: '设备与密钥' },
-  { to: '/admin/settings', label: '设置' },
+// 管理导航按职能分组：组标题在侧边栏展开态显示；折叠态只留图标，组间自然留白
+const adminNavGroups = [
+  { label: '', items: [{ to: '/admin', label: '总览', exact: true }] },
+  { label: '权限', items: [
+    { to: '/admin/users', label: '用户' },
+    { to: '/admin/roles', label: '角色' },
+    { to: '/admin/quotas', label: '套餐' },
+    { to: '/admin/redeem-codes', label: '卡密' },
+  ] },
+  { label: '数据', items: [
+    { to: '/admin/datasources', label: '数据源' },
+    { to: '/admin/interfaces', label: '接口' },
+  ] },
+  { label: '运维', items: [
+    { to: '/admin/usage-logs', label: '用量流水' },
+    { to: '/admin/monitor', label: '监控' },
+    { to: '/admin/pools', label: '号池' },
+    { to: '/admin/blocked-ips', label: 'IP 拉黑' },
+    { to: '/admin/devices', label: '设备与密钥' },
+  ] },
+  { label: '系统', items: [
+    { to: '/admin/settings', label: '设置' },
+  ] },
 ]
 const tabIconMap = iconMap
 
@@ -234,6 +267,9 @@ const displayName = computed(() => {
   const u = session.user
   return u ? (u.nickname || u.username) : ''
 })
+
+// 头像首字母：与个人中心概览卡同一口径
+const initial = computed(() => (displayName.value.trim() || '?').charAt(0).toUpperCase())
 
 const primaryRole = computed(() => {
   const u = session.user
@@ -262,7 +298,7 @@ const onLogout = async () => {
   router.push('/login')
 }
 
-watch(() => route.path, () => { mobileOpen.value = false })
+watch(() => route.path, () => { mobileOpen.value = false; userMenuOpen.value = false })
 
 watch(showLayout, (v) => { if (v) fetchAnnouncement() }, { immediate: true })
 

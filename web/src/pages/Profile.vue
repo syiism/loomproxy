@@ -1,30 +1,32 @@
 <template>
   <div>
-    <PageHeader title="个人中心" subtitle="个人信息、密码、API 密钥与登录设备管理。" />
+    <PageHeader title="个人中心" subtitle="账户资料、安全、API 密钥与接入。" />
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 items-start">
-      <!-- 基本信息 -->
-      <section class="reveal">
-        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">基本信息</h2>
-        <div class="card space-y-3 mb-6">
-          <div class="flex justify-between items-center"><span class="text-text-muted">用户名</span><span class="font-mono">{{ me.username }}</span></div>
-          <div class="flex justify-between items-center"><span class="text-text-muted">角色</span>
-            <span class="flex gap-1.5">
-              <UiTag v-for="r in (me.roles || [])" :key="r.code" :tone="roleTone(r.code)" :label="r.display_name || r.name || r.code" />
-              <span v-if="!(me.roles || []).length" class="text-text-muted">—</span>
-            </span>
-          </div>
-          <div class="flex justify-between items-center"><span class="text-text-muted">套餐</span>
-            <UiTag v-if="me.plan" tone="blue" :label="me.plan.display_name || me.plan.name || me.plan.code" />
-            <span v-else class="text-text-muted">免费版</span>
-          </div>
-          <div v-if="me.plan_expire_at" class="flex justify-between items-center"><span class="text-text-muted">套餐到期</span>
-            <span class="font-mono text-sm" :style="expireSoon ? 'color:#956400' : ''">{{ fmtDate(me.plan_expire_at) }}<template v-if="expireSoon">（即将到期）</template></span>
-          </div>
-          <div class="flex justify-between items-center"><span class="text-text-muted">注册时间</span><span class="font-mono text-sm">{{ fmtDate(me.created_at) }}</span></div>
-          <div class="flex justify-between items-center"><span class="text-text-muted">最近登录</span><span class="font-mono text-sm">{{ fmtDate(me.last_login_at) }}</span></div>
+    <!-- 身份概览：原来散在「基本信息」只读卡里的用户名/角色/套餐/到期/注册/最近登录，
+         收成一张门面卡——进来第一眼就知道"我是谁、什么档、什么时候到期"，
+         下面的卡片只放可编辑项与操作，不再重复展示只读值。 -->
+    <div class="card reveal mb-8 md:mb-10 flex items-center gap-4 md:gap-6">
+      <div class="w-14 h-14 md:w-16 md:h-16 rounded-full bg-surface-alt border border-border flex items-center justify-center font-serif text-2xl md:text-3xl shrink-0 select-none">{{ initial }}</div>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 mb-1.5">
+          <span class="font-serif text-2xl md:text-3xl font-medium tracking-tight leading-tight">{{ displayName }}</span>
+          <UiTag v-for="r in (me.roles || [])" :key="r.code" :tone="roleTone(r.code)" :label="r.display_name || r.name || r.code" />
+          <UiTag v-if="me.plan" tone="blue" :label="me.plan.display_name || me.plan.name || me.plan.code" />
+          <span v-else class="text-xs text-text-muted">免费版</span>
         </div>
+        <div class="font-mono text-xs md:text-sm text-text-muted truncate">
+          @{{ me.username }} · 注册于 {{ fmtDate(me.created_at) }} · 最近登录 {{ fmtDate(me.last_login_at) }}
+        </div>
+        <div v-if="me.plan_expire_at" class="mt-1.5 font-mono text-xs" :style="expireSoon ? 'color:#956400' : 'color:#787774'">
+          套餐到期 {{ fmtDate(me.plan_expire_at) }}<template v-if="expireSoon">（即将到期）</template>
+        </div>
+      </div>
+    </div>
 
+    <!-- 账户资料 + 修改密码：两块都是短表单，并排高度对齐 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 items-start">
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">账户资料</h2>
         <form @submit.prevent="onSaveProfile" class="space-y-5">
           <UiField label="用户名" :hint="usernameHint">
             <input v-model="profileForm.username" class="input font-mono" minlength="3" maxlength="64" :disabled="!!usernameNextAt" placeholder="3-64 个字符">
@@ -42,6 +44,78 @@
         </form>
       </section>
 
+      <!-- 修改密码 -->
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">修改密码</h2>
+        <form @submit.prevent="onChangePwd" class="space-y-5">
+          <UiField label="当前密码">
+            <input v-model="pwdForm.old_password" type="password" class="input" autocomplete="current-password" required>
+          </UiField>
+          <UiField label="新密码" hint="8–16 位，包含字母和数字">
+            <input v-model="pwdForm.new_password" type="password" class="input" minlength="8" maxlength="16" autocomplete="new-password" required>
+          </UiField>
+          <button type="submit" class="btn-primary" :disabled="savingPwd">{{ savingPwd ? '提交中' : '更新密码' }}</button>
+        </form>
+      </section>
+    </div>
+
+    <!-- API 密钥 + 登录设备：两块都是列表型，并排便于对照"谁在用我的账号" -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 items-start mt-12 md:mt-16">
+      <!-- API 密钥 -->
+      <section class="reveal">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">API 密钥</h2>
+        <div v-if="keys.length" class="text-sm text-text-muted mb-4">用于书源或脚本以程序化方式调用数据源接口：请求头带 <code class="font-mono">X-API-Key</code> 或参数 <code class="font-mono">?api_key=</code>。调用按你的账号计费与限流。密钥可随时在列表中查看，泄露请立即撤销。</div>
+        <div class="flex justify-end mb-4">
+          <button class="btn-primary btn-sm" :disabled="keys.length >= 10" @click="createKeyOpen = true">{{ keys.length >= 10 ? '已达上限（10）' : '创建密钥' }}</button>
+        </div>
+        <UiSpinner v-if="keysLoading" />
+        <UiEmpty v-else-if="keys.length === 0" title="还没有 API 密钥" />
+        <div v-else class="card !p-0 divide-y divide-border">
+          <div v-for="k in keys" :key="k.id" class="flex items-center justify-between gap-3 px-5 md:px-6 py-4">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-sm">{{ k.name }}</span>
+                <button class="text-xs text-text-muted hover:opacity-70 transition-opacity" @click="copyText(k.key)">复制</button>
+              </div>
+              <div class="font-mono text-xs break-all select-all">{{ k.key }}</div>
+              <div class="font-mono text-xs text-text-muted mt-1">
+                创建于 {{ fmtDate(k.created_at) }} · 最后使用 {{ k.last_used_at ? fmtDate(k.last_used_at) : '从未' }}
+              </div>
+            </div>
+            <button class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity whitespace-nowrap" @click="onRevokeKey(k)">撤销</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 登录设备 -->
+      <section class="reveal">
+        <div class="flex items-end justify-between mb-5 pb-3 border-b border-border">
+          <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">登录设备</h2>
+          <button v-if="otherCount > 0" class="btn-danger btn-sm" :disabled="revokingOthers" @click="revokeOthersOpen = true">退出其他设备</button>
+        </div>
+        <UiSpinner v-if="sessionsLoading" />
+        <UiEmpty v-else-if="sessions.length === 0" title="暂无登录设备" />
+        <div v-else class="card !p-0 divide-y divide-border">
+          <div v-for="s in sessions" :key="s.id" class="flex items-center justify-between gap-3 px-5 md:px-6 py-4">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-sm">{{ s.device }}</span>
+                <UiTag v-if="s.current" tone="green" label="当前设备" />
+              </div>
+              <div class="font-mono text-xs text-text-muted">
+                {{ s.ip || '未知 IP' }} · 最后活跃 {{ fmtDate(s.last_active_at) }} · 登录于 {{ fmtDate(s.created_at) }}
+              </div>
+            </div>
+            <button v-if="!s.current" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity whitespace-nowrap" @click="onRevoke(s)">退出</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 偏好与接入：留存 / 别名(可选) / 书源 / 兑换 四张轻量卡共用一个两列网格自然流动。
+         别名卡 v-if 不渲染时后面的卡自动补位，不会在页面中间留一个整列空白；
+         无别名共 3 张卡，最后一张（兑换）跨整列，收尾不再留右列空洞。 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 items-start mt-12 md:mt-16">
       <!-- 隐私协议：阅读数据留存的同意位。唯一写入口 POST /auth/privacy（只认会话） -->
       <section class="reveal">
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">阅读数据留存</h2>
@@ -66,13 +140,8 @@
         </div>
       </section>
 
-      <!-- 「额度清零时间」这一格按待办清单 P119 ① 从个人中心摘掉（面板不再给切换入口）。
-           服务端能力原样留着：POST /auth/quota-cycle 与 /auth/me 的 quota_cycle_* 三个字段不动——
-           **已经切到 subscription 的人继续按其注册钟点清零**，这是 A 档的定案理由（回落等于在
-           用户不知情时改他的额度窗口）。要重新给入口时，本节的历史形状在 2026-10-10 之前的 git 里。 -->
-
       <!-- 显示别名（待办清单 P43）：只改「你看到的称呼」。默认名在 quota_plans/roles 两张全局表里，
-           这里一概不动；管理员视图同时显示默认名与你的别名，所以别名不会把你的真实档位藏起来。 -->
+           这里一概不动；管理员视图同时显示默认名与别名，所以别名不会把你的真实档位藏起来。 -->
       <section v-if="canAlias" class="reveal">
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">显示名称</h2>
         <p class="text-sm text-text-muted leading-relaxed mb-4">
@@ -89,53 +158,6 @@
         </div>
         <p class="text-xs text-text-muted mt-3">最长 32 个字符；清除后回到默认名。换套餐时上一个套餐的称呼不会跟过来。</p>
       </section>
-
-      <!-- 右列：修改密码 + API 密钥 -->
-      <div class="space-y-12 md:space-y-16">
-        <!-- 修改密码 -->
-        <section class="reveal">
-          <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">修改密码</h2>
-          <form @submit.prevent="onChangePwd" class="space-y-5">
-            <UiField label="当前密码">
-              <input v-model="pwdForm.old_password" type="password" class="input" autocomplete="current-password" required>
-            </UiField>
-            <UiField label="新密码" hint="8–16 位，包含字母和数字">
-              <input v-model="pwdForm.new_password" type="password" class="input" minlength="8" maxlength="16" autocomplete="new-password" required>
-            </UiField>
-            <button type="submit" class="btn-primary" :disabled="savingPwd">{{ savingPwd ? '提交中' : '更新密码' }}</button>
-          </form>
-        </section>
-
-        <!-- API 密钥 -->
-        <section class="reveal">
-          <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">API 密钥</h2>
-          <div v-if="keys.length" class="text-sm text-text-muted mb-4">用于书源或脚本以程序化方式调用数据源接口：请求头带 <code class="font-mono">X-API-Key</code> 或参数 <code class="font-mono">?api_key=</code>。调用按你的账号计费与限流。密钥可随时在列表中查看，泄露请立即撤销。</div>
-          <div class="flex justify-end mb-4">
-            <button class="btn-primary btn-sm" :disabled="keys.length >= 10" @click="createKeyOpen = true">{{ keys.length >= 10 ? '已达上限（10）' : '创建密钥' }}</button>
-          </div>
-          <UiSpinner v-if="keysLoading" />
-          <UiEmpty v-else-if="keys.length === 0" title="还没有 API 密钥" />
-          <div v-else class="card !p-0 divide-y divide-border">
-            <div v-for="k in keys" :key="k.id" class="flex items-center justify-between gap-3 px-5 md:px-6 py-4">
-              <div class="min-w-0">
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="font-medium text-sm">{{ k.name }}</span>
-                  <button class="text-xs text-text-muted hover:opacity-70 transition-opacity" @click="copyText(k.key)">复制</button>
-                </div>
-                <div class="font-mono text-xs break-all select-all">{{ k.key }}</div>
-                <div class="font-mono text-xs text-text-muted mt-1">
-                  创建于 {{ fmtDate(k.created_at) }} · 最后使用 {{ k.last_used_at ? fmtDate(k.last_used_at) : '从未' }}
-                </div>
-              </div>
-              <button class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity whitespace-nowrap" @click="onRevokeKey(k)">撤销</button>
-            </div>
-          </div>
-        </section>
-      </div>
-    </div>
-
-    <!-- 阅读客户端 + 套餐升级（双列） -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 items-start mt-12 md:mt-16">
       <section class="reveal">
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">阅读客户端</h2>
         <div class="card">
@@ -149,7 +171,8 @@
         </div>
       </section>
 
-      <section class="reveal">
+      <!-- 无别名时本格是 3 张卡里的最后一张，跨整列收尾；有别名时 4 张卡两两并排 -->
+      <section class="reveal" :class="canAlias ? '' : 'lg:col-span-2'">
         <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight mb-5 pb-3 border-b border-border">套餐升级</h2>
         <div class="card">
           <div class="text-sm text-text-muted mb-4">输入卡密兑换套餐或续费。同套餐兑换自动叠加时长。</div>
@@ -161,48 +184,31 @@
       </section>
     </div>
 
-    <!-- 登录设备 -->
-    <section class="mt-12 md:mt-16 reveal">
-      <div class="flex items-end justify-between mb-5 pb-3 border-b border-border">
-        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">登录设备</h2>
-        <button v-if="otherCount > 0" class="btn-danger btn-sm" :disabled="revokingOthers" @click="revokeOthersOpen = true">退出其他设备</button>
-      </div>
-      <UiSpinner v-if="sessionsLoading" />
-      <UiEmpty v-else-if="sessions.length === 0" title="暂无登录设备" />
-      <div v-else class="card !p-0 divide-y divide-border">
-        <div v-for="s in sessions" :key="s.id" class="flex items-center justify-between gap-3 px-5 md:px-6 py-4">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="font-medium text-sm">{{ s.device }}</span>
-              <UiTag v-if="s.current" tone="green" label="当前设备" />
-            </div>
-            <div class="font-mono text-xs text-text-muted">
-              {{ s.ip || '未知 IP' }} · 最后活跃 {{ fmtDate(s.last_active_at) }} · 登录于 {{ fmtDate(s.created_at) }}
-            </div>
-          </div>
-          <button v-if="!s.current" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity whitespace-nowrap" @click="onRevoke(s)">退出</button>
-        </div>
-      </div>
-    </section>
+    <!-- 「额度清零时间」这一格按待办清单 P119 ① 从个人中心摘掉（面板不再给切换入口）。
+         服务端能力原样留着：POST /auth/quota-cycle 与 /auth/me 的 quota_cycle_* 三个字段不动——
+         **已经切到 subscription 的人继续按其注册钟点清零**，这是 A 档的定案理由（回落等于在
+         用户不知情时改他的额度窗口）。要重新给入口时，本节的历史形状在 2026-10-10 之前的 git 里。 -->
 
     <!-- 数据源 BaseURL 配置：默认折叠（待办清单 P119 ②，维护者点名这一格挡视线）。
          折叠只是省滚动、不是藏信息——收起态那行摘要给的是读数（几个源、几个已自定义、有没有未保存改动），
          不是"暂无"这种形容词（判据正本在 UiCollapse.vue 顶部那两条设计约束）。
          保存按钮留在展开态里：dirty 只可能在展开之后发生，所以收起态不会有"改了却没处保存"。 -->
-    <UiCollapse title="数据源地址" :summary="sourceConfigSummary" storage-key="profile-source-config">
-      <div class="flex items-end justify-between mb-4 gap-3">
-        <p class="text-xs text-text-muted leading-relaxed">留空即使用该源的平台默认地址；改动要按「保存配置」才写入。</p>
-        <button v-if="sourceConfigDirty" class="btn-primary btn-sm shrink-0" :disabled="savingSourceConfig" @click="onSaveSourceConfig">保存配置</button>
-      </div>
-      <UiSpinner v-if="sourceConfigs === null" />
-      <div v-else class="space-y-3">
-        <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="card !p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div class="font-mono text-sm min-w-0 flex-1 sm:flex-none sm:w-[140px] truncate">{{ cfg.source_display }}</div>
-          <div class="font-mono text-xs text-text-muted sm:min-w-[100px]">{{ cfg.source_name }}</div>
-          <input v-model="cfg.base_url" class="input min-w-0 flex-1 font-mono text-sm" placeholder="留空则使用平台默认地址" @input="sourceConfigDirty = true">
+    <div class="mt-12 md:mt-16">
+      <UiCollapse title="数据源地址" :summary="sourceConfigSummary" storage-key="profile-source-config">
+        <div class="flex items-end justify-between mb-4 gap-3">
+          <p class="text-xs text-text-muted leading-relaxed">留空即使用该源的平台默认地址；改动要按「保存配置」才写入。</p>
+          <button v-if="sourceConfigDirty" class="btn-primary btn-sm shrink-0" :disabled="savingSourceConfig" @click="onSaveSourceConfig">保存配置</button>
         </div>
-      </div>
-    </UiCollapse>
+        <UiSpinner v-if="sourceConfigs === null" />
+        <div v-else class="space-y-3">
+          <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="card !p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div class="font-mono text-sm min-w-0 flex-1 sm:flex-none sm:w-[140px] truncate">{{ cfg.source_display }}</div>
+            <div class="font-mono text-xs text-text-muted sm:min-w-[100px]">{{ cfg.source_name }}</div>
+            <input v-model="cfg.base_url" class="input min-w-0 flex-1 font-mono text-sm" placeholder="留空则使用平台默认地址" @input="sourceConfigDirty = true">
+          </div>
+        </div>
+      </UiCollapse>
+    </div>
 
     <!-- 退出其他设备确认 -->
     <UiModal :open="revokeOthersOpen" title="退出其他设备" @close="revokeOthersOpen = false" @confirm="onRevokeOthers" confirm-text="全部退出" :confirm-loading="revokingOthers">
@@ -244,6 +250,11 @@ import { fmtDate, roleTone, toast, revealObserve } from '../utils.js'
 
 const me = ref({})
 const profileForm = ref({ username: '', nickname: '', email: '', token_expire_hours: 0 })
+
+// 身份概览卡的显示名与首字母头像：与顶栏 displayName 同一口径（昵称优先，否则用户名）
+const displayName = computed(() => me.value.nickname || me.value.username || '')
+const initial = computed(() => (displayName.value.trim() || '?').charAt(0).toUpperCase())
+
 // 隐私协议的同意位：后端给的是**有效值**（NULL 已折算成同意），所以这里只管 true/false；
 // 老会话缓存里没这个键时读成 undefined，`!== false` 按默认档（同意）走
 const privacyForm = ref({ content_consent: true })

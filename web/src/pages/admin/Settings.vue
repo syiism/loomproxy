@@ -13,17 +13,19 @@
 
       <!-- 功能卡片 -->
       <section v-for="g in GROUPS" :key="g.title" class="card reveal">
-        <div class="mb-5">
-          <div class="font-serif text-lg font-medium tracking-tight">{{ g.title }}</div>
-          <div v-if="g.desc" class="text-xs text-text-muted mt-1">{{ g.desc }}</div>
+        <div class="mb-5 pb-3 border-b border-border">
+          <div class="font-serif text-xl md:text-2xl font-medium tracking-tight">{{ g.title }}</div>
+          <div v-if="g.desc" class="text-xs text-text-muted mt-1.5">{{ g.desc }}</div>
         </div>
-        <form @submit.prevent="saveGroup(g)" class="space-y-5">
+        <!-- 短字段（开关/下拉/数字/单行文本）双列并排，长字段（多行/JSON/密钥/只读源名单）跨整列：
+             原来每个字段都独占一行，「发码通道」这类 6 字段卡被拉得很长，两列并排后卡片高度明显收敛。 -->
+        <form @submit.prevent="saveGroup(g)" class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
           <template v-for="f in g.fields" :key="f.key">
             <!-- 数据库中不存在的受管 key（如被误删）：置灰提示，经「新增配置」恢复 -->
-            <UiField v-if="!settingsMap[f.key]" :label="f.label">
+            <UiField v-if="!settingsMap[f.key]" :key="f.key + '-missing'" :label="f.label">
               <input class="input font-mono" disabled :value="'未入库（用「新增配置」恢复 ' + f.key + '）'">
             </UiField>
-            <UiField v-else :label="f.label" :hint="settingsMap[f.key].description">
+            <UiField v-else :key="f.key" :label="f.label" :hint="settingsMap[f.key].description" :class="fieldSpan(f)">
               <UiSwitch v-if="f.widget === 'switch'" v-model="form[f.key]" />
               <select v-else-if="f.widget === 'select'" v-model="form[f.key]" class="input font-mono">
                 <option v-for="opt in f.options" :key="opt" :value="opt">{{ opt }}</option>
@@ -83,7 +85,7 @@
             </UiField>
           </template>
 
-          <div class="pt-4 border-t border-border flex items-center justify-between">
+          <div class="pt-4 border-t border-border flex items-center justify-between md:col-span-2">
             <span class="text-xs text-text-muted">
               {{ dirtyKeys(g).length > 0 ? `待保存 ${dirtyKeys(g).length} 项` : '无改动' }}
             </span>
@@ -270,6 +272,10 @@ const customEntries = computed(() => list.value.filter(s => !MANAGED_KEYS.has(s.
 
 // gate: 'providerHttp' 表示仅 http 通道可编辑（mock 下置灰）
 const fieldDisabled = (f) => f.gate === 'providerHttp' && form.value.verify_provider === 'mock'
+
+// 长字段跨整列：多行文本 / JSON / 不回显密钥 / 只读源名单。短字段（开关、下拉、数字、单行文本）双列并排
+const WIDGET_WIDE = new Set(['textarea', 'secret', 'json', 'sources_ro'])
+const fieldSpan = (f) => (WIDGET_WIDE.has(f.widget) ? 'md:col-span-2' : '')
 
 // sources_ro widget：库里存的是逗号分隔名单，这里只读展示（编辑在数据源管理页，见 P17）
 const sourceChoices = ref([])
