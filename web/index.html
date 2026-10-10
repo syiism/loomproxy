@@ -8,6 +8,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Geist+Mono&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="icon" href="/favicon.svg" />
+    <script>
+      // 首屏防闪烁：在样式加载前就按用户记忆/系统偏好设好 data-theme，避免白屏闪一下再变暗
+      (function () {
+        try {
+          var t = localStorage.getItem('theme')
+          if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.setAttribute('data-theme', 'dark')
+          }
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body class="bg-bg text-text">
     <div id="app"></div>

@@ -3,18 +3,21 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        bg: '#FBFBFA',
-        surface: '#FFFFFF',
-        'surface-alt': '#F9F9F8',
-        border: '#EAEAEA',
-        text: '#111111',
-        'text-muted': '#787774',
-        accent: '#111111',
-        'pale-red': { bg: '#FDEBEC', fg: '#9F2F2D' },
-        'pale-blue': { bg: '#E1F3FE', fg: '#1F6C9F' },
-        'pale-green': { bg: '#EDF3EC', fg: '#346538' },
-        'pale-yellow': { bg: '#FBF3DB', fg: '#956400' },
-        'pale-gray': { bg: '#F2F1EF', fg: '#787774' },
+        // 色板全部走 CSS 变量（RGB 三元组），明暗两套值在 styles.css 的 :root / [data-theme=dark] 里定义。
+        // 新增颜色请加到同一处，不要在组件里写死 hex——否则暗色下会漏洞。
+        bg: 'rgb(var(--c-bg) / <alpha-value>)',
+        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+        'surface-alt': 'rgb(var(--c-surface-alt) / <alpha-value>)',
+        border: 'rgb(var(--c-border) / <alpha-value>)',
+        text: 'rgb(var(--c-text) / <alpha-value>)',
+        'text-muted': 'rgb(var(--c-text-muted) / <alpha-value>)',
+        accent: 'rgb(var(--c-accent) / <alpha-value>)',
+        'on-accent': 'rgb(var(--c-on-accent) / <alpha-value>)',
+        'pale-red': { bg: 'rgb(var(--c-pale-red-bg) / <alpha-value>)', fg: 'rgb(var(--c-pale-red-fg) / <alpha-value>)' },
+        'pale-blue': { bg: 'rgb(var(--c-pale-blue-bg) / <alpha-value>)', fg: 'rgb(var(--c-pale-blue-fg) / <alpha-value>)' },
+        'pale-green': { bg: 'rgb(var(--c-pale-green-bg) / <alpha-value>)', fg: 'rgb(var(--c-pale-green-fg) / <alpha-value>)' },
+        'pale-yellow': { bg: 'rgb(var(--c-pale-yellow-bg) / <alpha-value>)', fg: 'rgb(var(--c-pale-yellow-fg) / <alpha-value>)' },
+        'pale-gray': { bg: 'rgb(var(--c-pale-gray-bg) / <alpha-value>)', fg: 'rgb(var(--c-pale-gray-fg) / <alpha-value>)' },
       },
       fontFamily: {
         sans: ['Geist Sans', 'SF Pro Display', 'Helvetica Neue', 'Switzer', 'sans-serif'],

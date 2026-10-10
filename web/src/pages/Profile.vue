@@ -17,7 +17,7 @@
         <div class="font-mono text-xs md:text-sm text-text-muted truncate">
           @{{ me.username }} · 注册于 {{ fmtDate(me.created_at) }} · 最近登录 {{ fmtDate(me.last_login_at) }}
         </div>
-        <div v-if="me.plan_expire_at" class="mt-1.5 font-mono text-xs" :style="expireSoon ? 'color:#956400' : 'color:#787774'">
+        <div v-if="me.plan_expire_at" class="mt-1.5 font-mono text-xs" :style="expireSoon ? 'color:rgb(var(--c-pale-yellow-fg))' : 'color:rgb(var(--c-text-muted))'">
           套餐到期 {{ fmtDate(me.plan_expire_at) }}<template v-if="expireSoon">（即将到期）</template>
         </div>
       </div>

@@ -8,7 +8,7 @@
     <div class="text-sm text-text-muted">共 {{ total }} 条</div>
     <div class="flex items-center gap-1.5">
       <button class="pg-btn" :disabled="page <= 1" @click="go(page - 1)">上一页</button>
-      <button v-for="p in pages" :key="p" class="pg-btn font-mono" :class="p === page ? 'bg-text text-white border-text' : ''" @click="go(p)">{{ p }}</button>
+      <button v-for="p in pages" :key="p" class="pg-btn font-mono" :class="p === page ? 'bg-accent text-on-accent border-accent' : ''" @click="go(p)">{{ p }}</button>
       <button class="pg-btn" :disabled="page >= totalPages" @click="go(page + 1)">下一页</button>
     </div>
   </div>

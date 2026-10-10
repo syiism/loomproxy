@@ -12,7 +12,7 @@
       :class="modelValue ? 'bg-accent border-accent' : 'bg-surface-alt border-border'"
     >
       <span
-        class="w-4 h-4 rounded-full bg-white transition-transform"
+        class="w-4 h-4 rounded-full bg-on-accent transition-transform"
         :class="modelValue ? 'translate-x-4' : 'translate-x-0'"
       />
     </span>

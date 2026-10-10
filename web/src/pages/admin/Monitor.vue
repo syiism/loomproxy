@@ -14,7 +14,7 @@
       </div>
       <div class="card !p-4">
         <div class="text-xs text-text-muted mb-1">失败次数</div>
-        <div class="font-mono text-xl font-medium" :style="overview.failed > 0 ? 'color:#9F2F2D' : ''">{{ overview.failed }}</div>
+        <div class="font-mono text-xl font-medium" :style="overview.failed > 0 ? 'color:rgb(var(--c-pale-red-fg))' : ''">{{ overview.failed }}</div>
       </div>
       <div class="card !p-4">
         <div class="text-xs text-text-muted mb-1">统计起点</div>
@@ -33,7 +33,7 @@
       <label class="text-sm text-text-muted flex items-center gap-1.5 cursor-pointer">
         <input type="checkbox" v-model="autoRefresh"> 每 10 秒自动刷新
       </label>
-      <button @click="onReset" class="btn-ghost btn-sm" :style="resetArmed ? 'color:#9F2F2D' : ''">
+      <button @click="onReset" class="btn-ghost btn-sm" :style="resetArmed ? 'color:rgb(var(--c-pale-red-fg))' : ''">
         {{ resetArmed ? '确认清零？' : '清零计数' }}
       </button>
     </div>
@@ -69,7 +69,7 @@
                      默认不折行，独占 154px），其余四列各 35px。上一轮收表头长字没有效果，
                      因为那几列的宽度本来就由单元格决定，不是由表头决定——**先量是谁在占宽度，再决定收哪一格**。 -->
                 <td class="font-mono break-all">{{ t.table }}</td>
-                <td class="text-right" :style="t.rows < 0 ? 'color:#9F2F2D' : ''">
+                <td class="text-right" :style="t.rows < 0 ? 'color:rgb(var(--c-pale-red-fg))' : ''">
                   {{ t.rows < 0 ? '读数不可用' : t.rows.toLocaleString() }}
                 </td>
                 <td class="text-right">{{ t.recent < 0 ? '—' : t.recent.toLocaleString() }}</td>
@@ -105,7 +105,7 @@
         <input v-model="subjectSource" list="source-options" placeholder="数据源"
                class="input input-sm w-36 font-mono" @keydown.enter="loadSubjects" @change="loadSubjects">
       </div>
-      <div v-if="sourceUnknown" class="text-xs mb-3" style="color:#956400">
+      <div v-if="sourceUnknown" class="text-xs mb-3" style="color:rgb(var(--c-pale-yellow-fg))">
         源码「{{ subjectSource }}」不在数据源清单里：多半已下线或停用——
         历史是否可查取决于运维有没有清理明细（筛不到不等于当时没发生过）。
       </div>
@@ -180,7 +180,7 @@
                 <td class="font-mono text-xs" :style="{ color: rateColor(s.success_rate) }">{{ s.success_rate.toFixed(1) }}%</td>
                 <td class="font-mono text-xs">{{ s.avg_latency_ms }}ms</td>
                 <td class="hidden md:table-cell font-mono text-xs">{{ s.max_latency_ms }}ms</td>
-                <td class="hidden md:table-cell font-mono text-xs" :style="s.empty_results > 0 ? 'color:#956400' : ''">{{ s.empty_results }}</td>
+                <td class="hidden md:table-cell font-mono text-xs" :style="s.empty_results > 0 ? 'color:rgb(var(--c-pale-yellow-fg))' : ''">{{ s.empty_results }}</td>
                 <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ (s.sources || []).join(' ') }}</td>
                 <td class="hidden md:table-cell font-mono text-xs text-text-muted whitespace-nowrap">{{ s.last_called_at ? fmtDate(s.last_called_at) : '—' }}</td>
               </tr>
@@ -225,7 +225,7 @@
               <td class="font-mono text-xs">{{ r.total }}</td>
               <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.lifetime }}</td>
               <td class="hidden md:table-cell font-mono text-xs">{{ r.success }}</td>
-              <td class="font-mono text-xs" :style="r.failed > 0 ? 'color:#9F2F2D' : ''">{{ r.failed }}</td>
+              <td class="font-mono text-xs" :style="r.failed > 0 ? 'color:rgb(var(--c-pale-red-fg))' : ''">{{ r.failed }}</td>
               <td class="font-mono text-xs" :style="{ color: rateColor(r.success_rate) }">{{ r.success_rate.toFixed(1) }}%</td>
               <td class="font-mono text-xs">{{ r.avg_latency_ms }}ms</td>
               <td class="hidden md:table-cell font-mono text-xs text-text-muted">{{ r.max_latency_ms }}ms</td>
@@ -262,7 +262,7 @@
             <div v-if="r.book_name"><span class="text-text-muted">书名：</span>{{ r.book_name }}</div>
             <div v-if="r.chapter_title"><span class="text-text-muted">章节：</span>{{ r.chapter_title }}</div>
             <div v-if="r.media" class="flex items-center gap-1.5"><span class="text-text-muted">媒介：</span><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></div>
-            <div v-if="r.result_count !== undefined && r.result_count !== null"><span class="text-text-muted">结果：</span><span class="font-mono" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</span></div>
+            <div v-if="r.result_count !== undefined && r.result_count !== null"><span class="text-text-muted">结果：</span><span class="font-mono" :style="r.result_count === 0 ? 'color:rgb(var(--c-pale-yellow-fg))' : ''">{{ r.result_count }}</span></div>
           </div>
         </div>
       </div>
@@ -287,7 +287,7 @@
               <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
               <td><div class="hidden md:table-cell max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
               <td class="hidden md:table-cell"><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></td>
-              <td class="hidden md:table-cell font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
+              <td class="hidden md:table-cell font-mono text-xs" :style="r.result_count === 0 ? 'color:rgb(var(--c-pale-yellow-fg))' : ''">{{ r.result_count }}</td>
             </tr>
           </tbody>
         </table>
@@ -307,7 +307,7 @@
       </select>
       <button @click="loadHistory(1)" class="btn-ghost btn-sm">筛选</button>
     </div>
-    <div v-if="historySourceUnknown" class="text-xs mb-3" style="color:#956400">
+    <div v-if="historySourceUnknown" class="text-xs mb-3" style="color:rgb(var(--c-pale-yellow-fg))">
       源码「{{ historyFilter.source }}」不在数据源清单里：多半已下线或停用——
       历史是否可查取决于运维有没有清理明细（筛不到不等于当时没发生过）。
     </div>
@@ -338,7 +338,7 @@
             <div v-if="r.book_name"><span class="text-text-muted">书名：</span>{{ r.book_name }}</div>
             <div v-if="r.chapter_title"><span class="text-text-muted">章节：</span>{{ r.chapter_title }}</div>
             <div v-if="r.media" class="flex items-center gap-1.5"><span class="text-text-muted">媒介：</span><UiTag :tone="mediaTone(r.media)" :label="mediaLabel(r.media)" /></div>
-            <div v-if="r.result_count !== undefined && r.result_count !== null"><span class="text-text-muted">结果：</span><span class="font-mono" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</span></div>
+            <div v-if="r.result_count !== undefined && r.result_count !== null"><span class="text-text-muted">结果：</span><span class="font-mono" :style="r.result_count === 0 ? 'color:rgb(var(--c-pale-yellow-fg))' : ''">{{ r.result_count }}</span></div>
           </div>
         </div>
       </div>
@@ -364,7 +364,7 @@
             <td><div class="max-w-36 truncate text-sm" :title="r.book_name">{{ r.book_name || '—' }}</div></td>
             <td><div class="hidden md:table-cell max-w-36 truncate text-sm" :title="r.chapter_title">{{ r.chapter_title || '—' }}</div></td>
             <td class="hidden md:table-cell"><UiTag :tone="mediaTone(r.media_type)" :label="mediaLabel(r.media_type)" /></td>
-            <td class="hidden md:table-cell font-mono text-xs" :style="r.result_count === 0 ? 'color:#956400' : ''">{{ r.result_count }}</td>
+            <td class="hidden md:table-cell font-mono text-xs" :style="r.result_count === 0 ? 'color:rgb(var(--c-pale-yellow-fg))' : ''">{{ r.result_count }}</td>
           </tr>
           <tr v-if="history.length === 0">
             <td colspan="13" class="text-center text-sm text-text-muted py-6">暂无历史记录（调用超过 200 条后旧记录才会落库）</td>
@@ -490,8 +490,8 @@ const subjectSummary = computed(() => {
   return parts.join(' · ')
 })
 
-const rateColor = (r) => r >= 95 ? '#346538' : r >= 80 ? '#956400' : '#9F2F2D'
-const statusColor = (s) => s >= 500 ? '#9F2F2D' : s >= 400 ? '#956400' : '#346538'
+const rateColor = (r) => r >= 95 ? 'rgb(var(--c-pale-green-fg))' : r >= 80 ? 'rgb(var(--c-pale-yellow-fg))' : 'rgb(var(--c-pale-red-fg))'
+const statusColor = (s) => s >= 500 ? 'rgb(var(--c-pale-red-fg))' : s >= 400 ? 'rgb(var(--c-pale-yellow-fg))' : 'rgb(var(--c-pale-green-fg))'
 
 const load = async (silent) => {
   if (!silent) loading.value = true

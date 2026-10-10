@@ -71,9 +71,9 @@ const strength = computed(() => {
 const strengthPct = computed(() => strength.value / 3 * 100)
 
 const strengthColor = computed(() => {
-  if (strength.value <= 1) return '#9F2F2D'
-  if (strength.value === 2) return '#956400'
-  return '#346538'
+  if (strength.value <= 1) return 'rgb(var(--c-pale-red-fg))'
+  if (strength.value === 2) return 'rgb(var(--c-pale-yellow-fg))'
+  return 'rgb(var(--c-pale-green-fg))'
 })
 
 const strengthLabel = computed(() => {

@@ -1,3 +1,41 @@
+/* 主题变量：RGB 三元组，供 tailwind `rgb(var(--c-*) / <alpha-value>)` 消费。
+   亮色为默认（:root），暗色挂在 <html data-theme="dark"> 上；切换在 App.vue，首屏防闪烁在 index.html。 */
+:root {
+  --c-bg: 251 251 250;
+  --c-surface: 255 255 255;
+  --c-surface-alt: 249 249 248;
+  --c-border: 234 234 234;
+  --c-text: 17 17 17;
+  --c-text-muted: 120 119 116;
+  --c-accent: 17 17 17;
+  --c-accent-hover: 51 51 51;
+  --c-on-accent: 255 255 255;
+  --c-pale-red-bg: 253 235 236;   --c-pale-red-fg: 159 47 45;
+  --c-pale-blue-bg: 225 243 254;  --c-pale-blue-fg: 31 108 159;
+  --c-pale-green-bg: 237 243 236; --c-pale-green-fg: 52 101 56;
+  --c-pale-yellow-bg: 251 243 219; --c-pale-yellow-fg: 149 100 0;
+  --c-pale-gray-bg: 242 241 239;  --c-pale-gray-fg: 120 119 116;
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  --c-bg: 20 20 19;
+  --c-surface: 28 28 27;
+  --c-surface-alt: 35 35 34;
+  --c-border: 48 48 46;
+  --c-text: 237 236 233;
+  --c-text-muted: 156 155 151;
+  /* 暗色下主按钮反相：浅底深字 */
+  --c-accent: 237 236 233;
+  --c-accent-hover: 255 255 255;
+  --c-on-accent: 20 20 19;
+  --c-pale-red-bg: 58 34 36;   --c-pale-red-fg: 229 139 138;
+  --c-pale-blue-bg: 28 45 58;  --c-pale-blue-fg: 125 190 230;
+  --c-pale-green-bg: 32 48 34;  --c-pale-green-fg: 130 190 135;
+  --c-pale-yellow-bg: 58 48 24; --c-pale-yellow-fg: 215 175 95;
+  --c-pale-gray-bg: 40 40 39;  --c-pale-gray-fg: 156 155 151;
+  color-scheme: dark;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -7,7 +45,7 @@
   .btn {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
   }
-  .btn-primary { @apply btn bg-accent text-white hover:bg-[#333333]; }
+  .btn-primary { @apply btn bg-accent text-on-accent hover:bg-[rgb(var(--c-accent-hover))]; }
   .btn-ghost { @apply btn border border-border bg-surface hover:bg-surface-alt; }
   .btn-danger { @apply btn border border-pale-red-bg text-pale-red-fg hover:bg-pale-red-bg; }
   .btn-sm { @apply px-3 py-1.5 text-xs rounded-md; }
@@ -58,13 +96,13 @@
     background-size: 100% 100%;
     background-position: center;
     background-repeat: no-repeat;
-    accent-color: #111111;
+    accent-color: rgb(var(--c-accent));
   }
   .checkbox:checked { @apply bg-accent border-accent; }
 
   /* 物理按键样式 */
   .kbd {
-    @apply inline-flex items-center px-1.5 py-0.5 border border-border rounded bg-[#F7F6F3] font-mono text-xs text-text-muted;
+    @apply inline-flex items-center px-1.5 py-0.5 border border-border rounded bg-surface-alt font-mono text-xs text-text-muted;
   }
 }
 
@@ -89,7 +127,7 @@
 }
 .reveal.in { opacity: 1; transform: translateY(0); }
 
-/* 环境氛围光斑：固定层，极低透明度 */
+/* 环境氛围光斑：固定层，极低透明度。暗色下换更亮的一层，否则看不见 */
 .ambient-glow {
   position: fixed;
   inset: 0;
@@ -99,15 +137,20 @@
     radial-gradient(circle at 18% 22%, rgba(17, 17, 17, 0.03) 0%, transparent 46%),
     radial-gradient(circle at 82% 76%, rgba(149, 100, 0, 0.025) 0%, transparent 42%);
 }
+[data-theme="dark"] .ambient-glow {
+  background:
+    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.025) 0%, transparent 46%),
+    radial-gradient(circle at 82% 76%, rgba(215, 175, 95, 0.04) 0%, transparent 42%);
+}
 
 /* 滚动条与自动填充 */
 html { overflow-y: scroll; } /* 始终预留滚动条位置，避免长短页面切换时布局跳动 */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #EAEAEA; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--c-border)); border-radius: 3px; }
 input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0 30px #FFFFFF inset !important;
-  -webkit-text-fill-color: #111111 !important;
+  -webkit-box-shadow: 0 0 0 30px rgb(var(--c-surface)) inset !important;
+  -webkit-text-fill-color: rgb(var(--c-text)) !important;
 }
 
 /* 移动端（<768px）共享件调整。判据是拇指下限 ≈44px：

@@ -43,10 +43,10 @@
         <option value="0">已作废</option>
       </select>
       <button @click="loadList(1)" class="btn-ghost whitespace-nowrap">筛选</button>
-      <button v-if="selected.size > 0" @click="onRevokeSelected" class="btn-ghost whitespace-nowrap" :style="selectedArmed ? 'color:#9F2F2D' : ''">
+      <button v-if="selected.size > 0" @click="onRevokeSelected" class="btn-ghost whitespace-nowrap" :style="selectedArmed ? 'color:rgb(var(--c-pale-red-fg))' : ''">
         {{ selectedArmed ? '确认作废？' : '批量作废（' + selected.size + '）' }}
       </button>
-      <button v-if="filters.batchNo" @click="onRevokeBatch" class="btn-ghost whitespace-nowrap" :style="batchArmed ? 'color:#9F2F2D' : ''">
+      <button v-if="filters.batchNo" @click="onRevokeBatch" class="btn-ghost whitespace-nowrap" :style="batchArmed ? 'color:rgb(var(--c-pale-red-fg))' : ''">
         {{ batchArmed ? '确认整批作废？' : '整批作废' }}
       </button>
     </div>

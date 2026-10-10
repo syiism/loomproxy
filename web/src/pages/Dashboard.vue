@@ -3,7 +3,7 @@
     <PageHeader :title="isAdmin ? '每日数据源额度' : '我的额度'" :subtitle="subtitle">
       <template #actions>
         <UiTag v-if="planName && !isAdmin" tone="blue" :label="planName" />
-        <span v-if="planExpireAt && !isAdmin" class="text-xs font-mono" :class="planExpireSoon ? '' : 'text-text-muted'" :style="planExpireSoon ? 'color:#956400' : ''">{{ fmtDate(planExpireAt) }} 到期</span>
+        <span v-if="planExpireAt && !isAdmin" class="text-xs font-mono" :class="planExpireSoon ? '' : 'text-text-muted'" :style="planExpireSoon ? 'color:rgb(var(--c-pale-yellow-fg))' : ''">{{ fmtDate(planExpireAt) }} 到期</span>
       </template>
     </PageHeader>
 
@@ -99,7 +99,7 @@
       <div v-if="groups.length" class="flex flex-col sm:flex-row sm:items-center gap-3 mb-6 md:mb-8">
         <div class="flex items-center gap-2 overflow-x-auto pb-1">
           <button v-for="c in chips" :key="c.key" type="button" class="btn btn-sm shrink-0"
-            :class="groupFilter === c.key ? 'bg-accent text-white' : 'border border-border text-text-muted hover:text-text'"
+            :class="groupFilter === c.key ? 'bg-accent text-on-accent' : 'border border-border text-text-muted hover:text-text'"
             @click="pickGroup(c.key)">
             <span>{{ c.label }}</span>
             <span class="font-mono">{{ c.count }}</span>

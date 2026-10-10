@@ -12,22 +12,22 @@
         <line
           v-for="t in leftTicks" :key="'g' + t"
           :x1="padL" :y1="yL(t)" :x2="W - padR" :y2="yL(t)"
-          stroke="#EAEAEA" stroke-width="1"
+          :style="{ stroke: 'rgb(var(--c-border))' }" stroke-width="1"
         />
         <!-- 左轴刻度（柱状：每日总量） -->
         <text
           v-for="t in leftTicks" :key="'lt' + t"
-          :x="padL - 6" :y="yL(t) + 3" text-anchor="end" fill="#787774" :font-size="tickFont"
+          :x="padL - 6" :y="yL(t) + 3" text-anchor="end" fill="rgb(var(--c-text-muted))" :font-size="tickFont"
         >{{ t }}</text>
         <!-- 右轴刻度（折线：分源调用量） -->
         <text
           v-for="t in rightTicks" :key="'rt' + t"
-          :x="W - padR + 6" :y="yR(t) + 3" text-anchor="start" fill="#787774" :font-size="tickFont"
+          :x="W - padR + 6" :y="yR(t) + 3" text-anchor="start" fill="rgb(var(--c-text-muted))" :font-size="tickFont"
         >{{ t }}</text>
         <!-- 轴线 -->
-        <line :x1="padL" :y1="padT" :x2="padL" :y2="baseline" stroke="#EAEAEA" />
-        <line :x1="W - padR" :y1="padT" :x2="W - padR" :y2="baseline" stroke="#EAEAEA" />
-        <line :x1="padL" :y1="baseline" :x2="W - padR" :y2="baseline" stroke="#EAEAEA" />
+        <line :x1="padL" :y1="padT" :x2="padL" :y2="baseline" :style="{ stroke: 'rgb(var(--c-border))' }" />
+        <line :x1="W - padR" :y1="padT" :x2="W - padR" :y2="baseline" :style="{ stroke: 'rgb(var(--c-border))' }" />
+        <line :x1="padL" :y1="baseline" :x2="W - padR" :y2="baseline" :style="{ stroke: 'rgb(var(--c-border))' }" />
 
         <!-- 堆叠柱（每日总量，左轴） -->
         <g v-for="(d, di) in days" :key="d">
@@ -40,7 +40,7 @@
             <title>{{ d }} {{ seg.source }}：{{ seg.total }} 次（成功 {{ seg.success }}）</title>
           </rect>
           <text v-if="showDayLabel(di)" :x="barX(di) + barW / 2" :y="H - 6"
-                text-anchor="middle" fill="#787774" :font-size="dayFont">{{ d.slice(5) }}</text>
+                text-anchor="middle" fill="rgb(var(--c-text-muted))" :font-size="dayFont">{{ d.slice(5) }}</text>
         </g>
 
         <!-- 分源折线（右轴） -->

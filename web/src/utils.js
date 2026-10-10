@@ -28,7 +28,7 @@ export function statusTone(status) {
 export function toast(msg, type = 'info', ms = 3000) {
   const el = document.createElement('div')
   el.className = 'animate-slide-in bg-surface border border-border rounded-lg px-4 py-3 text-sm min-w-[240px] max-w-full'
-  el.style.borderLeft = '3px solid ' + (type === 'error' ? '#9F2F2D' : type === 'success' ? '#346538' : '#111111')
+  el.style.borderLeft = '3px solid ' + (type === 'error' ? 'rgb(var(--c-pale-red-fg))' : type === 'success' ? 'rgb(var(--c-pale-green-fg))' : '#111111')
   el.textContent = msg
   const container = document.getElementById('toast')
   if (container) {

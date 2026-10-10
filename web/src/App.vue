@@ -34,6 +34,11 @@
                 个人中心
                 <span v-if="primaryRole" class=""><UiTag :tone="roleTone(primaryRole)" :label="primaryRole" /></span>
               </router-link>
+              <button @click="toggleTheme"
+                      class="flex w-full items-center justify-between px-4 py-2.5 text-sm hover:bg-surface-alt transition-colors">
+                深色模式
+                <span class="font-mono text-xs text-text-muted">{{ dark ? '开' : '关' }}</span>
+              </button>
               <button @click="onLogout" class="block w-full text-left px-4 py-2.5 text-sm text-text-muted hover:text-text hover:bg-surface-alt transition-colors">退出登录</button>
             </div>
           </div>
@@ -270,6 +275,15 @@ const displayName = computed(() => {
 
 // 头像首字母：与个人中心概览卡同一口径
 const initial = computed(() => (displayName.value.trim() || '?').charAt(0).toUpperCase())
+
+// 深色模式：初始值与 index.html 防闪烁脚本同源（读 data-theme），切换写回 localStorage
+const dark = ref(document.documentElement.getAttribute('data-theme') === 'dark')
+const toggleTheme = () => {
+  dark.value = !dark.value
+  if (dark.value) document.documentElement.setAttribute('data-theme', 'dark')
+  else document.documentElement.removeAttribute('data-theme')
+  try { localStorage.setItem('theme', dark.value ? 'dark' : 'light') } catch {}
+}
 
 const primaryRole = computed(() => {
   const u = session.user
