@@ -11,31 +11,78 @@
       <p v-if="dataSources.length" class="text-xs text-text-muted mb-5">「榜单可见」控制该源是否出现在普通用户的公开排行榜，存的仍是设置项 <span class="font-mono">rank_public_sources</span> 的名单——**这一页是唯一的编辑口**，系统设置页只显示这份名单的摘要。</p>
       <UiSpinner v-if="dsLoading" />
       <UiEmpty v-else-if="dsError" title="加载失败" :text="dsError" />
-      <div v-else class="space-y-3">
-        <div v-for="ds in dataSources" :key="ds.id" class="card !p-0 overflow-hidden">
-          <div class="flex flex-wrap items-center justify-between gap-3 px-5 md:px-6 py-4 border-b border-border bg-surface-alt">
-            <div>
-              <div class="font-serif text-lg md:text-xl font-medium tracking-tight">{{ ds.display_name }}</div>
-              <div class="flex items-center gap-2 font-mono text-xs text-text-muted mt-0.5">
-                <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ ds.name }}</span>
-                <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ ds.category }}</span>
-                <span v-if="groupNameOf(ds.group_id)" class="px-2 py-0.5 bg-surface border border-border rounded">{{ groupNameOf(ds.group_id) }}</span>
-                <span class="text-text-muted">排序: {{ ds.sort_order }}</span>
+      <template v-else>
+        <!-- 移动端卡片 -->
+        <div class="sm:hidden space-y-3">
+          <div v-for="ds in pagedDataSources" :key="ds.id" class="card !p-0 overflow-hidden">
+            <div class="flex flex-wrap items-center justify-between gap-3 px-5 md:px-6 py-4 border-b border-border bg-surface-alt">
+              <div>
+                <div class="font-serif text-lg md:text-xl font-medium tracking-tight">{{ ds.display_name }}</div>
+                <div class="flex items-center gap-2 font-mono text-xs text-text-muted mt-0.5">
+                  <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ ds.name }}</span>
+                  <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ ds.category }}</span>
+                  <span v-if="groupNameOf(ds.group_id)" class="px-2 py-0.5 bg-surface border border-border rounded">{{ groupNameOf(ds.group_id) }}</span>
+                  <span class="text-text-muted">排序: {{ ds.sort_order }}</span>
+                </div>
               </div>
-            </div>
-            <div class="flex items-center gap-3">
-              <UiTag :tone="ds.status === 1 ? 'green' : 'gray'" :label="ds.status === 1 ? '启用' : '禁用'" />
-              <UiTag v-if="scheduleTagFor(ds)" tone="blue" :label="'定时 ' + scheduleTagFor(ds)" />
-              <button @click="toggleRankPublic(ds)" :disabled="rankBusy === ds.id" class="text-xs transition-colors"
-                :class="ds.rank_public ? 'text-pale-green-fg' : 'text-text-muted hover:text-text'">{{ ds.rank_public ? '榜单可见' : '榜单隐藏' }}</button>
-              <router-link to="/admin/quotas" class="text-xs font-mono text-text-muted hover:text-text transition-colors"
-                :title="'只读：本源的套餐访问权限在「额度 · 套餐」页编辑。两处都能改会互相覆盖（待办清单 P28）'">套餐 {{ plansFor(ds).length }}</router-link>
-              <button @click="editDataSource(ds)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
-              <button @click="deleteDataSource(ds)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+              <div class="flex items-center gap-3">
+                <UiTag :tone="ds.status === 1 ? 'green' : 'gray'" :label="ds.status === 1 ? '启用' : '禁用'" />
+                <UiTag v-if="scheduleTagFor(ds)" tone="blue" :label="'定时 ' + scheduleTagFor(ds)" />
+                <button @click="toggleRankPublic(ds)" :disabled="rankBusy === ds.id" class="text-xs transition-colors"
+                  :class="ds.rank_public ? 'text-pale-green-fg' : 'text-text-muted hover:text-text'">{{ ds.rank_public ? '榜单可见' : '榜单隐藏' }}</button>
+                <router-link to="/admin/quotas" class="text-xs font-mono text-text-muted hover:text-text transition-colors"
+                  :title="'只读：本源的套餐访问权限在「额度 · 套餐」页编辑。两处都能改会互相覆盖（待办清单 P28）'">套餐 {{ plansFor(ds).length }}</router-link>
+                <button @click="editDataSource(ds)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
+                <button @click="deleteDataSource(ds)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- 桌面端表格：表头吸顶靠 .table-wrap 这个滚动口（styles.css 的 sticky + max-height 两条同时成立） -->
+        <div class="hidden sm:block table-wrap reveal overflow-x-auto">
+          <table class="table-base">
+            <thead>
+              <tr>
+                <th>数据源</th><th>分类</th><th>分组</th><th class="hidden lg:table-cell">排序</th>
+                <th>定时</th><th>状态</th><th>套餐</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="ds in pagedDataSources" :key="ds.id">
+                <td>
+                  <div class="font-serif text-base font-medium tracking-tight whitespace-nowrap">{{ ds.display_name }}</div>
+                  <div class="font-mono text-xs text-text-muted mt-0.5">{{ ds.name }}</div>
+                </td>
+                <td class="whitespace-nowrap">{{ ds.category }}</td>
+                <td class="whitespace-nowrap">{{ groupNameOf(ds.group_id) || '—' }}</td>
+                <td class="font-mono text-xs text-text-muted hidden lg:table-cell">{{ ds.sort_order }}</td>
+                <td class="whitespace-nowrap">
+                  <UiTag v-if="scheduleTagFor(ds)" tone="blue" :label="'定时 ' + scheduleTagFor(ds)" />
+                  <span v-else class="text-text-muted">—</span>
+                </td>
+                <td class="whitespace-nowrap"><UiTag :tone="ds.status === 1 ? 'green' : 'gray'" :label="ds.status === 1 ? '启用' : '禁用'" /></td>
+                <td class="whitespace-nowrap">
+                  <router-link to="/admin/quotas" class="text-xs font-mono text-text-muted hover:text-text transition-colors"
+                    :title="'只读：本源的套餐访问权限在「额度 · 套餐」页编辑。两处都能改会互相覆盖（待办清单 P28）'">套餐 {{ plansFor(ds).length }}</router-link>
+                </td>
+                <td class="whitespace-nowrap">
+                  <div class="flex items-center gap-1.5 text-xs" style="white-space: nowrap">
+                    <button @click="toggleRankPublic(ds)" :disabled="rankBusy === ds.id" class="transition-colors"
+                      :class="ds.rank_public ? 'text-pale-green-fg hover:opacity-70' : 'text-text-muted hover:text-text'">{{ ds.rank_public ? '榜单可见' : '榜单隐藏' }}</button>
+                    <span class="text-border select-none">|</span>
+                    <button @click="editDataSource(ds)" class="text-text-muted hover:text-text transition-colors">编辑</button>
+                    <span class="text-border select-none">|</span>
+                    <button @click="deleteDataSource(ds)" class="text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <UiPagination :page="dsPage" :total="dataSources.length" :page-size="PAGE_SIZE" @change="goDsPage" />
+      </template>
     </section>
 
     <!-- 定时启用 -->
@@ -49,24 +96,55 @@
       <UiSpinner v-if="schedLoading" />
       <UiEmpty v-else-if="schedError" title="加载失败" :text="schedError" />
       <UiEmpty v-else-if="schedules.length === 0" title="暂无定时规则" text="新增一条：选数据源，再选「每天时段」或「一次性」，到点自动启用。" />
-      <div v-else class="space-y-3">
-        <div v-for="s in schedules" :key="s.id" class="card !p-0 overflow-hidden">
-          <div class="flex flex-wrap items-center justify-between gap-3 px-5 md:px-6 py-4 border-b border-border bg-surface-alt">
-            <div>
-              <div class="font-serif text-lg md:text-xl font-medium tracking-tight">{{ s.source_display || s.source_name }}</div>
-              <div class="flex items-center gap-2 font-mono text-xs text-text-muted mt-0.5">
-                <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ s.source_name }}</span>
-                <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ s.window_text }}</span>
+      <template v-else>
+        <!-- 移动端卡片 -->
+        <div class="sm:hidden space-y-3">
+          <div v-for="s in pagedSchedules" :key="s.id" class="card !p-0 overflow-hidden">
+            <div class="flex flex-wrap items-center justify-between gap-3 px-5 md:px-6 py-4 border-b border-border bg-surface-alt">
+              <div>
+                <div class="font-serif text-lg md:text-xl font-medium tracking-tight">{{ s.source_display || s.source_name }}</div>
+                <div class="flex items-center gap-2 font-mono text-xs text-text-muted mt-0.5">
+                  <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ s.source_name }}</span>
+                  <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ s.window_text }}</span>
+                </div>
               </div>
-            </div>
-            <div class="flex items-center gap-3">
-              <UiTag :tone="scheduleTone(s)" :label="scheduleStateLabel(s)" />
-              <button @click="toggleSchedule(s)" class="text-xs text-text-muted hover:text-text transition-colors">{{ s.status === 1 ? '停用' : '启用' }}</button>
-              <button @click="deleteSchedule(s)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+              <div class="flex items-center gap-3">
+                <UiTag :tone="scheduleTone(s)" :label="scheduleStateLabel(s)" />
+                <button @click="toggleSchedule(s)" class="text-xs text-text-muted hover:text-text transition-colors">{{ s.status === 1 ? '停用' : '启用' }}</button>
+                <button @click="deleteSchedule(s)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- 桌面端表格 -->
+        <div class="hidden sm:block table-wrap reveal overflow-x-auto">
+          <table class="table-base">
+            <thead>
+              <tr><th>数据源</th><th>时段</th><th>状态</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="s in pagedSchedules" :key="s.id">
+                <td>
+                  <div class="font-serif text-base font-medium tracking-tight whitespace-nowrap">{{ s.source_display || s.source_name }}</div>
+                  <div class="font-mono text-xs text-text-muted mt-0.5">{{ s.source_name }}</div>
+                </td>
+                <td class="font-mono text-xs whitespace-nowrap">{{ s.window_text }}</td>
+                <td class="whitespace-nowrap"><UiTag :tone="scheduleTone(s)" :label="scheduleStateLabel(s)" /></td>
+                <td class="whitespace-nowrap">
+                  <div class="flex items-center gap-1.5 text-xs" style="white-space: nowrap">
+                    <button @click="toggleSchedule(s)" class="text-text-muted hover:text-text transition-colors">{{ s.status === 1 ? '停用' : '启用' }}</button>
+                    <span class="text-border select-none">|</span>
+                    <button @click="deleteSchedule(s)" class="text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <UiPagination :page="schedPage" :total="schedules.length" :page-size="PAGE_SIZE" @change="goSchedPage" />
+      </template>
     </section>
 
     <!-- 分组管理 -->
@@ -79,27 +157,64 @@
       <UiSpinner v-if="groupsLoading" />
       <UiEmpty v-else-if="groupsError" title="加载失败" :text="groupsError" />
       <UiEmpty v-else-if="sourceGroups.length === 0" title="暂无分组" text="删除分组不会删除其中的数据源，成员会回落到未分组。" />
-      <div v-else class="space-y-3">
-        <div v-for="g in sourceGroups" :key="g.id" class="card !p-0 overflow-hidden">
-          <div class="flex flex-wrap items-center justify-between gap-3 px-5 md:px-6 py-4 border-b border-border bg-surface-alt">
-            <div>
-              <div class="font-serif text-lg md:text-xl font-medium tracking-tight">{{ g.name }}</div>
-              <div class="flex items-center gap-2 font-mono text-xs text-text-muted mt-0.5">
-                <span class="px-2 py-0.5 bg-surface border border-border rounded">成员: {{ g.member_count }}</span>
-                <span class="text-text-muted">排序: {{ g.sort_order }}</span>
-                <span v-if="g.description" class="truncate max-w-[16rem]" :title="g.description">{{ g.description }}</span>
+      <template v-else>
+        <!-- 移动端卡片 -->
+        <div class="sm:hidden space-y-3">
+          <div v-for="g in pagedGroups" :key="g.id" class="card !p-0 overflow-hidden">
+            <div class="flex flex-wrap items-center justify-between gap-3 px-5 md:px-6 py-4 border-b border-border bg-surface-alt">
+              <div>
+                <div class="font-serif text-lg md:text-xl font-medium tracking-tight">{{ g.name }}</div>
+                <div class="flex items-center gap-2 font-mono text-xs text-text-muted mt-0.5">
+                  <span class="px-2 py-0.5 bg-surface border border-border rounded">成员: {{ g.member_count }}</span>
+                  <span class="text-text-muted">排序: {{ g.sort_order }}</span>
+                  <span v-if="g.description" class="truncate max-w-[16rem]" :title="g.description">{{ g.description }}</span>
+                </div>
               </div>
-            </div>
-            <div class="flex items-center gap-3">
-              <UiTag :tone="g.status === 1 ? 'green' : 'gray'" :label="g.status === 1 ? '启用' : '停用'" />
-              <button @click="openMembers(g)" class="text-xs text-text-muted hover:text-text transition-colors">成员</button>
-              <button @click="openApplyLimits(g)" class="text-xs text-text-muted hover:text-text transition-colors">套用限额</button>
-              <button @click="editGroup(g)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
-              <button @click="deleteGroup(g)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+              <div class="flex items-center gap-3">
+                <UiTag :tone="g.status === 1 ? 'green' : 'gray'" :label="g.status === 1 ? '启用' : '停用'" />
+                <button @click="openMembers(g)" class="text-xs text-text-muted hover:text-text transition-colors">成员</button>
+                <button @click="openApplyLimits(g)" class="text-xs text-text-muted hover:text-text transition-colors">套用限额</button>
+                <button @click="editGroup(g)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
+                <button @click="deleteGroup(g)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- 桌面端表格 -->
+        <div class="hidden sm:block table-wrap reveal overflow-x-auto">
+          <table class="table-base">
+            <thead>
+              <tr>
+                <th>分组</th><th class="hidden lg:table-cell">说明</th><th>成员</th>
+                <th class="hidden md:table-cell">排序</th><th>状态</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="g in pagedGroups" :key="g.id">
+                <td class="font-serif text-base font-medium tracking-tight whitespace-nowrap">{{ g.name }}</td>
+                <td class="text-text-muted max-w-[200px] truncate hidden lg:table-cell" :title="g.description">{{ g.description || '—' }}</td>
+                <td class="font-mono text-xs">{{ g.member_count }}</td>
+                <td class="font-mono text-xs text-text-muted hidden md:table-cell">{{ g.sort_order }}</td>
+                <td class="whitespace-nowrap"><UiTag :tone="g.status === 1 ? 'green' : 'gray'" :label="g.status === 1 ? '启用' : '停用'" /></td>
+                <td class="whitespace-nowrap">
+                  <div class="flex items-center gap-1.5 text-xs" style="white-space: nowrap">
+                    <button @click="openMembers(g)" class="text-text-muted hover:text-text transition-colors">成员</button>
+                    <span class="text-border select-none">|</span>
+                    <button @click="openApplyLimits(g)" class="text-text-muted hover:text-text transition-colors">套用限额</button>
+                    <span class="text-border select-none">|</span>
+                    <button @click="editGroup(g)" class="text-text-muted hover:text-text transition-colors">编辑</button>
+                    <span class="text-border select-none">|</span>
+                    <button @click="deleteGroup(g)" class="text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <UiPagination :page="groupPage" :total="sourceGroups.length" :page-size="PAGE_SIZE" @change="goGroupPage" />
+      </template>
       <div class="mt-3 font-mono text-xs text-text-muted">未分组数据源: {{ ungroupedCount }}</div>
     </section>
 
@@ -110,13 +225,36 @@
         <button v-if="sourceConfigDirty" class="btn-primary btn-sm" :disabled="savingConfig" @click="saveSourceConfigs">保存</button>
       </div>
       <UiSpinner v-if="sourceConfigs === null" />
-      <div v-else class="space-y-3">
-        <div v-for="cfg in sourceConfigs" :key="cfg.source_name" class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-          <div class="font-mono text-sm min-w-[130px]">{{ cfg.source_display }}</div>
-          <div class="font-mono text-xs text-text-muted min-w-[90px]">{{ cfg.source_name }}</div>
-          <input v-model="cfg.base_url" class="input flex-1 font-mono text-sm" placeholder="留空则需用户传参" @input="sourceConfigDirty = true">
+      <template v-else>
+        <!-- 移动端 -->
+        <div class="sm:hidden space-y-3">
+          <div v-for="cfg in pagedSourceConfigs" :key="cfg.source_name" class="flex flex-col gap-2">
+            <div class="font-mono text-sm">{{ cfg.source_display }}</div>
+            <div class="font-mono text-xs text-text-muted">{{ cfg.source_name }}</div>
+            <input v-model="cfg.base_url" class="input w-full font-mono text-sm" placeholder="留空则需用户传参" @input="sourceConfigDirty = true">
+          </div>
         </div>
-      </div>
+
+        <!-- 桌面端表格：输入框给定宽，否则 768–900px 之间它跟着横向滚动滚出手 -->
+        <div class="hidden sm:block table-wrap reveal overflow-x-auto">
+          <table class="table-base">
+            <thead>
+              <tr><th>数据源</th><th>标识</th><th>默认地址</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="cfg in pagedSourceConfigs" :key="cfg.source_name">
+                <td class="font-mono text-sm whitespace-nowrap">{{ cfg.source_display }}</td>
+                <td class="font-mono text-xs text-text-muted whitespace-nowrap">{{ cfg.source_name }}</td>
+                <td>
+                  <input v-model="cfg.base_url" class="input w-full max-w-[28rem] font-mono text-sm" placeholder="留空则需用户传参" @input="sourceConfigDirty = true">
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <UiPagination :page="cfgPage" :total="(sourceConfigs || []).length" :page-size="PAGE_SIZE" @change="goCfgPage" />
+      </template>
     </section>
 
     <!-- 新增数据源弹窗 -->
@@ -300,12 +438,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import PageHeader from '../../components/PageHeader.vue'
 import UiTag from '../../components/UiTag.vue'
 import UiSpinner from '../../components/UiSpinner.vue'
 import UiEmpty from '../../components/UiEmpty.vue'
 import UiModal from '../../components/UiModal.vue'
+import UiPagination from '../../components/UiPagination.vue'
 import { adminApi, quotaApi } from '../../api/index.js'
 import { toast, revealObserve } from '../../utils.js'
 
@@ -366,6 +505,36 @@ const showSchedModal = ref(false)
 const savingSched = ref(false)
 const schedForm = ref({ mode: 'daily', start_clock: '09:00', end_clock: '18:00', start_at: '', duration_min: 120, source_ids: [] })
 
+// ===== 分页 =====
+// 四份列表都是一次读全的客户端数组（源、定时规则、分组、默认地址），分页就是纯前端切片。
+// 定时启用看着短，但批量创建是「一个源一行」，规则数会跟着源数走，所以四块一视同仁。
+const PAGE_SIZE = 20
+const dsPage = ref(1)
+const schedPage = ref(1)
+const groupPage = ref(1)
+const cfgPage = ref(1)
+const sliceBy = (list, page) => list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+const pagedDataSources = computed(() => sliceBy(dataSources.value, dsPage.value))
+const pagedSchedules = computed(() => sliceBy(schedules.value, schedPage.value))
+const pagedGroups = computed(() => sliceBy(sourceGroups.value, groupPage.value))
+// 默认地址的 v-model 写在数组里的同一批对象上，切片返回同一引用——翻页不丢未保存的改动，
+// 保存仍是整份 PUT，与当前页无关。
+const pagedSourceConfigs = computed(() => sliceBy(sourceConfigs.value || [], cfgPage.value))
+const goDsPage = (p) => { dsPage.value = p }
+const goSchedPage = (p) => { schedPage.value = p }
+const goGroupPage = (p) => { groupPage.value = p }
+const goCfgPage = (p) => { cfgPage.value = p }
+// 删掉末页唯一的一行后页码要自己退回来，否则留下一张空表
+const clampPages = () => {
+  const fit = (list, page) => Math.min(page, Math.max(1, Math.ceil(list.length / PAGE_SIZE)))
+  dsPage.value = fit(dataSources.value, dsPage.value)
+  schedPage.value = fit(schedules.value, schedPage.value)
+  groupPage.value = fit(sourceGroups.value, groupPage.value)
+  cfgPage.value = fit(sourceConfigs.value || [], cfgPage.value)
+}
+// 翻页换出来的行是新节点；reveal 挂在容器上不会漏，但 loader 重建容器那一类要补观察
+watch([dsPage, schedPage, groupPage, cfgPage], () => nextTick(revealObserve))
+
 const loadSourceSchedules = async () => {
   schedLoading.value = true
   schedError.value = ''
@@ -375,6 +544,7 @@ const loadSourceSchedules = async () => {
     schedError.value = e.message
   }
   schedLoading.value = false
+  clampPages()
   nextTick(revealObserve)
 }
 
@@ -445,6 +615,7 @@ const loadDataSources = async () => {
     dsError.value = e.message
   }
   dsLoading.value = false
+  clampPages()
   nextTick(revealObserve)
 }
 
@@ -484,6 +655,7 @@ const loadSourceGroups = async () => {
     groupsError.value = e.message
   }
   groupsLoading.value = false
+  clampPages()
   nextTick(revealObserve)
 }
 
@@ -658,6 +830,7 @@ const loadSourceConfigs = async () => {
   } catch (e) {
     sourceConfigs.value = []
   }
+  clampPages()
 }
 
 const saveSourceConfigs = async () => {
