@@ -275,6 +275,20 @@ func DeclaredSettings() []SettingDecl {
 	return out
 }
 
+// DeclaredSettingSource 反查某个设置键由哪个源声明（面板按源分卡用，`GET /admin/settings`
+// 给每项带上归属源）。键跨源全局唯一——RegisterSource 期已 log.Fatalf 挡下重复——所以至多
+// 命中一个；内置键（seed 那批）不属于任何源，返回 ok=false。
+func DeclaredSettingSource(key string) (code, display string, ok bool) {
+	for _, m := range DeclaredSources() {
+		for _, s := range m.Settings {
+			if s.Key == key {
+				return m.Code, m.Display, true
+			}
+		}
+	}
+	return "", "", false
+}
+
 // HandlerInfo 处理器注册信息（泛型版本，编译时确定类型，无运行时断言）
 type HandlerInfo[T any] struct {
 	Handler    T

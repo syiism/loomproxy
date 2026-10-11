@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"loomproxy/base"
 	"loomproxy/db"
 	"loomproxy/gate"
 	"loomproxy/handlers/auth"
@@ -609,6 +610,15 @@ func ListRoles(c *gin.Context) {
 	auth.Ok(c, roles)
 }
 
+// settingItem 设置项的下发形态：在系统设置行之外，附上「归属源」——源声明的键由
+// base 反查得到声明它的源（码 + 显示名），面板据此把源设置项按源分卡；内置键无归属，
+// 两个字段缺省省略（omitempty），对旧前端完全兼容。
+type settingItem struct {
+	models.SystemSetting
+	Source        string `json:"source,omitempty"`
+	SourceDisplay string `json:"source_display,omitempty"`
+}
+
 // ListSettings 系统设置列表
 func ListSettings(c *gin.Context) {
 	var settings []models.SystemSetting
@@ -624,12 +634,18 @@ func ListSettings(c *gin.Context) {
 		sensitive = append(sensitive, k)
 	}
 	sort.Strings(sensitive)
+	items := make([]settingItem, 0, len(settings))
 	for i := range settings {
 		if db.SensitiveSettingKeys[settings[i].Key] {
 			settings[i].Value = ""
 		}
+		it := settingItem{SystemSetting: settings[i]}
+		if code, display, ok := base.DeclaredSettingSource(settings[i].Key); ok {
+			it.Source, it.SourceDisplay = code, display
+		}
+		items = append(items, it)
 	}
-	auth.Ok(c, gin.H{"items": settings, "sensitive_keys": sensitive})
+	auth.Ok(c, gin.H{"items": items, "sensitive_keys": sensitive})
 }
 
 type updateSettingRequest struct {

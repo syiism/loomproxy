@@ -78,3 +78,46 @@ func TestSourceDeclaredSettingsSeededAndRegistered(t *testing.T) {
 		t.Errorf("sensitive_keys 缺 %s：%v", fakesource.SetKeyToken, sk)
 	}
 }
+
+// 面板按「声明源」给源设置项分卡：`GET /admin/settings` 里源声明的键要带 source/source_display
+// 归属、内置键不带——骨架靠这个字段分卡，从不硬编码任何具体源键（AGENTS §3）。
+func TestSettingsListCarriesDeclaringSource(t *testing.T) {
+	srv := newTestServer(t)
+	admin := authHeader(adminToken(t, srv))
+
+	status, env := doJSON(t, srv, http.MethodGet, "/admin/settings", nil, admin)
+	if status != http.StatusOK {
+		t.Fatalf("GET /admin/settings = %d", status)
+	}
+	byKey := map[string]map[string]interface{}{}
+	items, _ := env.dataMap(t)["items"].([]interface{})
+	for _, it := range items {
+		m, _ := it.(map[string]interface{})
+		if k, _ := m["key"].(string); k != "" {
+			byKey[k] = m
+		}
+	}
+
+	// 源声明的两个键都归属 fake_b，且带显示名
+	for _, k := range []string{fakesource.SetKeyMode, fakesource.SetKeyToken} {
+		m := byKey[k]
+		if m == nil {
+			t.Fatalf("items 缺 %s", k)
+		}
+		if m["source"] != fakesource.B {
+			t.Errorf("%s.source = %v（期望 %s）", k, m["source"], fakesource.B)
+		}
+		if d, _ := m["source_display"].(string); d == "" {
+			t.Errorf("%s.source_display 为空（期望非空）", k)
+		}
+	}
+
+	// 内置键无归属：source 缺省省略（omitempty）
+	m := byKey["maintenance_mode"]
+	if m == nil {
+		t.Fatalf("items 缺内置键 maintenance_mode")
+	}
+	if _, ok := m["source"]; ok {
+		t.Errorf("内置键 maintenance_mode 不该带 source：%v", m["source"])
+	}
+}

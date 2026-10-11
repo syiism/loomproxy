@@ -160,6 +160,60 @@ func passwordError(pw string) string {
 	return ""
 }
 
+// emailDomain 取邮箱的域名部分（@ 之后），小写；形状不合法时返回空串。
+// 邮箱形状已由 binding:"email" 校验，这里只做防御性取值。
+func emailDomain(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 || at == len(email)-1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(email[at+1:]))
+}
+
+// splitEmailDomains 把逗号分隔的域名名单拆成规范化切片：去空白、转小写、去掉前导点。
+func splitEmailDomains(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.ToLower(strings.TrimSpace(p))
+		p = strings.TrimPrefix(p, ".")
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// emailDomainInList 后缀匹配：d 命中名单项 e 当 d==e 或以 "."+e 结尾
+// （填 example.com 同时命中 example.com 与 mail.example.com）。
+func emailDomainInList(d string, list []string) bool {
+	for _, e := range list {
+		if d == e || strings.HasSuffix(d, "."+e) {
+			return true
+		}
+	}
+	return false
+}
+
+// emailDomainBlocked 按系统设置里的邮箱域名白/黑名单判定注册邮箱；返回非空字符串表示拒绝原因。
+// 语义：白名单非空 → 只放行名单内；随后一律排除黑名单内。两者皆空 = 不限制（默认）。
+// 两个键都在 `db/seed.go` 内置清单里，面板「注册与登录」卡可热改。
+func emailDomainBlocked(email string) string {
+	domain := emailDomain(email)
+	if domain == "" {
+		return ""
+	}
+	allow := splitEmailDomains(getSettingStr("email_domain_allowlist", ""))
+	if len(allow) > 0 && !emailDomainInList(domain, allow) {
+		return "该邮箱域名不在允许注册的名单内"
+	}
+	deny := splitEmailDomains(getSettingStr("email_domain_blocklist", ""))
+	if emailDomainInList(domain, deny) {
+		return "该邮箱域名不允许注册"
+	}
+	return ""
+}
+
 func Register(c *gin.Context) {
 	if !getSettingBool("register_enabled", true) {
 		fail(c, http.StatusForbidden, "注册功能已关闭")
@@ -169,6 +223,12 @@ func Register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, registerBindError(err))
+		return
+	}
+
+	// 邮箱域名白/黑名单：注册入口的域名闸，早于验证码与查重（被拒的域名不必先烧一发码）
+	if msg := emailDomainBlocked(req.Email); msg != "" {
+		fail(c, http.StatusForbidden, msg)
 		return
 	}
 

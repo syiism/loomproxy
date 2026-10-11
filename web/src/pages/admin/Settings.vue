@@ -9,10 +9,12 @@
     <UiSpinner v-if="loading" />
     <UiEmpty v-else-if="error" title="加载失败" :text="error" />
     <UiEmpty v-else-if="list.length === 0" title="暂无设置项" />
-    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 items-start">
+    <div v-else>
+      <!-- 瀑布流：卡片按列独立堆叠（CSS 多列），每卡 break-inside-avoid 防止被拆到两列 -->
+      <div class="columns-1 md:columns-2 gap-4 md:gap-6">
 
-      <!-- 功能卡片 -->
-      <section v-for="g in GROUPS" :key="g.title" class="card reveal">
+      <!-- 功能卡片：内置键卡片在前，源声明设置项按声明源动态成卡在后 -->
+      <section v-for="g in ALL_GROUPS" :key="g.source || g.title" class="card reveal mb-4 md:mb-6 break-inside-avoid">
         <div class="mb-5 pb-3 border-b border-border">
           <div class="font-serif text-xl md:text-2xl font-medium tracking-tight">{{ g.title }}</div>
           <div v-if="g.desc" class="text-xs text-text-muted mt-1.5">{{ g.desc }}</div>
@@ -97,12 +99,13 @@
           </div>
         </form>
       </section>
+      </div>
 
-      <!-- 自定义配置兜底卡：不受卡片管理的 key -->
-      <section v-if="customEntries.length > 0" class="card reveal md:col-span-2">
+      <!-- 自定义配置兜底卡：既不受功能卡管理、也不属于任何数据源的 key（后续版本新增、未识别） -->
+      <section v-if="customEntries.length > 0" class="card reveal mt-2">
         <div class="mb-4">
           <div class="font-serif text-lg font-medium tracking-tight">自定义配置</div>
-          <div class="text-xs text-text-muted mt-1">未被上方功能卡片管理的设置项（含后续版本新增、未识别的 key）。</div>
+          <div class="text-xs text-text-muted mt-1">未被上方功能卡片或数据源卡片管理的设置项（含后续版本新增、未识别的 key）。</div>
         </div>
         <div class="divide-y divide-border">
           <div v-for="s in customEntries" :key="s.key" class="flex flex-wrap items-center gap-3 md:gap-4 py-3 first:pt-0 last:pb-0">
@@ -190,22 +193,24 @@ import { toast, revealObserve } from '../../utils.js'
 
 const PROTECTED = ['register_enabled', 'default_role', 'default_quota_plan']
 
-// 受管字段分组：渲染顺序即卡片顺序；field 的中文说明沿用后端 description，不在前端重复维护
+// 受管字段分组：渲染顺序即卡片顺序；field 的中文说明沿用后端 description，不在前端重复维护。
+// 源声明的设置项不在这里——它们由 sourceGroups 按「声明源」动态成卡（见下），骨架不硬编码任何源键。
 const GROUPS = [
   {
     title: '站点基础',
-    desc: '站点身份与对用户可见的公告、书源入口。',
+    desc: '站点开关与对用户可见的公告。',
     fields: [
       { key: 'maintenance_mode', label: '维护模式', widget: 'switch' },
       { key: 'announcement', label: '站内公告', widget: 'textarea', rows: 4 },
-      { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources_ro' },
     ],
   },
   {
     title: '注册与登录',
-    desc: '新用户注册开关、默认身份与登录 token 有效期。',
+    desc: '新用户注册开关、邮箱域名白/黑名单、默认身份与登录 token 有效期。',
     fields: [
       { key: 'register_enabled', label: '允许注册', widget: 'switch' },
+      { key: 'email_domain_allowlist', label: '邮箱域名白名单', widget: 'textarea', rows: 2 },
+      { key: 'email_domain_blocklist', label: '邮箱域名黑名单', widget: 'textarea', rows: 2 },
       { key: 'default_role', label: '新用户默认角色', widget: 'text' },
       { key: 'default_quota_plan', label: '新用户默认套餐', widget: 'text' },
       { key: 'jwt_expire_hours', label: 'Token 有效时长（小时）', widget: 'number' },
@@ -235,6 +240,14 @@ const GROUPS = [
     ],
   },
   {
+    title: '数据面',
+    desc: '对下游开放的数据面行为：榜单可见性与聚合搜索上限。',
+    fields: [
+      { key: 'rank_public_sources', label: '可见榜单的数据源', widget: 'sources_ro' },
+      { key: 'aggregate_max_sources', label: '聚合搜索上限（源数）', widget: 'number', min: 1 },
+    ],
+  },
+  {
     title: '代理与 IP 防护',
     desc: '上游代理池的作用范围与 IP 自动拉黑阈值。',
     fields: [
@@ -242,6 +255,16 @@ const GROUPS = [
       { key: 'auto_block_enabled', label: 'IP 自动拉黑', widget: 'switch' },
       { key: 'auto_block_threshold', label: '拉黑阈值（次）', widget: 'number', min: 1 },
       { key: 'auto_block_window_sec', label: '统计窗口（秒）', widget: 'number', min: 1 },
+    ],
+  },
+  {
+    title: '设备与密钥监控',
+    desc: '多设备登录处置与设备/密钥异动标红（只标红，不自动踢人）。',
+    fields: [
+      { key: 'device_watch_enabled', label: '多设备监控', widget: 'switch' },
+      { key: 'max_active_sessions', label: '活跃会话上限', widget: 'number', min: 1 },
+      { key: 'device_watch_window_days', label: '统计窗口（天）', widget: 'number', min: 1 },
+      { key: 'suspect_distinct_ips', label: '标红阈值（不同 IP 数）', widget: 'number', min: 1 },
     ],
   },
 ]
@@ -267,8 +290,39 @@ const savingGroup = ref('')
 
 const isProtected = (s) => PROTECTED.includes(s.key)
 
-// 不受卡片管理的 key 进自定义配置卡（含未来 seed 新增而前端未识别的）
-const customEntries = computed(() => list.value.filter(s => !MANAGED_KEYS.has(s.key)))
+// 源设置项的控件形态：按声明类型选 widget，敏感键走只写不回显的 secret
+const widgetForSetting = (s) => {
+  if (sensitive.value.has(s.key)) return 'secret'
+  switch (s.type) {
+    case 'bool': return 'switch'
+    case 'number': return 'number'
+    case 'json':
+    case 'json_object': return 'json'
+    default: return 'text'
+  }
+}
+
+// 源声明的设置项按「声明源」各成一卡：归属由后端 GET /admin/settings 的 source/source_display 下发，
+// 前端只按 source 字段分组、不硬编码任何源键（AGENTS §3）。字段名用原始键名。
+const sourceGroups = computed(() => {
+  const bySource = new Map()
+  for (const s of list.value) {
+    if (MANAGED_KEYS.has(s.key) || !s.source) continue
+    let g = bySource.get(s.source)
+    if (!g) {
+      g = { source: s.source, title: s.source_display || s.source, desc: `由数据源 ${s.source} 声明`, fields: [] }
+      bySource.set(s.source, g)
+    }
+    g.fields.push({ key: s.key, label: s.key, widget: widgetForSetting(s) })
+  }
+  return [...bySource.values()]
+})
+
+// 渲染顺序：内置功能卡在前，源卡按声明源在后
+const ALL_GROUPS = computed(() => [...GROUPS, ...sourceGroups.value])
+
+// 兜底卡：既不受功能卡管理、也不属于任何数据源的 key（后续版本新增、未识别）
+const customEntries = computed(() => list.value.filter(s => !MANAGED_KEYS.has(s.key) && !s.source))
 
 // gate: 'providerHttp' 表示仅 http 通道可编辑（mock 下置灰）
 const fieldDisabled = (f) => f.gate === 'providerHttp' && form.value.verify_provider === 'mock'
@@ -351,7 +405,8 @@ const load = async () => {
     const snap = {}
     for (const s of list.value) {
       map[s.key] = s
-      if (MANAGED_KEYS.has(s.key)) {
+      // 受管键与源声明键都要进表单态（源键由 sourceGroups 渲染，缺了会控件无值、diff 失效）
+      if (MANAGED_KEYS.has(s.key) || s.source) {
         // 敏感键（P62）只写不回显：控件永远空着，保存留空 = 后端保持原值
         const masked = sensitive.value.has(s.key)
         f[s.key] = masked ? '' : (s.type === 'bool' ? s.value === 'true' : s.value)

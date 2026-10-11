@@ -40,6 +40,8 @@ func seedSettings(db *gorm.DB) error {
 		{Key: "register_enabled", Value: "true", Type: "bool", Description: "是否允许注册"},
 		{Key: "default_role", Value: "user", Type: "string", Description: "新用户默认角色"},
 		{Key: "default_quota_plan", Value: "free", Type: "string", Description: "新用户默认额度套餐"},
+		{Key: "email_domain_allowlist", Value: "", Type: "string", Description: "允许注册的邮箱域名白名单，逗号分隔；后缀匹配（填 example.com 命中 example.com 与 mail.example.com）、大小写不敏感；留空=不按白名单限制"},
+		{Key: "email_domain_blocklist", Value: "", Type: "string", Description: "禁止注册的邮箱域名黑名单，逗号分隔；后缀匹配、大小写不敏感；留空=不按黑名单限制。白名单非空时先过白名单再排除黑名单"},
 		{Key: "maintenance_mode", Value: "false", Type: "bool", Description: "维护模式"},
 		{Key: "jwt_expire_hours", Value: "168", Type: "number", Description: "登录 token 有效时长（小时），-1 表示永不过期；用户可在个人中心设置自己的时长覆盖"},
 		{Key: "proxy_enabled_sources", Value: "", Type: "string", Description: "启用 IP 代理池的数据源/接口，逗号分隔（如 novel_a/chapter 单接口、novel_a 整源）；留空表示不限制（全部走代理）"},
