@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHeader title="接口监控" subtitle="数据源接口调用统计。内存计数，服务重启后清零，与额度计费无关。" />
+    <PageHeader title="接口监控" subtitle="数据源接口调用统计。内存计数，服务重启后清零，与额度计费无关；近 7 天趋势请点「生成报表」——那是明细口径，与本页的内存计数不是同一个窗口。" />
 
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 reveal">
       <div class="card !p-4">
@@ -22,14 +22,11 @@
       </div>
     </div>
 
-    <!-- 近 7 天调用趋势（api_call_logs 明细按天×数据源聚合；7 天是展示窗口，与明细保留期无关） -->
-    <div class="card reveal mb-6">
-      <div class="text-sm font-medium mb-3">近 7 天调用趋势</div>
-      <UiTrendChart :days="trend.days" :sources="trend.sources" :rows="trend.rows" />
-    </div>
-
     <div class="reveal flex flex-wrap items-center gap-4 mb-4">
       <button @click="load()" class="btn-ghost btn-sm">刷新</button>
+      <!-- 趋势不在这里画了：逐源一 series 时源一多就读不出东西（配色只有 8 色循环，36 个源每色重复 4~5 次）。
+           报表是一份独立文档，逐源「一行一小节」，规模长的是行数不是图的复杂度。 -->
+      <button @click="openReport" class="btn-ghost btn-sm">生成报表</button>
       <label class="text-sm text-text-muted flex items-center gap-1.5 cursor-pointer">
         <input type="checkbox" v-model="autoRefresh"> 每 10 秒自动刷新
       </label>
@@ -380,7 +377,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import PageHeader from '../../components/PageHeader.vue'
-import UiTrendChart from '../../components/UiTrendChart.vue'
 import UiTag from '../../components/UiTag.vue'
 import UiSpinner from '../../components/UiSpinner.vue'
 import UiEmpty from '../../components/UiEmpty.vue'
@@ -394,7 +390,10 @@ const error = ref('')
 const items = ref([])
 const recent = ref([])
 const overview = ref({ total: 0, success: 0, failed: 0, success_rate: 0, lifetime_total: 0, started_at: null })
-const trend = ref({ days: [], sources: [], rows: [] })
+// 报表是服务端现出的一份独立文档（GET /admin/monitor/report.html，内存渲染、不落盘）。
+// 顶层导航带的是登录时写下的 HttpOnly cookie（utils/jwt.go 的 SetTokenCookie → TokenFromRequest 第三档），
+// 所以这里不需要拼 token 进 URL——凭证不进地址栏、不进历史、不进访问日志。
+const openReport = () => window.open('/admin/monitor/report.html', '_blank', 'noopener')
 // 表增长读数（待办清单 P54）：只读，读不到不影响这一页别的东西
 const growth = ref({ window_days: 0, tables: [], scope: '' })
 // 收起态那行 summary 必须是**读数**，不是「暂无异常」那种形容词（P29 同一条判据）
@@ -517,11 +516,6 @@ const load = async (silent) => {
   } finally {
     loading.value = false
   }
-  // 趋势独立加载，失败不影响主表
-  try {
-    const t = await adminApi.getMonitorTrend()
-    trend.value = { days: t.days || [], sources: t.sources || [], rows: t.rows || [] }
-  } catch (e) { /* 保留旧数据 */ }
   // 表增长读数也独立加载（P54）：它是 `/admin/stats` 里的一格，读不到不该把这一页判死
   try {
     const s = await adminApi.stats()

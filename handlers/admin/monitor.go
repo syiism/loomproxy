@@ -180,15 +180,49 @@ func GetMonitorHistory(c *gin.Context) {
 // 明细默认永久保留（MONITOR_RETENTION_DAYS=0），设了保留期也只影响清理，不改这张图的天数
 const trendDays = 7
 
-// GetMonitorTrend 近 trendDays 天调用趋势：按天 × 数据源聚合 api_call_logs 明细。
-// 口径说明：api_call_stats 永久归档不带时间维度，按天趋势只能来自尚未清理的明细；
-// 日标序列（`days`）按**平台时区**算（`utils.DayStart`，与额度同一个日界），
-// 而**分桶**由库侧的 `date(created_at)` 判——生产 MySQL（`loc=Local`）与平台时区一致，
-// sqlite 会把带 +08 的串按 UTC 归一日界（实测：北京 10-05 04:40 存成 `2026-10-05T04:40:00+08:00`，
-// `date()` 得 `2026-10-04`），所以开发/测试库里北京 00:00–08:00 这段量会挂到前一天的柱子上。
-// 这一条登记在待办清单 P72，本轮只把口径写明，不改分桶方式。
+// TrendRow 一天 × 一个数据源的窗口聚合。字段与 json 标签是 `/admin/monitor/trend` 的响应形状，
+// 抽函数那一步（报表要复用同一份聚合）特意一字未改——三个钉住日界的用例都隔着 HTTP 断言它。
+type TrendRow struct {
+	Day     string `json:"day"`
+	Source  string `json:"source"`
+	Total   int64  `json:"total"`
+	Success int64  `json:"success"`
+}
+
+// TrendActionRow 窗口内「源 × 接口」的聚合，报表那一块长尾用。
+// 它不是第二次查询：与 TrendRow 同一次扫描、同一个 kept 判据，只是换个键再数一遍。
+type TrendActionRow struct {
+	Source  string `json:"source"`
+	Action  string `json:"action"`
+	Total   int64  `json:"total"`
+	Success int64  `json:"success"`
+}
+
+// TrendData 一次窗口聚合的全部读数。
+type TrendData struct {
+	Days     []string         // 连续天序列（无调用的天占位，图上不断档）
+	Sources  []string         // 窗口内出现过的源，字典序
+	Rows     []TrendRow       // 天 × 源
+	ByAction []TrendActionRow // 源 × 接口
+}
+
+// GetMonitorTrend 近 trendDays 天调用趋势的 HTTP 门面：读数全部来自 MonitorTrend，这里只管成败与出口。
+// 报表（GetMonitorReport）调的是同一个 MonitorTrend——日界与成功判据因此不可能有第二份。
 func GetMonitorTrend(c *gin.Context) {
-	// 含今天在内的最近 trendDays 天，从最早一天零点起算（**平台时区**，与额度同一个日界）
+	t, err := MonitorTrend()
+	if err != nil {
+		log.Printf("ERROR: monitor trend query failed: %v", err)
+		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
+		return
+	}
+	auth.Ok(c, gin.H{"days": t.Days, "sources": t.Sources, "rows": t.Rows})
+}
+
+// MonitorTrend 聚合近 trendDays 天的调用明细：按天 × 数据源（另出一份源 × 接口给报表）。
+func MonitorTrend() (*TrendData, error) {
+	// 含今天在内的最近 trendDays 天，从最早一天零点起算（**平台时区**，与额度同一个日界）。
+	// api_call_stats 永久归档不带时间维度，按天趋势只能来自尚未清理的明细；
+	// 这一条登记在待办清单 P72，本轮只把口径写明，不改分桶方式。
 	firstDay := utils.DayStart(trendDays)
 
 	// 分桶在 Go 侧按平台时区做（待办清单 P72，2026-10-06 拍板选 A）。
@@ -203,6 +237,7 @@ func GetMonitorTrend(c *gin.Context) {
 	type detail struct {
 		CreatedAt time.Time
 		Source    string
+		Action    string
 		Status    int
 		// *bool：后加的列在旧行是 NULL，`IS NOT TRUE` 那句判据的意思是"NULL 按纯 HTTP 口径算成功"。
 		// 用非指针 bool 接会在 Scan 时就报"converting NULL to bool is unsupported"。
@@ -210,24 +245,16 @@ func GetMonitorTrend(c *gin.Context) {
 	}
 	var details []detail
 	if err := db.DB.Model(&models.ApiCallLog{}).
-		Select("created_at", "source", "status", "in_band_error").
+		Select("created_at", "source", "action", "status", "in_band_error").
 		Where("created_at >= ?", firstDay).
 		Scan(&details).Error; err != nil {
-		log.Printf("ERROR: monitor trend query failed: %v", err)
-		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
-		return
+		return nil, err
 	}
 
-	type row struct {
-		Day     string `json:"day"`
-		Source  string `json:"source"`
-		Total   int64  `json:"total"`
-		Success int64  `json:"success"`
-	}
 	// 桶键 = 平台时区的 YYYY-MM-DD + "|" + source。日期串只由 `bkey` 生成一次，
 	// 所以旧实现里那层"截前 10 字符对齐 MySQL parseTime 扫出来的 RFC3339"的补丁也不再需要——
 	// 那个补丁本来就是库侧判日界的副作用之一。
-	buckets := make(map[string]*row)
+	buckets := make(map[string]*TrendRow)
 	bkey := func(t time.Time, source string) string {
 		return t.In(utils.PlatformZone()).Format("2006-01-02") + "|" + source
 	}
@@ -241,7 +268,7 @@ func GetMonitorTrend(c *gin.Context) {
 		k := bkey(day, source)
 		r := buckets[k]
 		if r == nil {
-			r = &row{Day: day.In(utils.PlatformZone()).Format("2006-01-02"), Source: source}
+			r = &TrendRow{Day: day.In(utils.PlatformZone()).Format("2006-01-02"), Source: source}
 			buckets[k] = r
 		}
 		r.Total++
@@ -249,8 +276,25 @@ func GetMonitorTrend(c *gin.Context) {
 			r.Success++
 		}
 	}
+	// 源 × 接口那一份是**同一次扫描**换个键再数一遍：不新增查询、不新增日界、不新增成功定义。
+	// 报表的逐接口长尾要用它，而它绝不能长成第二个聚合口径。
+	actBuckets := make(map[string]*TrendActionRow)
+	addAction := func(source, action string, ok bool) {
+		k := source + "|" + action
+		a := actBuckets[k]
+		if a == nil {
+			a = &TrendActionRow{Source: source, Action: action}
+			actBuckets[k] = a
+		}
+		a.Total++
+		if ok {
+			a.Success++
+		}
+	}
 	for _, d := range details {
-		add(d.CreatedAt, d.Source, kept(d.Status, d.InBandError != nil && *d.InBandError))
+		ok := kept(d.Status, d.InBandError != nil && *d.InBandError)
+		add(d.CreatedAt, d.Source, ok)
+		addAction(d.Source, d.Action, ok)
 	}
 
 	// 合并内存环形缓冲中尚未落库的明细：缓冲满 250 条才批量落库（或关停时
@@ -264,10 +308,12 @@ func GetMonitorTrend(c *gin.Context) {
 		if rc.Time.Before(firstDay) {
 			continue
 		}
-		add(rc.Time, rc.Source, kept(rc.Status, rc.InBandError))
+		ok := kept(rc.Status, rc.InBandError)
+		add(rc.Time, rc.Source, ok)
+		addAction(rc.Source, rc.Action, ok)
 	}
 
-	rows := make([]row, 0, len(buckets))
+	rows := make([]TrendRow, 0, len(buckets))
 	for _, r := range buckets {
 		rows = append(rows, *r)
 	}
@@ -278,7 +324,7 @@ func GetMonitorTrend(c *gin.Context) {
 		return rows[i].Source < rows[j].Source
 	})
 
-	// 生成连续天序列（无调用的天也要占位，前端柱状图不断档）
+	// 生成连续天序列（无调用的天也要占位，报表的逐日列与迷你柱不能断档）
 	days := make([]string, 0, trendDays)
 	for i := 0; i < trendDays; i++ {
 		days = append(days, firstDay.AddDate(0, 0, i).Format("2006-01-02"))
@@ -294,9 +340,16 @@ func GetMonitorTrend(c *gin.Context) {
 	}
 	sort.Strings(sources)
 
-	auth.Ok(c, gin.H{
-		"days":    days,
-		"sources": sources,
-		"rows":    rows,
+	byAction := make([]TrendActionRow, 0, len(actBuckets))
+	for _, a := range actBuckets {
+		byAction = append(byAction, *a)
+	}
+	sort.Slice(byAction, func(i, j int) bool {
+		if byAction[i].Source != byAction[j].Source {
+			return byAction[i].Source < byAction[j].Source
+		}
+		return byAction[i].Action < byAction[j].Action
 	})
+
+	return &TrendData{Days: days, Sources: sources, Rows: rows, ByAction: byAction}, nil
 }

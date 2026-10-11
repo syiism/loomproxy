@@ -60,6 +60,9 @@ func RegisterRoutes(r *gin.Engine) {
 		g.GET("/usage-logs", ListUsageLogs)
 		g.GET("/monitor", GetMonitor)
 		g.GET("/monitor/trend", GetMonitorTrend)
+		// 运维报表：内存渲染一份自包含 HTML 直出，不落盘（形状见 monitor_report.go 顶部说明）。
+		// 顶层导航带的是登录时写下的 HttpOnly cookie，所以不需要为它另造凭证。
+		g.GET("/monitor/report.html", GetMonitorReport)
 		g.GET("/monitor/subjects", GetMonitorSubjects)
 		g.GET("/pools", ListPools)
 		g.GET("/monitor/history", GetMonitorHistory)

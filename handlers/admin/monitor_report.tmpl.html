@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>调用趋势报表 · 近 {{ .WindowDays }} 天</title>
+<style>
+  /* 独立文档：面板的 Tailwind 编译在 web/dist 里，这份文档够不着，也不该够着——一切内联。 */
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 24px; background: #f6f7f9; color: #1f2328;
+         font: 14px/1.5 -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif; }
+  .doc { max-width: 960px; margin: 0 auto; background: #fff; border: 1px solid #d8dde3;
+         border-radius: 10px; padding: 24px 28px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #e6e9ee; }
+  .meta { color: #5b6472; font-size: 12px; margin: 0 0 2px; }
+  .tag { display: inline-block; padding: 1px 7px; border: 1px solid #c9d2de; border-radius: 999px;
+         font-size: 12px; color: #3d4654; background: #f2f5f9; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  /* 窄屏让表在自己的盒子里横滚，而不是把文档顶宽：手机上看报表是常见场景，
+     而整份文档横向溢出会把页头的口径说明一起推出去（390 视口实测出来的）。 */
+  .tw { overflow-x: auto; overscroll-behavior: contain; }
+  .tw table { min-width: 620px; }
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    .doc { padding: 16px 14px; border-radius: 8px; }
+    .tw table { min-width: 520px; }
+    .spark { width: 132px; height: 34px; }
+    th, td { padding: 5px 6px; }
+  }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eef1f5; vertical-align: middle; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5b6472; background: #fafbfc; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  .cards { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+  .card { flex: 1 1 140px; border: 1px solid #e6e9ee; border-radius: 8px; padding: 10px 12px; }
+  .card b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
+  .card span { font-size: 12px; color: #5b6472; }
+  /* 逐源 small multiples：一源一行，柱高按「本源自己最高的一天」归一——比的是形状不是绝对量级 */
+  .spark { display: flex; align-items: flex-end; gap: 3px; height: 40px; width: 190px; }
+  .spark i { flex: 1; background: #4A90D9; border-radius: 2px 2px 0 0; min-height: 2px;
+             position: relative; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .spark i.fail::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+             background: #D9534F; border-radius: 0; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .empty { padding: 26px; text-align: center; color: #5b6472; border: 1px dashed #c9d2de; border-radius: 8px; }
+  footer { margin-top: 26px; padding-top: 12px; border-top: 1px solid #e6e9ee;
+           font-size: 12px; color: #5b6472; }
+  footer p { margin: 6px 0; }
+  @media print {
+    body { background: #fff; padding: 0; font-size: 12px; }
+    .doc { border: 0; padding: 0; max-width: none; }
+    tr { break-inside: avoid; }
+    @page { margin: 12mm; }
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <h1>调用趋势报表 · 近 {{ .WindowDays }} 天</h1>
+  <p class="meta">生成于 <code>{{ .GeneratedAt }}</code>　窗口起点 <code>{{ .WindowStart }}</code>　
+    <span class="tag">明细口径（api_call_logs）</span></p>
+  <p class="meta">本页数字来自调用<strong>明细</strong>按天聚合，与监控页主表的<strong>内存计数</strong>不是同一个窗口：
+    内存计数可被「清零」重置、也不含历史，两者不可互相校对。</p>
+
+  {{if .Empty}}
+    <div class="empty">近 {{ .WindowDays }} 天无调用记录</div>
+  {{else}}
+
+  <h2>概览</h2>
+  <div class="cards">
+    <div class="card"><b>{{ .Total }}</b><span>总调用</span></div>
+    <div class="card"><b>{{ .Success }}</b><span>成功</span></div>
+    <div class="card"><b>{{ .Fail }}</b><span>失败</span></div>
+    <div class="card"><b>{{ .Rate }}</b><span>成功率</span></div>
+    <div class="card"><b>{{ len .Sources }}</b><span>有调用的数据源</span></div>
+  </div>
+
+  <h2>逐源趋势（共 {{ len .Sources }} 个源，按窗口内总量降序）</h2>
+  <p class="meta">柱高按<strong>各源自己最高的一天</strong>归一，所以看的是形状而非跨源绝对高低；
+    柱底的<span style="color:#D9534F">红色段</span>标记当日存在失败（除颜色外也有文字列）。</p>
+  <div class="tw">
+  <table>
+    <thead>
+      <tr>
+        <th>数据源</th><th>近 {{ .WindowDays }} 天</th>
+        <th class="num">总调用</th><th class="num">成功</th><th class="num">失败</th><th class="num">成功率</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Sources}}
+      <tr>
+        <td><code>{{ .Source }}</code></td>
+        <td>
+          <div class="spark" aria-label="{{ .Source }} 近 {{ $.WindowDays }} 天逐日调用量">
+            {{range .Bars}}<i class="{{if .FailMarker}}fail{{end}}" style="height:{{ .HeightPct }}%"
+              title="{{ .Day }}：{{ .Total }} 次（成功 {{ .Success }}）"></i>{{end}}
+          </div>
+        </td>
+        <td class="num">{{ .Total }}</td>
+        <td class="num">{{ .Success }}</td>
+        <td class="num">{{ .Fail }}</td>
+        <td class="num">{{ .Rate }}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+
+  <h2>逐源 × 接口（共 {{ len .Actions }} 行，按调用量降序）</h2>
+  <div class="tw">
+  <table>
+    <thead>
+      <tr><th>数据源</th><th>接口</th><th class="num">总调用</th><th class="num">成功</th><th class="num">失败</th><th class="num">成功率</th></tr>
+    </thead>
+    <tbody>
+      {{range .Actions}}
+      <tr>
+        <td><code>{{ .Source }}</code></td><td><code>{{ .Action }}</code></td>
+        <td class="num">{{ .Total }}</td><td class="num">{{ .Success }}</td>
+        <td class="num">{{ .Fail }}</td><td class="num">{{ .Rate }}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+
+  {{end}}
+
+  <footer>
+    <p><strong>日界口径</strong>：一天从几点开始只由 <code>utils.DayStart</code> 定义（待办清单 P71/P72），
+      分桶在 Go 侧按<strong>平台时区</strong>完成——不在库里用 <code>date(created_at)</code> 判，
+      因为 SQLite 会把带 +08 的串先归一到 UTC 再取日。</p>
+    <p>因此在<strong>开发/测试的 SQLite 库</strong>里，北京时间 00:00–08:00 这段量会挂到<strong>前一天</strong>的柱子上；
+      生产 MySQL（<code>loc=Local</code>）与平台时区一致，无此症状。看到第一根柱子偏高时先想这一条。</p>
+    <p><strong>成功判据</strong>：HTTP 2xx 且非带内失败（P22，正文是错误载荷的 200 算失败）；
+      库里 <code>in_band_error</code> 为 NULL 的旧行按纯 HTTP 口径算成功。</p>
+    <p>窗口是展示口径（近 {{ .WindowDays }} 天），与明细保留期无关：
+      <code>MONITOR_RETENTION_DAYS=0</code> 时明细永久保留，设了保留期也只影响清理、不改这张表的天数。</p>
+  </footer>
+</div>
+</body>
+</html>

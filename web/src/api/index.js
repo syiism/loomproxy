@@ -106,7 +106,6 @@ export const adminApi = {
     request('/admin/usage-logs', { query: { page, page_size: pageSize, username: username || undefined, group: group || undefined } }),
   // 接口监控（内存计数，与计费无关）
   getMonitor: () => request('/admin/monitor'),
-  getMonitorTrend: () => request('/admin/monitor/trend'),
   // 内容维度榜单：dim ∈ keyword|book|chapter|media
   // 公开排行榜（登录用户可读；放行范围由设置项 rank_public_sources 按数据源决定）
   rankBoards: ({ days = 7, source, media } = {}) =>
