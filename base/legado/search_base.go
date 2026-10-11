@@ -10,6 +10,7 @@ package legado
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"loomproxy/base"
@@ -18,8 +19,12 @@ import (
 const (
 	// AggregateSourcesParam 聚合搜索的参数名：逗号分隔的数据源码（如 fq_novel,sq_novel）
 	AggregateSourcesParam = "sources"
-	// AggregateMaxSources 一次聚合最多打几个源。上限不是保护下游，是保护上游与这条请求自己：
-	// 没有上限的话，一个参数就能让网关替调用方去打遍全部源。
+	// AggregateSourcesRankParam 聚合搜索的排序参数：缺省=按关键词相关度排；`source`=退回源顺序拼接。
+	AggregateSourcesRankParam = "rank"
+	// AggregateMaxSources 一次聚合最多打几个源的**默认值**。上限不是保护下游，是保护上游与这条
+	// 请求自己：没有上限的话，一个参数就能让网关替调用方去打遍全部源。
+	// 运行期可被系统设置 `aggregate_max_sources` 热改（app 侧读后传入 AggregateTargets），
+	// 本常量只是缺省/回落值——硬顶在 app 侧（AggregateMaxSourcesCeiling）。
 	AggregateMaxSources = 8
 	// searchListKey 搜索结果列表的键：平台与源之间的契约就是这个键（Legado 的 searchRule 认它）
 	searchListKey = "bookList"
@@ -73,13 +78,18 @@ func NewSearchBaseHandler() *SearchBaseHandler {
 // AggregateTargets 解析 sources 参数并定出目标源列表。
 //
 // 路由源永远排第一（这条请求本来就是从它的路由进来的，不跑它等于悄悄改了接口语义），
-// 其余按声明顺序追加；去重、去空白、忽略空项，超过 AggregateMaxSources 的截掉。
-func AggregateTargets(routeSource, raw string) []string {
-	seen := make(map[string]bool, AggregateMaxSources)
-	out := make([]string, 0, AggregateMaxSources)
+// 其余按声明顺序追加；去重、去空白、忽略空项，超过 max 的截掉。
+// max 是**运行期上限**（app 侧从系统设置 aggregate_max_sources 读出后传入）；max<=0 时回落到
+// 默认常量 AggregateMaxSources——传 0 的调用方（含用例）拿到的是缺省行为。
+func AggregateTargets(routeSource, raw string, max int) []string {
+	if max <= 0 {
+		max = AggregateMaxSources
+	}
+	seen := make(map[string]bool, max)
+	out := make([]string, 0, max)
 	add := func(s string) {
 		s = strings.TrimSpace(s)
-		if s == "" || seen[s] || len(out) >= AggregateMaxSources {
+		if s == "" || seen[s] || len(out) >= max {
 			return
 		}
 		seen[s] = true
@@ -123,11 +133,14 @@ func StampSearchSource(result interface{}, source string) interface{} {
 // MergeSearchResults 合并多个源的搜索结果成一个响应体。
 //
 // 输出保住**第一个成功结果自带的其它键**（有些源在 bookList 之外还带分页/统计字段），
-// 列表按目标源顺序拼接、不做跨源去重：重名书是不是同一本，只有源自己知道，
-// 平台在这里猜一次就会把两本不同的书合成一本。
+// 不做跨源去重：重名书是不是同一本，只有源自己知道，平台在这里猜一次就会把两本不同的书合成一本。
+//
+// query 非空时对合并后的列表做**关键词相关度稳定排序**（书名为主、作者加权，见 rankByRelevance）；
+// query 为空则保持「按目标源顺序拼接」——单源搜索与显式 `rank=source` 走的就是这条，
+// 同分条目也靠稳定排序保持源顺序（路由源天然靠前）。
 // 全部目标都失败时返回**空列表 + 状态**而不是报错：下游按「这次没搜到」处理，
 // 比把一个源名都没解析出来的错抛给阅读器好读。
-func MergeSearchResults(results []interface{}, statuses map[string]string) interface{} {
+func MergeSearchResults(results []interface{}, statuses map[string]string, query string) interface{} {
 	var merged map[string]interface{}
 	var items []interface{}
 	for _, r := range results {
@@ -148,11 +161,88 @@ func MergeSearchResults(results []interface{}, statuses map[string]string) inter
 	if items == nil {
 		items = []interface{}{}
 	}
+	if strings.TrimSpace(query) != "" {
+		items = rankByRelevance(items, query)
+	}
 	merged[searchListKey] = items
 	if len(statuses) > 0 {
 		merged["sources_status"] = statuses
 	}
 	return merged
+}
+
+// rankByRelevance 按关键词匹配度**稳定排序**书目列表，返回重排后的列表（输入不被就地改写）。
+//
+// 打分：书名为主、作者加权（权重 0.3）。稳定排序是刻意的——同分条目保持合并时的源顺序，
+// 于是「都只是标签命中」的一批里，路由源与先声明的源仍排在前，不会因为排序把结果搅乱。
+func rankByRelevance(items []interface{}, query string) []interface{} {
+	q := normalizeMatchText(query)
+	if q == "" || len(items) < 2 {
+		return items
+	}
+	type scored struct {
+		item  interface{}
+		score float64
+	}
+	rows := make([]scored, len(items))
+	for i, it := range items {
+		s := 0.0
+		if m, ok := it.(map[string]interface{}); ok {
+			s = fieldMatchScore(mapString(m["name"]), q) + 0.3*fieldMatchScore(mapString(m["author"]), q)
+		}
+		rows[i] = scored{item: it, score: s}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].score > rows[j].score })
+	out := make([]interface{}, len(rows))
+	for i := range rows {
+		out[i] = rows[i].item
+	}
+	return out
+}
+
+// normalizeMatchText 归一化匹配文本：小写、去首尾空白、把内部连续空白压成单个空格。
+// 让「斗破  苍穹」「 斗破苍穹 」与「斗破苍穹」在打分时等价。
+func normalizeMatchText(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(s))), " ")
+}
+
+// fieldMatchScore 单字段与查询的匹配度（0..1）：完全匹配 > 前缀 > 包含（越靠前越高）> 分词覆盖率。
+// 只在「整串命中」失败后才退到分词覆盖，是为了让「斗破苍穹」这种连写书名优先于「斗 破」两词散落。
+func fieldMatchScore(field, q string) float64 {
+	field = normalizeMatchText(field)
+	if field == "" || q == "" {
+		return 0
+	}
+	if field == q {
+		return 1.0
+	}
+	if strings.HasPrefix(field, q) {
+		return 0.8
+	}
+	if idx := strings.Index(field, q); idx >= 0 {
+		// 命中越靠后、字段越长，相关度越低（0.5 封顶，恒低于前缀命中）
+		return 0.5 * (1.0 - float64(idx)/float64(len(field)))
+	}
+	tokens := strings.Fields(q)
+	if len(tokens) <= 1 {
+		return 0
+	}
+	hit := 0
+	for _, tk := range tokens {
+		if strings.Contains(field, tk) {
+			hit++
+		}
+	}
+	if hit == 0 {
+		return 0
+	}
+	return 0.3 * float64(hit) / float64(len(tokens))
+}
+
+// mapString 从 map 值取字符串；非字符串返回空串（不该发生，但别为它 panic）
+func mapString(v interface{}) string {
+	s, _ := v.(string)
+	return s
 }
 
 // stampItems 就地改写列表里的对象条目；非对象的条目跳过（不该发生，但别为它 panic）

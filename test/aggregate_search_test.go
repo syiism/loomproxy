@@ -124,6 +124,86 @@ func TestAggregateSearchStampsSourceAndKind(t *testing.T) {
 	}
 }
 
+// TestAggregateSearchRanksByRelevance 多源聚合默认按关键词匹配度排名：
+// 书名命中关键词的条目（哪怕来自靠后的源）排到不命中的前面，而不是简单按源拼接。
+func TestAggregateSearchRanksByRelevance(t *testing.T) {
+	srv := newTestServer(t)
+	admin := adminToken(t, srv)
+
+	setPlatformUpstream(t, "fake_a", staticUpstream(t, `{"bookList":[{"bookId":"a1","name":"无关的书"}]}`).URL)
+	setPlatformUpstream(t, "fake_b", staticUpstream(t, `{"bookList":[{"bookId":"b1","name":"斗破苍穹"}]}`).URL)
+
+	status, body, raw := doGetAgg(t, srv, admin, "/fake_a/search?query=斗破苍穹&sources=fake_a,fake_b")
+	if status != http.StatusOK {
+		t.Fatalf("聚合搜索 status = %d, want 200（body=%s）", status, truncate(raw, 200))
+	}
+	if len(body.BookList) != 2 {
+		t.Fatalf("应有 2 条结果，实得 %d（body=%s）", len(body.BookList), truncate(raw, 300))
+	}
+	if body.BookList[0].Name != "斗破苍穹" {
+		t.Errorf("相关度排序没生效：首位 = %q（want 斗破苍穹，来自后一个源）", body.BookList[0].Name)
+	}
+	if body.BookList[0].Source != "fake_b" {
+		t.Errorf("排序后 source 打标丢了：首位 source = %q, want fake_b", body.BookList[0].Source)
+	}
+}
+
+// TestAggregateSearchRankSourceOptOut rank=source 显式退回源顺序拼接（旧行为）。
+func TestAggregateSearchRankSourceOptOut(t *testing.T) {
+	srv := newTestServer(t)
+	admin := adminToken(t, srv)
+
+	setPlatformUpstream(t, "fake_a", staticUpstream(t, `{"bookList":[{"bookId":"a1","name":"无关的书"}]}`).URL)
+	setPlatformUpstream(t, "fake_b", staticUpstream(t, `{"bookList":[{"bookId":"b1","name":"斗破苍穹"}]}`).URL)
+
+	_, body, raw := doGetAgg(t, srv, admin, "/fake_a/search?query=斗破苍穹&sources=fake_a,fake_b&rank=source")
+	if len(body.BookList) != 2 {
+		t.Fatalf("应有 2 条结果，实得 %d（body=%s）", len(body.BookList), truncate(raw, 300))
+	}
+	if body.BookList[0].Source != "fake_a" || body.BookList[1].Source != "fake_b" {
+		t.Errorf("rank=source 应按源顺序拼接：%q / %q", body.BookList[0].Source, body.BookList[1].Source)
+	}
+}
+
+// TestAggregateMaxSourcesSetting 系统设置 aggregate_max_sources 控制一次聚合最多打几个源（热配置）。
+func TestAggregateMaxSourcesSetting(t *testing.T) {
+	srv := newTestServer(t)
+	admin := adminToken(t, srv)
+
+	// 热改上限为 2：三个目标源只该打前两个
+	seedAggSetting(t, "aggregate_max_sources", "2")
+
+	for _, s := range []string{"fake_a", "fake_b", "fake_c"} {
+		setPlatformUpstream(t, s, staticUpstream(t, fmt.Sprintf(`{"bookList":[{"bookId":"%s1","name":"书%s"}]}`, s, s)).URL)
+	}
+
+	status, body, raw := doGetAgg(t, srv, admin, "/fake_a/search?query=x&sources=fake_a,fake_b,fake_c")
+	if status != http.StatusOK {
+		t.Fatalf("聚合搜索 status = %d, want 200（body=%s）", status, truncate(raw, 200))
+	}
+	if len(body.BookList) != 2 {
+		t.Fatalf("上限=2 时应只打 2 个源，实得 %d 条（body=%s）", len(body.BookList), truncate(raw, 300))
+	}
+	if _, has := body.SourcesStatus["fake_c"]; has {
+		t.Errorf("超出上限的 fake_c 不该被扇出：sources_status=%v", body.SourcesStatus)
+	}
+}
+
+// seedAggSetting 直接写一个平台设置值并失效缓存（10s 缓存不失效会读到旧值）
+func seedAggSetting(t *testing.T, key, value string) {
+	t.Helper()
+	var row models.SystemSetting
+	err := db.DB.Where(map[string]interface{}{"key": key}).First(&row).Error
+	if err == nil {
+		if err := db.DB.Model(&row).Update("value", value).Error; err != nil {
+			t.Fatalf("改设置 %s 失败: %v", key, err)
+		}
+	} else if err := db.DB.Create(&models.SystemSetting{Key: key, Value: value, Type: "number"}).Error; err != nil {
+		t.Fatalf("写设置 %s 失败: %v", key, err)
+	}
+	db.InvalidateSettingCache(key)
+}
+
 // TestSingleSearchAlsoStamped 不带 sources 的普通搜索同样打标：
 // 下游的路由规则只有一套，不能「聚合时才有 source、直连时没有」
 func TestSingleSearchAlsoStamped(t *testing.T) {
@@ -314,7 +394,7 @@ func TestAggregateSearchFailsLikeDirectWhenNothingReturns(t *testing.T) {
 
 // TestAggregateTargetsParsing sources 参数的形状纪律：入口源永远排第一、去重、上限截断
 func TestAggregateTargetsParsing(t *testing.T) {
-	got := legado.AggregateTargets("fake_a", " fake_b ,fake_b,, fake_c ")
+	got := legado.AggregateTargets("fake_a", " fake_b ,fake_b,, fake_c ", 0)
 	want := []string{"fake_a", "fake_b", "fake_c"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("解析结果 = %v, want %v", got, want)
@@ -324,14 +404,19 @@ func TestAggregateTargetsParsing(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		many = append(many, fmt.Sprintf("src_%02d", i))
 	}
-	if got := legado.AggregateTargets("route", strings.Join(many, ",")); len(got) != legado.AggregateMaxSources {
+	if got := legado.AggregateTargets("route", strings.Join(many, ","), 0); len(got) != legado.AggregateMaxSources {
 		t.Errorf("扇出数量没受上限约束: %d, want %d", len(got), legado.AggregateMaxSources)
 	} else if got[0] != "route" {
 		t.Errorf("入口源不在第一位: %v", got)
 	}
 
+	// max>0 时按传入的上限截断（运行期系统设置走的就是这条；默认常量只是 max<=0 的回落）
+	if got := legado.AggregateTargets("route", strings.Join(many, ","), 3); len(got) != 3 || got[0] != "route" {
+		t.Errorf("传入 max=3 时 = %v（len=%d）, want [route src_00 src_01]", got, len(got))
+	}
+
 	// 空参数只剩入口源（普通搜索的语义不变）
-	if got := legado.AggregateTargets("route", ""); len(got) != 1 || got[0] != "route" {
+	if got := legado.AggregateTargets("route", "", 0); len(got) != 1 || got[0] != "route" {
 		t.Errorf("sources 为空时 = %v, want [route]", got)
 	}
 }

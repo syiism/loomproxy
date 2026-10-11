@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"loomproxy/base"
 	"loomproxy/base/legado"
 	"loomproxy/conf"
+	"loomproxy/db"
 	"loomproxy/gate"
 	"loomproxy/middleware"
 	mws "loomproxy/middleware/source"
@@ -37,6 +39,11 @@ const (
 	// aggregateConcurrency 是**每个源**同时在飞的上限（默认值；可用
 	// `AGGREGATE_PER_SOURCE_MAX` 覆盖）。跨请求共享，见下面 aggregateAcquire 那段。
 	aggregateConcurrency = 4
+	// aggregateMaxSourcesSetting 是系统设置键：聚合搜索一次最多打几个源。
+	// 走系统设置而不是环境变量，是为了「面板改完即生效」——它是运营可调的闸，不该逼人改 .env 重启。
+	aggregateMaxSourcesSetting = "aggregate_max_sources"
+	// aggregateMaxSourcesCeiling 硬顶：设置项能填到的值不该比「把网关变成全站扇出器」更大。
+	aggregateMaxSourcesCeiling = 64
 )
 
 // aggregateStatus 是下发给下游的成因枚举（不含任何上游文案，见 legado.SearchResponse 的注释）
@@ -86,10 +93,12 @@ func aggregateAccessReason(r gate.AccessReason) string {
 // 返回 error 只留给「这件事本身没做成」的情形；单个目标源失败不算 error——
 // 一个源坏了不该让其余源的结果一起丢掉，那正是聚合存在的理由。
 func runAggregateSearch(c *gin.Context, routeSource, action string, routeParams map[string]interface{}) (interface{}, error) {
-	targets := legado.AggregateTargets(routeSource, c.Query(legado.AggregateSourcesParam))
+	targets := legado.AggregateTargets(routeSource, c.Query(legado.AggregateSourcesParam), aggregateMaxSourcesNow())
 	if len(targets) == 0 {
 		targets = []string{routeSource}
 	}
+	// 排序关键词：非空时合并后按匹配度排（默认）；rank=source 或单源时为空 = 退回源顺序拼接
+	rankQuery := aggregateRankQuery(c)
 
 	var caller *models.User
 	if raw, ok := c.Get(middleware.CtxCurrentUser); ok {
@@ -146,7 +155,7 @@ func runAggregateSearch(c *gin.Context, routeSource, action string, routeParams 
 		if len(merged) < len(targets) {
 			log.Printf("聚合搜索部分目标未取到结果: route=%s action=%s 明细=%v", routeSource, action, statusMap)
 		}
-		return legado.MergeSearchResults(merged, statusMap), nil
+		return legado.MergeSearchResults(merged, statusMap, rankQuery), nil
 	}
 
 	// 一条结果都没有：不能返回「200 + 空列表」。空列表在下游与监控里的读数是「这次没搜到」，
@@ -164,7 +173,7 @@ func runAggregateSearch(c *gin.Context, routeSource, action string, routeParams 
 			return nil, errAggregateAllFailed
 		}
 	}
-	return legado.MergeSearchResults(merged, statusMap), nil
+	return legado.MergeSearchResults(merged, statusMap, rankQuery), nil
 }
 
 // runAggregateTarget 判定 + 调用 + 打标一个目标源。返回 (结果, 成因)。
@@ -266,6 +275,38 @@ func callSourceHandler(ctx context.Context, handler base.Handler, params map[str
 		}
 	}()
 	return handler.Handle(ctx, params)
+}
+
+// ---------------------------------------------------------------------------
+// 上限与排序口径
+// ---------------------------------------------------------------------------
+
+// aggregateMaxSourcesNow 读系统设置里的聚合上限（热配置，面板「自定义配置」改完即生效）。
+// 缺省/非法回落默认常量；超硬顶压回——设置项不是让网关变成全站扇出器的开关。
+func aggregateMaxSourcesNow() int {
+	n := db.SettingInt(aggregateMaxSourcesSetting, legado.AggregateMaxSources)
+	if n <= 0 {
+		return legado.AggregateMaxSources
+	}
+	if n > aggregateMaxSourcesCeiling {
+		return aggregateMaxSourcesCeiling
+	}
+	return n
+}
+
+// aggregateRankQuery 取本次聚合的排序关键词。
+// 默认返回搜索词（query/key/keyword/wd，同 observe.go 的取词口径）——聚合结果按匹配度排；
+// `rank=source` 显式退回源顺序拼接；取不到词则返回空串（下游不排序）。
+func aggregateRankQuery(c *gin.Context) string {
+	if strings.EqualFold(strings.TrimSpace(c.Query(legado.AggregateSourcesRankParam)), "source") {
+		return ""
+	}
+	for _, k := range []string{"query", "key", "keyword", "wd"} {
+		if v := strings.TrimSpace(c.Query(k)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------
