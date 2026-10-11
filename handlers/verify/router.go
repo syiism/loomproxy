@@ -46,6 +46,8 @@ func RegisterRoutes(r *gin.Engine) {
 			switch {
 			case errors.Is(err, ErrSendTooFrequent), errors.Is(err, ErrSendLimitDaily):
 				fail(c, http.StatusTooManyRequests, err.Error())
+			case errors.Is(err, ErrRegisterClosed):
+				fail(c, http.StatusForbidden, err.Error())
 			case errors.Is(err, ErrSceneUnknown), errors.Is(err, ErrSceneDisabled), errors.Is(err, ErrTargetInvalid):
 				fail(c, http.StatusBadRequest, err.Error())
 			case errors.Is(err, ErrStorageUnavailable):

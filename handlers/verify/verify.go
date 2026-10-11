@@ -45,15 +45,19 @@ var (
 	ErrExpired            = errors.New("验证码已过期，请重新获取")
 	ErrTooManyAttempts    = errors.New("错误次数过多，该验证码已作废，请重新获取")
 	ErrMismatch           = errors.New("验证码错误")
+	// ErrRegisterClosed 与 auth.Register 同源：注册关闭时连发码都不该发生——
+	// 否则用户填完表单点了「发送验证码」才等到最后注册那一步才被告知，体验割裂。
+	ErrRegisterClosed = errors.New("注册功能已关闭")
 )
 
 // Setting keys（seed 预置，管理后台「系统设置」可改；db.GetSetting 10s 缓存）
 const (
-	settingScenes      = "verify_code_scenes"       // 启用场景，逗号分隔；留空=全部关闭
-	settingIntervalSec = "verify_send_interval_sec" // 同目标两次发码最小间隔（秒）
-	settingDailyLimit  = "verify_daily_send_limit"  // 同目标/同 IP 每日发码上限
-	settingTTLSec      = "verify_code_ttl_sec"      // 验证码有效期（秒）
-	settingMaxAttempts = "verify_code_max_attempts" // 单码最大验证失败次数
+	settingScenes          = "verify_code_scenes"       // 启用场景，逗号分隔；留空=全部关闭
+	settingIntervalSec     = "verify_send_interval_sec" // 同目标两次发码最小间隔（秒）
+	settingDailyLimit      = "verify_daily_send_limit"  // 同目标/同 IP 每日发码上限
+	settingTTLSec          = "verify_code_ttl_sec"      // 验证码有效期（秒）
+	settingMaxAttempts     = "verify_code_max_attempts" // 单码最大验证失败次数
+	settingRegisterEnabled = "register_enabled"         // 复用 auth 的注册开关：关闭时连注册验证码都不发
 )
 
 // builtinScenes 合法场景集合（/verify/send 入口校验，防任意 scene 落库）
@@ -151,6 +155,11 @@ func Issue(ip, scene, target string) (time.Time, error) {
 	}
 	if !SceneEnabled(scene) {
 		return time.Time{}, ErrSceneDisabled
+	}
+	// 注册关闭时，连「发送注册验证码」都不该发生：最多省掉用户一次填表，
+	// 否则点「发送验证码」不报、等到点「注册」才说关了，体验割裂（与 auth.Register 同源判据）。
+	if scene == SceneRegister && !db.SettingBool(settingRegisterEnabled, true) {
+		return time.Time{}, ErrRegisterClosed
 	}
 	target = NormalizeTarget(target)
 	if !ValidTarget(scene, target) {
