@@ -23,7 +23,9 @@
         <div class="text-sm text-text-muted mb-4">{{ p.description || '—' }}</div>
 
         <div class="flex-1">
-          <div v-if="p.limits && p.limits.length" class="space-y-2">
+          <!-- 限额清单要封顶：scope=source 是一个源一行，套餐授权到 36 个源时这张卡就会把整页顶长。
+               下面的「授权数据源 N 个」是同一份数据的汇总，两处都留着——清单要能滚到每一条，不能只给个数。 -->
+          <div v-if="p.limits && p.limits.length" class="space-y-2 max-h-48 overflow-y-auto">
             <div v-for="l in p.limits" :key="l.id" class="flex justify-between items-center text-sm">
               <span class="font-mono text-xs text-text-muted">{{ l.scope }} / {{ l.target }}</span>
               <span class="font-mono text-xs">{{ l.limit < 0 ? '不限' : l.limit }}<span class="text-text-muted"> / 日</span></span>
@@ -91,7 +93,9 @@
         <div v-if="limits.length === 0" class="text-center py-6 text-text-muted text-sm border border-dashed border-border rounded-lg mb-5">
           暂无限制项——该套餐当前没有授权任何数据源，其用户对任何源都是 403。
         </div>
-        <div v-else class="border border-border rounded-lg overflow-hidden mb-5">
+        <!-- 这张表同样要封顶：一个源一行时它能长过整个弹窗，把下面的「批量授权」顶出视口。
+             封顶之后纵向口在自己身上，sticky 表头才有可钉的位置（吸顶的另一半，见 styles.css 那条注释）。 -->
+        <div v-else class="border border-border rounded-lg overflow-x-hidden overflow-y-auto max-h-72 mb-5">
           <!-- 「周期」不再是一列：P70② 之后额度只有当日一个窗口，而一列永远相同的值不是信息
                ——表格的形式在暗示"每行可能不同"，而它不可能（待办清单 P96③，2026-10-07 拍：并进一句说明） -->
           <div class="px-4 pt-3 text-xs text-text-muted font-mono">限额均按日（当日只有一个窗口，没有第二种口径）</div>
