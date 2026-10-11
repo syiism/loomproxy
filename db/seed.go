@@ -619,7 +619,7 @@ func attachSourceToBuiltinPlans(db *gorm.DB, name string) error {
 		if err := db.Where("code = ?", code).First(&plan).Error; err != nil {
 			continue // 该内置套餐不在这次的库里（例如未播种的空库），交给调用方的其它步骤
 		}
-		created, err := ensurePlanSourceGrant(db, NewSourceGrantRow(plan.ID, code, name))
+		created, err := EnsurePlanSourceGrant(db, NewSourceGrantRow(plan.ID, code, name))
 		if err != nil {
 			return err
 		}
@@ -630,11 +630,12 @@ func attachSourceToBuiltinPlans(db *gorm.DB, name string) error {
 	return nil
 }
 
-// ensurePlanSourceGrant 保证「套餐 × 源」有一行 scope=source 的限额；已存在则不动，返回是否新建。
+// EnsurePlanSourceGrant 保证「套餐 × 源」有一行 scope=source 的限额；已存在则不动，返回是否新建。
 // 行由调用方用 P69 的两个意图口之一构造（默认档 / 显式给值），这里只负责"有没有、要不要建"——
 // 参数从 `(planID, sourceName, limit)` 收成一行 `models.QuotaLimit` 的原因就是这个：
 // 只要限额还从函数签名上传进来，第五处字面量就随时可以再冒出来。
-func ensurePlanSourceGrant(tx *gorm.DB, row models.QuotaLimit) (bool, error) {
+// 导出给 handlers/admin/quotas.go 的批量授权复用，避免批量建行时重写一遍"存在性判定"。
+func EnsurePlanSourceGrant(tx *gorm.DB, row models.QuotaLimit) (bool, error) {
 	var n int64
 	if err := tx.Model(&models.QuotaLimit{}).
 		Where("plan_id = ? AND scope = ? AND target = ?", row.PlanID, row.Scope, row.Target).
@@ -688,7 +689,7 @@ func alignPlanGrants(db *gorm.DB) error {
 		}
 		// 补 -1 是**忠实还原**（显式给值那个意图口，不是默认档）：旧模型里「有关联行、没限额行」就是不限额。
 		// 这里若沿用套餐默认档（free 每源 100），搬迁本身就成了给用户新加一道上限。
-		created, err := ensurePlanSourceGrant(db, NewExplicitGrant(l.PlanID, "source", name, -1))
+		created, err := EnsurePlanSourceGrant(db, NewExplicitGrant(l.PlanID, "source", name, -1))
 		if err != nil {
 			return err
 		}

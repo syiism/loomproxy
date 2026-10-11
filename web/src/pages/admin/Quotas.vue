@@ -124,36 +124,60 @@
           </table>
         </div>
 
-        <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">新增限制项</div>
-        <form @submit.prevent="addLimit" class="space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <UiField label="维度" hint="global 全局 / source 数据源">
-              <select v-model="limitForm.scope" class="input" @change="limitForm.target = ''">
-                <option value="global">global</option>
-                <option value="source">source</option>
-              </select>
-            </UiField>
-            <UiField v-if="limitForm.scope === 'source'" label="目标" :hint="targetHint">
-              <select v-model="limitForm.target" class="input font-mono" required>
-                <option value="" disabled>选择数据源</option>
-                <option v-for="ds in grantableSources" :key="ds.id" :value="ds.name">
-                  {{ ds.name }}（{{ ds.display_name }}）
-                </option>
-              </select>
-            </UiField>
-            <UiField v-else label="目标" hint="全局限额的目标名，如 api">
-              <input v-model="limitForm.target" class="input font-mono" placeholder="api" maxlength="64" required>
-            </UiField>
+        <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">授权数据源（批量）</div>
+        <p class="text-xs text-text-muted mb-3">勾选要加入本套餐的数据源，一次建多行授权（限额统一填下面）；已授权的源不在此列表。点分类标签可整类速选。</p>
+
+        <!-- 按分类快捷选择 -->
+        <div v-if="categories.length" class="flex flex-wrap gap-2 mb-3">
+          <button v-for="cat in categories" :key="cat" type="button" class="btn-ghost btn-sm" @click="toggleCategory(cat)">
+            {{ cat }}（{{ groupedGrantable[cat]?.length || 0 }}）
+          </button>
+        </div>
+
+        <!-- 多选清单（按分类分组） -->
+        <div v-if="grantableSources.length" class="border border-border rounded-lg max-h-72 overflow-y-auto mb-3 divide-y divide-border">
+          <div v-for="(group, cat) in groupedGrantable" :key="cat">
+            <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-wider text-text-muted bg-surface/40 sticky top-0">{{ cat }}</div>
+            <label v-for="ds in group" :key="ds.id" class="flex items-center gap-3 px-3 py-2 hover:bg-surface/40 cursor-pointer text-sm">
+              <input type="checkbox" :value="ds.name" v-model="bulkSelected" class="accent-brand">
+              <span class="font-mono text-xs">{{ ds.name }}</span>
+              <span class="text-text-muted text-xs">{{ ds.display_name }}</span>
+            </label>
           </div>
-          <div class="grid grid-cols-2 sm:grid-cols-2 gap-4 items-end">
-            <!-- 「周期」这一格由 P96 收口时删掉：表单里它渲染的是常量，而 limitForm 根本没有 period 这一项，
-                 后端也不收（P70②）——它不是"告诉你现在填的是按日的"，是一个填不动也没人读的输入框位。
-                 口径那句话留在上方表格那一行（页面上只有一处说这件事）。 -->
-            <UiField label="限额" label-hint="按日；-1 表示不限">
-              <input v-model.number="limitForm.limit" type="number" class="input font-mono" required>
-            </UiField>
-            <button type="submit" class="btn-primary col-span-2 sm:col-span-1" :disabled="submitting">添加</button>
-          </div>
+        </div>
+        <div v-else class="text-center py-4 text-text-muted text-sm border border-dashed border-border rounded-lg mb-3">全部数据源都已授权，去上表改限额即可</div>
+
+        <form @submit.prevent="bulkGrant" class="flex items-end gap-3 mb-6">
+          <UiField label="统一限额" label-hint="按日；-1 表示不限" class="flex-1">
+            <input v-model.number="bulkLimit" type="number" class="input font-mono" required>
+          </UiField>
+          <button type="submit" class="btn-primary" :disabled="submitting || bulkSelected.length === 0">
+            批量授权（{{ bulkSelected.length }}）
+          </button>
+        </form>
+
+        <!-- 从套餐复制 -->
+        <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">从现有套餐复制</div>
+        <form @submit.prevent="cloneFromPlan" class="flex items-end gap-3 mb-6">
+          <UiField label="源套餐" hint="复制它的全部数据源授权（保留各自限额）" class="flex-1">
+            <select v-model.number="cloneFromID" class="input" required>
+              <option :value="0" disabled>选择套餐</option>
+              <option v-for="p in otherPlans" :key="p.id" :value="p.id">{{ p.name }}（{{ p.code }}）</option>
+            </select>
+          </UiField>
+          <button type="submit" class="btn-primary" :disabled="submitting || cloneFromID === 0">复制源</button>
+        </form>
+
+        <!-- 全局限制项（api 等，非数据源维度） -->
+        <div class="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">新增全局限制项</div>
+        <form @submit.prevent="addGlobalLimit" class="flex items-end gap-3">
+          <UiField label="目标" hint="如 api" class="flex-1">
+            <input v-model.trim="globalForm.target" class="input font-mono" placeholder="api" maxlength="64" required>
+          </UiField>
+          <UiField label="限额" label-hint="-1 不限" class="w-32">
+            <input v-model.number="globalForm.limit" type="number" class="input font-mono" required>
+          </UiField>
+          <button type="submit" class="btn-primary" :disabled="submitting">添加</button>
         </form>
       </div>
     </UiModal>
@@ -201,6 +225,10 @@ const editingLimit = ref(null)
 const limitEditForm = ref({ limit: 0 })
 const deleteLimitTarget = ref(null)
 const allDataSources = ref([])
+const bulkSelected = ref([])
+const bulkLimit = ref(-1)
+const cloneFromID = ref(0)
+const globalForm = ref({ target: '', limit: -1 })
 
 // 授权=限额行，所以「还能授权谁」= 全部源减去本套餐已有 source 行的那些名字
 const grantableSources = computed(() => {
@@ -213,6 +241,18 @@ const targetHint = computed(() =>
     : '全部数据源都已授权，去上表改限额即可')
 
 const sourceLimitCount = (p) => (p.limits || []).filter(l => l.scope === 'source').length
+
+// 未授权源按分类分组，供批量勾选清单与分类速选
+const groupedGrantable = computed(() => {
+  const m = {}
+  for (const ds of grantableSources.value) {
+    ;(m[ds.category] || (m[ds.category] = [])).push(ds)
+  }
+  return m
+})
+const categories = computed(() => Object.keys(groupedGrantable.value))
+// 复制源时的源套餐候选：除当前正在编辑的套餐外的全部套餐
+const otherPlans = computed(() => (plans.value || []).filter(p => !limitsPlan.value || p.id !== limitsPlan.value.id))
 
 const load = async () => {
   loading.value = true
@@ -293,6 +333,10 @@ const openLimits = async (p) => {
   limitForm.value = { scope: 'source', target: '', limit: -1 }
   editingLimit.value = null
   deleteLimitTarget.value = null
+  bulkSelected.value = []
+  bulkLimit.value = -1
+  cloneFromID.value = 0
+  globalForm.value = { target: '', limit: -1 }
   await loadLimits()
   if (!allDataSources.value.length) {
     try { allDataSources.value = (await adminApi.listDataSources()) || [] } catch (e) { toast(e.message, 'error') }
@@ -325,6 +369,53 @@ const addLimit = async () => {
     await loadLimits()
     load()
   } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
+}
+
+// 分类速选：该分类全部未授权源都已选则整类取消，否则整类选中
+const toggleCategory = (cat) => {
+  const names = (groupedGrantable.value[cat] || []).map(ds => ds.name)
+  const allSelected = names.length > 0 && names.every(n => bulkSelected.value.includes(n))
+  if (allSelected) {
+    bulkSelected.value = bulkSelected.value.filter(n => !names.includes(n))
+  } else {
+    const set = new Set(bulkSelected.value)
+    names.forEach(n => set.add(n))
+    bulkSelected.value = [...set]
+  }
+}
+
+// 批量授权：一次把勾选的源授权给本套餐（后端单事务建多行）
+const bulkGrant = async () => {
+  if (submitting.value || bulkSelected.value.length === 0) return
+  submitting.value = true
+  try {
+    const res = await adminApi.bulkGrantSources(limitsPlan.value.id, { sources: bulkSelected.value, limit: bulkLimit.value })
+    toast(`已授权 ${res.created} 个源${res.skipped ? `，跳过已授权 ${res.skipped} 个` : ''}`, 'success')
+    bulkSelected.value = []
+    await loadLimits()
+    load()
+  } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
+}
+
+// 从另一个套餐复制数据源授权（保留各自限额）
+const cloneFromPlan = async () => {
+  if (submitting.value || cloneFromID.value === 0) return
+  submitting.value = true
+  try {
+    const res = await adminApi.cloneSources(limitsPlan.value.id, { from_plan_id: cloneFromID.value })
+    toast(`已复制 ${res.created} 个源${res.skipped ? `，跳过已存在 ${res.skipped} 个` : ''}`, 'success')
+    cloneFromID.value = 0
+    await loadLimits()
+    load()
+  } catch (e) { toast(e.message, 'error') } finally { submitting.value = false }
+}
+
+// 新增全局限制项（api 等，非数据源维度），复用现有单条添加
+const addGlobalLimit = async () => {
+  if (submitting.value) return
+  limitForm.value = { scope: 'global', target: globalForm.value.target.trim(), limit: globalForm.value.limit }
+  await addLimit()
+  globalForm.value = { target: '', limit: -1 }
 }
 
 const startEditLimit = (l) => {

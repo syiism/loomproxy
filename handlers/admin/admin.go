@@ -52,6 +52,8 @@ func RegisterRoutes(r *gin.Engine) {
 		g.PATCH("/quotas/plans/:id", UpdateQuotaPlan)
 		g.DELETE("/quotas/plans/:id", DeleteQuotaPlan)
 		g.GET("/quotas/plans/:id/limits", ListQuotaLimits)
+		g.POST("/quotas/plans/:id/sources", BulkGrantPlanSources)
+		g.POST("/quotas/plans/:id/clone-sources", ClonePlanSources)
 		g.POST("/quotas/limits", CreateQuotaLimit)
 		g.PUT("/quotas/limits/:id", UpdateQuotaLimit)
 		g.DELETE("/quotas/limits/:id", DeleteQuotaLimit)

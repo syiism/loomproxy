@@ -89,6 +89,10 @@ export const adminApi = {
   deletePlan: (id) => request('/admin/quotas/plans/' + id, { method: 'DELETE' }),
   listLimits: (planId) => request('/admin/quotas/plans/' + planId + '/limits'),
   createLimit: (payload) => request('/admin/quotas/limits', { method: 'POST', body: payload }),
+  // 批量授权数据源给套餐（一次建多行，解决自定义套餐逐个加源的麻烦）
+  bulkGrantSources: (planId, payload) => request('/admin/quotas/plans/' + planId + '/sources', { method: 'POST', body: payload }),
+  // 从另一个套餐复制数据源授权（保留各自限额）
+  cloneSources: (planId, payload) => request('/admin/quotas/plans/' + planId + '/clone-sources', { method: 'POST', body: payload }),
   updateLimit: (id, payload) => request('/admin/quotas/limits/' + id, { method: 'PUT', body: payload }),
   deleteLimit: (id) => request('/admin/quotas/limits/' + id, { method: 'DELETE' }),
   // 接口消耗

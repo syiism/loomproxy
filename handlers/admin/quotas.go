@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -335,6 +336,153 @@ func DeleteQuotaLimit(c *gin.Context) {
 		catalog.InvalidateDatasourcesCache()
 	}
 	auth.Ok(c, gin.H{"message": "已删除"})
+}
+
+type bulkGrantPlanSourcesRequest struct {
+	Sources []string `json:"sources" binding:"required"` // 要授权（并设限额）的数据源码列表
+	Limit   *int64   `json:"limit"`                      // 这批源统一的限额；必须显式给（-1=不限），与 P69 一致，避免静默落成 0
+}
+
+// BulkGrantPlanSources 把一个套餐一次性授权给多个数据源（每源一行 scope=source 的限额，与单源授权同一模型）。
+// 幂等：已有的授权行跳过不重建；整批在单个事务里落地，只失效一次 /datasources 缓存。
+// 解决「自定义套餐要手动一条条加源」——36 个源从 36 次点击降到 1 次。
+func BulkGrantPlanSources(c *gin.Context) {
+	id := c.Param("id")
+	var req bulkGrantPlanSourcesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		auth.Fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+	if len(req.Sources) == 0 {
+		auth.Fail(c, http.StatusBadRequest, "sources 不能为空")
+		return
+	}
+	// limit 必须显式给：缺省就是 400 而不是 0（P69 选 A 的后半——0 在限额语义上既不是不限也不是不给用）
+	if req.Limit == nil {
+		auth.Fail(c, http.StatusBadRequest, "必须显式给出 limit（-1 = 不限额；不给不等于 0）")
+		return
+	}
+
+	var plan models.QuotaPlan
+	if err := db.DB.First(&plan, id).Error; err != nil {
+		auth.Fail(c, http.StatusNotFound, "套餐不存在")
+		return
+	}
+
+	// 一次查出这些名是否都是真实数据源；把不存在的名单列出来，让调用者知道哪条写错了
+	var existCount int64
+	if err := db.DB.Model(&models.DataSource{}).Where("name IN ?", req.Sources).Count(&existCount).Error; err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "数据库错误")
+		return
+	}
+	if int(existCount) != len(req.Sources) {
+		got := make(map[string]bool)
+		var found []models.DataSource
+		if err := db.DB.Where("name IN ?", req.Sources).Find(&found).Error; err != nil {
+			auth.Fail(c, http.StatusInternalServerError, "数据库错误")
+			return
+		}
+		for _, ds := range found {
+			got[ds.Name] = true
+		}
+		var unknown []string
+		for _, n := range req.Sources {
+			if !got[n] {
+				unknown = append(unknown, n)
+			}
+		}
+		auth.Fail(c, http.StatusBadRequest, "数据源不存在: "+strings.Join(unknown, ", "))
+		return
+	}
+
+	var created, skipped int
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		for _, name := range req.Sources {
+			made, err := db.EnsurePlanSourceGrant(tx, db.NewExplicitGrant(plan.ID, "source", name, *req.Limit))
+			if err != nil {
+				return err
+			}
+			if made {
+				created++
+			} else {
+				skipped++
+			}
+		}
+		return nil
+	}); err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "批量授权失败")
+		return
+	}
+
+	// 这一批里只要有新行就是该套餐多了一批可用源，/datasources 缓存视图要跟着变
+	if created > 0 {
+		catalog.InvalidateDatasourcesCache()
+	}
+	auth.Ok(c, gin.H{"created": created, "skipped": skipped, "total": len(req.Sources)})
+}
+
+type clonePlanSourcesRequest struct {
+	FromPlanID uint `json:"from_plan_id" binding:"required"` // 复制哪个套餐的源授权（保留各自限额）
+}
+
+// ClonePlanSources 把另一个套餐的全部「数据源」授权复制到本套餐（保留各自限额；已存在的跳过）。
+// 落库仍是每源一行 quota_limits，与单源/批量授权同一模型；整批单事务、失效一次缓存。
+// 让「从现有套餐起手」变成一键，而不是从空白套餐自己挑 36 个源。
+func ClonePlanSources(c *gin.Context) {
+	id := c.Param("id")
+	var req clonePlanSourcesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		auth.Fail(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+	if req.FromPlanID == 0 {
+		auth.Fail(c, http.StatusBadRequest, "from_plan_id 不能为空")
+		return
+	}
+
+	var plan, fromPlan models.QuotaPlan
+	if err := db.DB.First(&plan, id).Error; err != nil {
+		auth.Fail(c, http.StatusNotFound, "套餐不存在")
+		return
+	}
+	if err := db.DB.First(&fromPlan, req.FromPlanID).Error; err != nil {
+		auth.Fail(c, http.StatusBadRequest, "源套餐不存在")
+		return
+	}
+	if fromPlan.ID == plan.ID {
+		auth.Fail(c, http.StatusBadRequest, "不能从自身复制")
+		return
+	}
+
+	var srcLimits []models.QuotaLimit
+	if err := db.DB.Where("plan_id = ? AND scope = ?", fromPlan.ID, "source").Find(&srcLimits).Error; err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "读取源套餐授权失败")
+		return
+	}
+
+	var created, skipped int
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		for _, l := range srcLimits {
+			made, err := db.EnsurePlanSourceGrant(tx, db.NewExplicitGrant(plan.ID, "source", l.Target, l.Limit))
+			if err != nil {
+				return err
+			}
+			if made {
+				created++
+			} else {
+				skipped++
+			}
+		}
+		return nil
+	}); err != nil {
+		auth.Fail(c, http.StatusInternalServerError, "复制失败")
+		return
+	}
+
+	if created > 0 {
+		catalog.InvalidateDatasourcesCache()
+	}
+	auth.Ok(c, gin.H{"created": created, "skipped": skipped, "total": len(srcLimits)})
 }
 
 type QuotaOverrideItem struct {
