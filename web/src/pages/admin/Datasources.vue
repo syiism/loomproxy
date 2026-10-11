@@ -25,12 +25,44 @@
             </div>
             <div class="flex items-center gap-3">
               <UiTag :tone="ds.status === 1 ? 'green' : 'gray'" :label="ds.status === 1 ? '启用' : '禁用'" />
+              <UiTag v-if="scheduleTagFor(ds)" tone="blue" :label="'定时 ' + scheduleTagFor(ds)" />
               <button @click="toggleRankPublic(ds)" :disabled="rankBusy === ds.id" class="text-xs transition-colors"
                 :class="ds.rank_public ? 'text-pale-green-fg' : 'text-text-muted hover:text-text'">{{ ds.rank_public ? '榜单可见' : '榜单隐藏' }}</button>
               <router-link to="/admin/quotas" class="text-xs font-mono text-text-muted hover:text-text transition-colors"
                 :title="'只读：本源的套餐访问权限在「额度 · 套餐」页编辑。两处都能改会互相覆盖（待办清单 P28）'">套餐 {{ plansFor(ds).length }}</router-link>
               <button @click="editDataSource(ds)" class="text-xs text-text-muted hover:text-text transition-colors">编辑</button>
               <button @click="deleteDataSource(ds)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 定时启用 -->
+    <section class="mb-12 md:mb-16 reveal">
+      <div class="flex items-end justify-between mb-3 pb-3 border-b border-border">
+        <h2 class="font-serif text-xl md:text-2xl font-medium tracking-tight">定时启用</h2>
+        <button class="btn-primary btn-sm" @click="openCreateSchedule">新增定时</button>
+      </div>
+      <p class="text-xs text-text-muted mb-5">到点把数据源置为启用，出时段后<b>还原成进时段前的状态</b>——不是一律禁用，所以本来手动启用的源不会被定时任务关掉。
+        只在进出时段的那一刻动作一次：时段内你在上面手动改的状态不会被反复覆盖。判定每 30 秒一轮。</p>
+      <UiSpinner v-if="schedLoading" />
+      <UiEmpty v-else-if="schedError" title="加载失败" :text="schedError" />
+      <UiEmpty v-else-if="schedules.length === 0" title="暂无定时规则" text="新增一条：选数据源，再选「每天时段」或「一次性」，到点自动启用。" />
+      <div v-else class="space-y-3">
+        <div v-for="s in schedules" :key="s.id" class="card !p-0 overflow-hidden">
+          <div class="flex flex-wrap items-center justify-between gap-3 px-5 md:px-6 py-4 border-b border-border bg-surface-alt">
+            <div>
+              <div class="font-serif text-lg md:text-xl font-medium tracking-tight">{{ s.source_display || s.source_name }}</div>
+              <div class="flex items-center gap-2 font-mono text-xs text-text-muted mt-0.5">
+                <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ s.source_name }}</span>
+                <span class="px-2 py-0.5 bg-surface border border-border rounded">{{ s.window_text }}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <UiTag :tone="scheduleTone(s)" :label="scheduleStateLabel(s)" />
+              <button @click="toggleSchedule(s)" class="text-xs text-text-muted hover:text-text transition-colors">{{ s.status === 1 ? '停用' : '启用' }}</button>
+              <button @click="deleteSchedule(s)" class="text-xs text-pale-red-fg hover:opacity-70 transition-opacity">删除</button>
             </div>
           </div>
         </div>
@@ -220,6 +252,50 @@
         </div>
       </div>
     </UiModal>
+
+    <!-- 新增定时启用（一次为多个源各建一条规则） -->
+    <UiModal v-model:open="showSchedModal" title="新增定时启用" @confirm="saveSchedule" :confirm-loading="savingSched" confirm-text="创建">
+      <div class="space-y-4">
+        <div>
+          <label class="label">模式 *</label>
+          <select v-model="schedForm.mode" class="input">
+            <option value="daily">每天时段（如 09:00–18:00；跨夜填 22:00–06:00）</option>
+            <option value="once">一次性（从指定时刻起启用一段时间）</option>
+          </select>
+        </div>
+        <div v-if="schedForm.mode === 'daily'" class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="label">起始钟点 *</label>
+            <input v-model="schedForm.start_clock" class="input font-mono" placeholder="09:00" maxlength="5">
+          </div>
+          <div>
+            <label class="label">结束钟点 *</label>
+            <input v-model="schedForm.end_clock" class="input font-mono" placeholder="18:00" maxlength="5">
+          </div>
+        </div>
+        <div v-else class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="label">起始时刻 *</label>
+            <input v-model="schedForm.start_at" type="datetime-local" class="input font-mono">
+          </div>
+          <div>
+            <label class="label">启用时长（分钟）*</label>
+            <input v-model.number="schedForm.duration_min" type="number" class="input font-mono" min="1">
+          </div>
+        </div>
+        <div>
+          <label class="label">数据源 *（可多选，一次为每个源各建一条）</label>
+          <div class="max-h-56 overflow-y-auto border border-border rounded-lg p-3 space-y-1.5">
+            <label v-for="ds in dataSources" :key="ds.id" class="flex items-center gap-2 text-sm cursor-pointer rounded px-1 py-0.5 hover:bg-surface-alt transition-colors">
+              <input type="checkbox" :value="ds.id" v-model="schedForm.source_ids" class="checkbox">
+              <span>{{ ds.display_name }}</span>
+              <span class="font-mono text-xs text-text-muted">{{ ds.name }}</span>
+            </label>
+            <div v-if="dataSources.length === 0" class="text-text-muted text-sm text-center py-4">暂无数据源</div>
+          </div>
+        </div>
+      </div>
+    </UiModal>
   </div>
 </template>
 
@@ -281,6 +357,84 @@ const limitsGroup = ref(null)
 const limitsForm = ref({ plan_code: '', limit: 100 })
 const savingLimits = ref(false)
 const applyResult = ref(null)
+
+// ===== 定时启用 =====
+const schedules = ref([])
+const schedLoading = ref(true)
+const schedError = ref('')
+const showSchedModal = ref(false)
+const savingSched = ref(false)
+const schedForm = ref({ mode: 'daily', start_clock: '09:00', end_clock: '18:00', start_at: '', duration_min: 120, source_ids: [] })
+
+const loadSourceSchedules = async () => {
+  schedLoading.value = true
+  schedError.value = ''
+  try {
+    schedules.value = (await adminApi.listSourceSchedules()) || []
+  } catch (e) {
+    schedError.value = e.message
+  }
+  schedLoading.value = false
+  nextTick(revealObserve)
+}
+
+// 源列表卡片上的「定时」标签只认仍在生效的规则
+const scheduleTagFor = (ds) => {
+  const hit = schedules.value.find(s => Number(s.data_source_id) === Number(ds.id) && s.status === 1)
+  return hit ? hit.window_text : ''
+}
+
+const scheduleStateLabel = (s) => {
+  if (s.applied === 1) return '生效中'
+  if (s.status === 0) return s.mode === 'once' ? '已结束' : '已停用'
+  return s.in_window ? '窗口内' : '待生效'
+}
+const scheduleTone = (s) => (s.applied === 1 ? 'green' : (s.status === 1 && s.in_window ? 'blue' : 'gray'))
+
+const openCreateSchedule = () => {
+  schedForm.value = { mode: 'daily', start_clock: '09:00', end_clock: '18:00', start_at: '', duration_min: 120, source_ids: [] }
+  showSchedModal.value = true
+}
+
+const saveSchedule = async () => {
+  if (savingSched.value) return
+  if (!schedForm.value.source_ids.length) { toast('请至少选择一个数据源', 'error'); return }
+  const payload = { source_ids: schedForm.value.source_ids, mode: schedForm.value.mode }
+  if (schedForm.value.mode === 'daily') {
+    payload.start_clock = schedForm.value.start_clock
+    payload.end_clock = schedForm.value.end_clock
+  } else {
+    if (!schedForm.value.start_at) { toast('请填写起始时刻', 'error'); return }
+    // datetime-local 是浏览器本地时间的字符串，后端 *time.Time 收 RFC3339——不转会被当成非法时间
+    payload.start_at = new Date(schedForm.value.start_at).toISOString()
+    payload.duration_min = Number(schedForm.value.duration_min) || 0
+  }
+  savingSched.value = true
+  try {
+    const res = await adminApi.createSourceSchedules(payload)
+    toast(`已创建 ${res.created} 条定时规则`, 'success')
+    showSchedModal.value = false
+    await Promise.all([loadSourceSchedules(), loadDataSources()])
+  } catch (e) { toast(e.message, 'error') } finally { savingSched.value = false }
+}
+
+// 停用一条正在生效的规则时，后端会先把源还原成进时段前的状态再让规则退场
+const toggleSchedule = (s) => {
+  const next = s.status === 1 ? 0 : 1
+  adminApi.updateSourceSchedule(s.id, { status: next }).then(() => {
+    toast(next === 1 ? '规则已启用' : '规则已停用（生效中的已还原该源）', 'success')
+    loadSourceSchedules()
+    loadDataSources()
+  }).catch(e => toast(e.message, 'error'))
+}
+
+const deleteSchedule = (s) => {
+  adminApi.deleteSourceSchedule(s.id).then(() => {
+    toast('定时规则已删除（生效中的已还原该源）', 'success')
+    loadSourceSchedules()
+    loadDataSources()
+  }).catch(e => toast(e.message, 'error'))
+}
 
 const loadDataSources = async () => {
   dsLoading.value = true
@@ -524,4 +678,5 @@ onMounted(() => { revealObserve() })
 loadDataSources()
 loadSourceConfigs()
 loadSourceGroups()
+loadSourceSchedules()
 </script>

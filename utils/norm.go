@@ -76,9 +76,20 @@ func DayStart(days int) time.Time {
 //
 // 与 DayStart 是同一族算法：**钟点来自调用方，时区在这里只取一次**（P71：日界的算法不许散落到各层）。
 // DayStart(1) 是它的特例（anchor 钟点 = 0:00:00）。
+//
+// 它读的是"当下"（time.Now()）。要按指定时刻算同一件事——定时调度要在注入的时刻上判定窗口——
+// 走 DailyAnchorStartAt，别在外面自己拼 time.Date。
 func DailyAnchorStart(anchor time.Time) time.Time {
+	return DailyAnchorStartAt(time.Now(), anchor)
+}
+
+// DailyAnchorStartAt 是 DailyAnchorStart 的「时刻由调用方给」版本。
+// 存在的原因是可测：定时任务要能在不 sleep、不真的等到那个钟点的前提下被用例驱动，
+// 而判定用的时刻必须是外部传进来的（test 注入 now），不是函数自己读的。
+// 算法只在这里写一份，DailyAnchorStart 委托过来——第二份日界算法迟早会和这一份算得不一样。
+func DailyAnchorStartAt(now, anchor time.Time) time.Time {
 	loc := PlatformZone()
-	now := time.Now().In(loc)
+	now = now.In(loc)
 	a := anchor.In(loc)
 	t := time.Date(now.Year(), now.Month(), now.Day(), a.Hour(), a.Minute(), a.Second(), 0, loc)
 	if now.Before(t) {
@@ -86,6 +97,28 @@ func DailyAnchorStart(anchor time.Time) time.Time {
 		t = t.AddDate(0, 0, -1)
 	}
 	return t
+}
+
+// ParseClockHHMM 是 ClockHHMM 的逆运算：把 "09:30" 解析成时、分。
+// 钟点串只有一种写法（"HH:MM"），解析也必须只有一处——格式化的那一处和解析的那一处分开写，
+// 就会各自长出一种容忍度（比如一边收 "9:3" 一边不收），而谁错都不会被对方发现。
+func ParseClockHHMM(s string) (hour int, minute int, err error) {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("钟点格式应为 HH:MM，实际: %q", s)
+	}
+	h, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("钟点小时不是数字: %q", s)
+	}
+	m, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("钟点分钟不是数字: %q", s)
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, 0, fmt.Errorf("钟点超出范围: %q", s)
+	}
+	return h, m, nil
 }
 
 // TZShanghai 是 PlatformZone 的旧名字，只留给尚未迁移的调用方（携带形态的 `sources/xmly` 还有一处）。

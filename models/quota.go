@@ -210,6 +210,41 @@ func (SourceGroup) TableName() string {
 	return "source_groups"
 }
 
+// SourceScheduleMode 定时启用规则的两种形态。
+const (
+	ScheduleModeDaily = "daily" // 每天重复的时段（如 09:00–18:00；end<=start 视为跨夜）
+	ScheduleModeOnce  = "once"  // 一次性：从 start_at 起启用 duration_min 分钟
+)
+
+// SourceSchedule 数据源的定时启用规则：到点把数据源置为启用，出窗口还原成进窗口前的状态。
+//
+// 一个源可以有多条规则，「指定哪些数据源」由创建接口一次为多个源各建一行——
+// 与套餐授权（每源一行 quota_limits）是同一个形状：规则的生效对象是单个源，不引入"规则覆盖多源"的第二份事实。
+//
+// 三个状态字段的分工要分清，混用会让源被永久改坏：
+//   - Status：这条规则还生不生效（1=生效，0=停用；once 过期后自动置 0，行保留供查看）
+//   - Applied：本规则当前是否正处于"把源顶成启用"的状态（只在进出窗口的那一刻翻转，用来避免每 tick 重复写库）
+//   - RestoreStatus：进窗口前那个源自己的状态，出窗口时照原样还原——手动启用的源不会被定时任务误关
+type SourceSchedule struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	DataSourceID  uint       `gorm:"index;not null" json:"data_source_id"`
+	Mode          string     `gorm:"size:8;not null" json:"mode"`     // daily / once
+	StartClock    string     `gorm:"size:5" json:"start_clock"`       // daily：起始钟点 "09:00"（平台时区）
+	EndClock      string     `gorm:"size:5" json:"end_clock"`         // daily：结束钟点 "18:00"（<=start 视为跨夜）
+	StartAt       *time.Time `json:"start_at"`                        // once：起始时刻
+	DurationMin   int        `json:"duration_min"`                    // once：启用时长（分钟）
+	Status        int        `gorm:"default:1" json:"status"`         // 1=生效，0=停用（once 过期后自动置 0）
+	Applied       int        `gorm:"default:0" json:"applied"`        // 1=当前正处于本规则启用的状态中
+	RestoreStatus int        `gorm:"default:0" json:"restore_status"` // 进窗口前该源的原状态，出窗口还原
+	AppliedAt     *time.Time `json:"applied_at"`                      // 最近一次启用生效的时刻
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+func (SourceSchedule) TableName() string {
+	return "source_schedules"
+}
+
 // QuotaTransferLog 一次额度转移的审计行（待办清单 P97 的 ④）。
 // 记的是**转移前后的有效额度**而不是覆盖增量：回读的人要看的是"当时那个源有多少、现在剩多少"，
 // 而增量要还原成那句话还得先查出套餐限额——把一次读回变成两次查询和一份可能已变的套餐。

@@ -147,6 +147,11 @@ export const adminApi = {
   deleteSourceGroup: (id) => request('/admin/source-groups/' + id, { method: 'DELETE' }),
   updateSourceGroupMembers: (id, sourceNames) => request('/admin/source-groups/' + id + '/members', { method: 'PUT', body: { source_names: sourceNames } }),
   applySourceGroupLimits: (id, payload) => request('/admin/source-groups/' + id + '/apply-limits', { method: 'POST', body: payload }),
+  // 数据源定时启用（每天时段 / 一次性定时）
+  listSourceSchedules: () => request('/admin/source-schedules'),
+  createSourceSchedules: (payload) => request('/admin/source-schedules', { method: 'POST', body: payload }),
+  updateSourceSchedule: (id, payload) => request('/admin/source-schedules/' + id, { method: 'PATCH', body: payload }),
+  deleteSourceSchedule: (id) => request('/admin/source-schedules/' + id, { method: 'DELETE' }),
   // 套餐的授权数据源（= quota_limits 里 scope=source 的行；增删走「限制项」的 limits 接口）
   listPlanDataSources: (planId) => request('/admin/quotas/plans/' + planId + '/data-sources'),
 }

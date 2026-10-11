@@ -105,6 +105,11 @@ func RegisterRoutes(r *gin.Engine) {
 		g.DELETE("/source-groups/:id", DeleteSourceGroup)
 		g.PUT("/source-groups/:id/members", UpdateSourceGroupMembers)
 		g.POST("/source-groups/:id/apply-limits", ApplySourceGroupLimits)
+		// 数据源定时启用（每天时段 / 一次性定时），判定循环在 app.startSourceScheduler
+		g.GET("/source-schedules", ListSourceSchedules)
+		g.POST("/source-schedules", CreateSourceSchedules)
+		g.PATCH("/source-schedules/:id", UpdateSourceSchedule)
+		g.DELETE("/source-schedules/:id", DeleteSourceSchedule)
 	}
 }
 
