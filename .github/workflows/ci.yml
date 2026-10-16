@@ -110,14 +110,19 @@ jobs:
           make go-build 2>&1 | tee /tmp/stage-build.log
 
       - name: Surface the failing stage
-        # 红了把失败那一步的日志末尾发成 annotation——`GET /actions/runs/{id}/logs` 要仓库管理员权限（未认证 403），
+        # 红了把失败那一步的日志发成 annotation——`GET /actions/runs/{id}/logs` 要仓库管理员权限（未认证 403），
         # 而 annotations 免鉴权就能读。**判定不由这一步参与**：它只回声，不加检查、不改退出码。
-        # `%0A` 是 workflow command 的换行转义（裸换行会把消息截断）。
+        # 第一版只发 `tail -25`，结果 `make test` 红时恰好被切掉：Go 把 `--- FAIL: TestXxx` 打在包汇总**之前**，
+        # 尾巴只剩后面的 ok/skip 那几行——**回显的判据要按失败行的真实位置来定，不是按"末尾多少行"**。
+        # 所以现在两段：先把 FAIL/panic/race 那几行连行号捞出来，再附末尾 40 行作上下文。
+        # `%0A` 是 workflow command 的换行转义（裸换行会把消息截断）；head -c 是防消息体超 annotation 上限。
         if: failure()
         run: |
           f=$(ls -t /tmp/stage-*.log 2>/dev/null | head -1)
           if [ -n "$f" ]; then
-            msg=$(tail -n 25 "$f" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            hits=$(grep -nE '^ *--- FAIL|^panic:|^WARNING: DATA RACE|^FAIL[ \t]|Error:|未通过|Syntax error' "$f" | head -18)
+            [ -n "$hits" ] || hits='(没捞到失败行——只有末尾上下文，见下)'
+            msg=$(printf '%s\n---- 末尾 40 行 ----\n%s\n' "$hits" "$(tail -n 40 "$f")" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | head -c 3600)
             echo "::error::失败阶段 ${f#/tmp/stage-}：${msg}"
           else
             echo "::error::失败在 make 之前（工具链或缓存那几步），没有 stage 日志"
