@@ -85,16 +85,40 @@ jobs:
 
       - name: make web
         # 前端产物是 go:embed 的输入，必须先于 Go 侧（Makefile 的 build 依赖链就是这个顺序）。
-        run: make web
+        # tee 不是加检查，是让失败的那一步能把末尾留给自己看（见文件末那条 handler）。
+        # pipefail 是必须的写法：没有它，管道读的是 tee 的 0 而不是 make 的退出码（P109 那个形状）。
+        run: |
+          set -o pipefail
+          make web 2>&1 | tee /tmp/stage-web.log
 
       - name: make vet
         # 静态段：go vet + gofmt + 那二十来支扫描器。**清单在 Makefile 的 vet 块里，不要在这里加。**
-        run: make vet
+        run: |
+          set -o pipefail
+          make vet 2>&1 | tee /tmp/stage-vet.log
 
       - name: make test
         # go test ./... -race -count=1 -timeout 20m（跑全部包，不只 ./test/）。
-        run: make test
+        run: |
+          set -o pipefail
+          make test 2>&1 | tee /tmp/stage-test.log
 
       - name: make go-build
         # 调试版与 strip 版两个产物（CI 不上传，理由见文件头）。
-        run: make go-build
+        run: |
+          set -o pipefail
+          make go-build 2>&1 | tee /tmp/stage-build.log
+
+      - name: Surface the failing stage
+        # 红了把失败那一步的日志末尾发成 annotation——`GET /actions/runs/{id}/logs` 要仓库管理员权限（未认证 403），
+        # 而 annotations 免鉴权就能读。**判定不由这一步参与**：它只回声，不加检查、不改退出码。
+        # `%0A` 是 workflow command 的换行转义（裸换行会把消息截断）。
+        if: failure()
+        run: |
+          f=$(ls -t /tmp/stage-*.log 2>/dev/null | head -1)
+          if [ -n "$f" ]; then
+            msg=$(tail -n 25 "$f" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error::失败阶段 ${f#/tmp/stage-}：${msg}"
+          else
+            echo "::error::失败在 make 之前（工具链或缓存那几步），没有 stage 日志"
+          fi
