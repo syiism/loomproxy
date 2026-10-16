@@ -1,7 +1,10 @@
 name: gate
 
-# 这条工作流**不是门禁的第二份事实来源**：它只调 `make build`。
-# 检查清单的正本在 Makefile 的 vet 块与 AGENTS.md §3——要加一道检查就在那两处加，不要在这里添 `run:`。
+# 这条工作流**不是门禁的第二份事实来源**：它只调 Makefile 的既有目标（web → vet → test → go-build，
+# 与 `make build` 的依赖链同序同集合）。检查清单的正本在 Makefile 的 vet 块与 AGENTS.md §3——
+# 要加一道检查就在那两处加，不要在这里添新的 `run:`。
+# 分四步而不是写一条 `make build`，为的是**日志的可归因性**：合成一步时红了只剩
+# 「Process completed with exit code 2」，而下载完整日志要仓库管理员权限；分步之后步骤名自己说死在哪一段。
 # 接上机器的动因不是"多一套检查"，是让门禁不再只对「记得跑它的那台机器」成立（同 P120/P124 的动因）。
 #
 # 刻意不做：
@@ -9,6 +12,7 @@ name: gate
 #     公开仓挂出一个可直接装的二进制，等于亲手造那台「门禁绿、服务 active、而 /datasources 是空的」的机器；
 #   - 不接 viewport-check（要浏览器与一份临时实例）与 tag-sync-check（要发网络请求）——假红的门禁第二次就被无视；
 #   - 不设 TZ：runner 的 UTC 正是让「按进程时区取今天」那类断言自己暴露的地方。
+#   - 这四步一律不加管道：`make vet | tail` 读的是管道尾的退出码，等于门禁没跑（待办清单 P109 同一形状）。
 
 on:
   push:
@@ -79,7 +83,18 @@ jobs:
         # 先钉一次，锁与 package.json 漂了就当场红，而不是换一棵依赖树继续往下跑。
         run: pnpm install --frozen-lockfile
 
-      - name: make build
-        # 唯一门禁本体：web → vet → test → go-build。**不要给它加管道**——
-        # `make build | tail` 读的是管道尾的退出码，等于门禁没跑（待办清单 P109 同一形状）。
-        run: make build
+      - name: make web
+        # 前端产物是 go:embed 的输入，必须先于 Go 侧（Makefile 的 build 依赖链就是这个顺序）。
+        run: make web
+
+      - name: make vet
+        # 静态段：go vet + gofmt + 那二十来支扫描器。**清单在 Makefile 的 vet 块里，不要在这里加。**
+        run: make vet
+
+      - name: make test
+        # go test ./... -race -count=1 -timeout 20m（跑全部包，不只 ./test/）。
+        run: make test
+
+      - name: make go-build
+        # 调试版与 strip 版两个产物（CI 不上传，理由见文件头）。
+        run: make go-build

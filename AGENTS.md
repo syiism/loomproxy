@@ -26,8 +26,10 @@
   携带形态在源包里的向量对拍与解析层用例，过去只有人手动跑 `go test ./sources/...` 才会红（分支侧 S30 的门禁盲区，本轮回骨架收口）。
   **`test/` 现在是两组**（`test/` + `test/groupb/`，待办清单 P104）：`go test ./...` 跨包并行，门禁 test 段 470.7s → 253.4s。
   夹具的正本只有 `testkit` 一处，两组各留一份同名转发只为不动存量用例；**新写用例直接调 testkit 的导出名**，新增一包 = 一份转发 + 一个 `fakesource.Register()` 的 init。
-- **CI 跑的就是上面那一条门禁，不是它的复述**：`.github/workflows/ci.yml` 只做「装工具链 + `pnpm install --frozen-lockfile` + `make build`」，
-  push main / PR / 每日 UTC 18:00 定时各跑一次；**加检查请改 Makefile 的 vet 块，不要在工作流里添 `run:`**——两处列检查就是两个事实来源。
+- **CI 跑的就是上面那一条门禁，不是它的复述**：`.github/workflows/ci.yml` 只做「装工具链 + 按序调 Makefile 的既有目标
+  （`make web` → `vet` → `test` → `go-build`，与 `make build` 同序同集合）」，push main / PR / 每日 UTC 18:00 定时各跑一次；
+  **加检查请改 Makefile 的 vet 块，不要在工作流里添新的 `run:`**——两处列检查就是两个事实来源。
+  拆成四步是为日志可归因（合成一步时红了只看见 exit code 2，而下载日志要管理员权限）。
   工作流**故意不挂 artifact**（骨架是空携带清单，公开仓挂出可直接装的二进制就是 P123 那台机器）。细节：[`docs/运维/构建与部署.md`](docs/运维/构建与部署.md)
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
   **但生产产物来自装配仓 `loomproxy-deploy`**：骨架这棵树的 `sources/all.go` 按设计是空携带清单，
