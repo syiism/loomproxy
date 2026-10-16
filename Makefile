@@ -13,6 +13,13 @@
 BINARY := loomproxy-go
 RELEASE_BINARY := loomproxy-go-release
 
+# recipe 一律按 bash 写，所以在这里**声明**它，而不是赌每台机器的 /bin/sh 指向什么。
+# 触发它的现场（待办清单 P128，2026-10-17 CI 首跑）：`nav-check` 用了 `comm -23 <(...) <(...)` 这个
+# bash 专有的进程替换，而 make 默认拿 /bin/sh 跑 recipe——Ubuntu 的 /bin/sh 是 dash，
+# 于是整段 `make vet` 报 `/bin/sh: Syntax error: "(" unexpected` 退出 2；开发机 Arch 的 /bin/sh 指向 bash，
+# **同一条 recipe 在本地跑了一年多从没红过**。不声明的代价就是这条门禁在一半的机器上跑不起来而无人出声。
+SHELL := /bin/bash
+
 # 存量未 gofmt 文件（历史遗留，勿动；见 AGENTS.md），gofmt 检查时豁免
 GOFMT_EXEMPT_RE := handlers/admin/usage_logs\.go|handlers/common/datasource\.go|handlers/quota/middleware\.go|models/api_call_log\.go
 
