@@ -26,6 +26,9 @@
   携带形态在源包里的向量对拍与解析层用例，过去只有人手动跑 `go test ./sources/...` 才会红（分支侧 S30 的门禁盲区，本轮回骨架收口）。
   **`test/` 现在是两组**（`test/` + `test/groupb/`，待办清单 P104）：`go test ./...` 跨包并行，门禁 test 段 470.7s → 253.4s。
   夹具的正本只有 `testkit` 一处，两组各留一份同名转发只为不动存量用例；**新写用例直接调 testkit 的导出名**，新增一包 = 一份转发 + 一个 `fakesource.Register()` 的 init。
+- **CI 跑的就是上面那一条门禁，不是它的复述**：`.github/workflows/ci.yml` 只做「装工具链 + `pnpm install --frozen-lockfile` + `make build`」，
+  push main / PR / 每日 UTC 18:00 定时各跑一次；**加检查请改 Makefile 的 vet 块，不要在工作流里添 `run:`**——两处列检查就是两个事实来源。
+  工作流**故意不挂 artifact**（骨架是空携带清单，公开仓挂出可直接装的二进制就是 P123 那台机器）。细节：[`docs/运维/构建与部署.md`](docs/运维/构建与部署.md)
 - 部署走 `scripts/deploy.sh`（systemd 与 `--local` 两种模式）或 Docker；最小运行单元是「二进制 + 同目录 `.env` + `data/`」。
   **但生产产物来自装配仓 `loomproxy-deploy`**：骨架这棵树的 `sources/all.go` 按设计是空携带清单，
   所以 `deploy.sh` 现在构建前先数携带数，为 0 即拒装（`--allow-no-sources` 才放行）——
@@ -201,7 +204,9 @@
 
 - 处理器间传参用 `map[string]interface{}`；SSRF 的 DNS 结果永久缓存；配额计费按请求（含上游缓存命中）。
 - `docs/归档/` 里的激进方案（unsafe 字段映射、工作窃取调度等）不落地。
-- 无 CI：构建纪律靠 Makefile，部署靠脚本。**携带形态已换成独立仓 `loomproxy-deploy`（P116），它只进私有远端（git.syiism.cc.cd），永不进公开远端**；老形态 `sources/*` 分支与基线 tag 的三点 diff 随之退役为回退留底（回退方法见 `docs/方案/数据源仓库-落地清单.md`）。`main` 与骨架 tag 可由维护者推送。
+- CI 只覆盖**骨架的 GitHub 这一侧**：`.github/workflows/ci.yml` 跑的就是 `make build` 本身（不在那里另立检查清单）。
+  Gitee 侧不跑 Actions，装配仓那条 CI 仍等私有 runner（待办清单 P116）——**别把这句读成"CI 全都有了"**。
+  部署靠脚本。**携带形态已换成独立仓 `loomproxy-deploy`（P116），它只进私有远端（git.syiism.cc.cd），永不进公开远端**；老形态 `sources/*` 分支与基线 tag 的三点 diff 随之退役为回退留底（回退方法见 `docs/方案/数据源仓库-落地清单.md`）。`main` 与骨架 tag 可由维护者推送。
 - 详情：[`docs/规范/已知取舍.md`](docs/规范/已知取舍.md)
 
 ## 13. 文档与知识库的分工

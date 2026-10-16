@@ -1,0 +1,85 @@
+name: gate
+
+# 这条工作流**不是门禁的第二份事实来源**：它只调 `make build`。
+# 检查清单的正本在 Makefile 的 vet 块与 AGENTS.md §3——要加一道检查就在那两处加，不要在这里添 `run:`。
+# 接上机器的动因不是"多一套检查"，是让门禁不再只对「记得跑它的那台机器」成立（同 P120/P124 的动因）。
+#
+# 刻意不做：
+#   - 不 upload-artifact：骨架的 sources 是空携带清单（待办清单 P116/P123），
+#     公开仓挂出一个可直接装的二进制，等于亲手造那台「门禁绿、服务 active、而 /datasources 是空的」的机器；
+#   - 不接 viewport-check（要浏览器与一份临时实例）与 tag-sync-check（要发网络请求）——假红的门禁第二次就被无视；
+#   - 不设 TZ：runner 的 UTC 正是让「按进程时区取今天」那类断言自己暴露的地方。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # UTC 18:00 = 北京 02:00，刻意压在「平台时区今天」与「UTC 今天」不是同一个日历日的那八小时里
+    # （北京 00:00–07:59）。定时跑因此同时是那条时区断言的持续证据，而不是只看一次绿灯。
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    # race 套件跨机器差好几倍（Makefile 里 test 目标那段注释记着 4 分钟与 11 分钟两种实测），
+    # 显式给上限而不是让它拖到默认的 6h。
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 扫描器只读 `git ls-files`（读 index 不读历史），浅克隆够用。
+          fetch-depth: 1
+
+      - name: Make awk deterministic
+        # 三支扫描器用 awk 的动态正则（check-ledger-write-checked / check-sql-reserved / check-tag-sync），
+        # 写法是 POSIX 的、没有 gawk 专有特性，但开发机是 GNU Awk 5.4 而 runner 默认 mawk。
+        # 这一步买的是确定性；最后那行是回执——日志里得能看见当时跑的是哪一支 awk。
+        # （括号是必要的：管道读的是 head 的退出码，`awk --version | head -1 || ...` 那个 fallback 永远不会走。）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gawk
+          sudo update-alternatives --set awk /usr/bin/gawk || echo "没有 awk 的 alternatives 组，沿用系统默认"
+          (awk --version 2>/dev/null || awk -W version 2>&1) | head -1
+
+      - name: Setup pnpm
+        # 与开发机同版本（10.33.0 认 web/pnpm-workspace.yaml 的 allowBuilds.esbuild）。
+        # 必须在 setup-node 之前：那一步的 cache: pnpm 要调 pnpm 取 store 路径。
+        # Dockerfile 里另钉着 10.28.1，两处暂未收成一处——登记在待办清单 P128。
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          # 跟着模块声明走而不是抄开发机那颗更新的 go：gofmt/vet 的判定随版本走，
+          # Makefile 里的 GOFMT_EXEMPT_RE 就是这一族留下来的存量包袱。
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install frontend deps (locked)
+        working-directory: web
+        # 比本地多出来的那半句：`make web` 里那条裸 `pnpm install` 允许静默改锁。
+        # 先钉一次，锁与 package.json 漂了就当场红，而不是换一棵依赖树继续往下跑。
+        run: pnpm install --frozen-lockfile
+
+      - name: make build
+        # 唯一门禁本体：web → vet → test → go-build。**不要给它加管道**——
+        # `make build | tail` 读的是管道尾的退出码，等于门禁没跑（待办清单 P109 同一形状）。
+        run: make build

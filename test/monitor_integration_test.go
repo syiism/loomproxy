@@ -10,6 +10,7 @@ import (
 	"loomproxy/middleware/ipblock"
 	"loomproxy/models"
 	"loomproxy/testkit"
+	"loomproxy/utils"
 	"net/http"
 	"strings"
 	"testing"
@@ -113,7 +114,9 @@ func TestMonitorTrendMergesInMemory(t *testing.T) {
 		t.Fatalf("GET /admin/monitor/trend 失败（status=%d msg=%s）", status, env.Msg)
 	}
 	data := env.dataMap(t)
-	today := time.Now().Format("2006-01-02")
+	// 「今天」只能取判定口那个钟：日标由服务端按平台时区打（utils.DayStart 是日界的唯一处），
+	// 而 time.Now() 读进程时区——UTC 的 runner 上北京 00:00–07:59 那八小时两者不同日，本用例必红。
+	today := utils.DayStart(1).Format("2006-01-02")
 	found := false
 	for _, r := range data["rows"].([]interface{}) {
 		rm := r.(map[string]interface{})
