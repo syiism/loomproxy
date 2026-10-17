@@ -115,8 +115,10 @@ func RevokeExcessSessions(userID uint, keepSessionID string, maxKeep int) int64 
 	// （裸 `... ORDER BY x OFFSET 4` 直接 1064，sqlite 与 PostgreSQL 却接受），
 	// 而一个用户的活跃会话本来就是个位数，取回全部不比分页贵。
 	var candidates []models.AuthSession
-	if err := DB.Where("user_id = ? AND revoked_at IS NULL AND expires_at > ? AND id <> ? AND last_active_at <= ?",
-		userID, time.Now(), keep.ID, keep.LastActiveAt).
+	expCond, expArgs := AfterSQL("expires_at", time.Now())
+	actCond, actArgs := AtOrBeforeSQL("last_active_at", keep.LastActiveAt)
+	if err := DB.Where("user_id = ? AND revoked_at IS NULL AND id <> ?", userID, keep.ID).
+		Where(expCond, expArgs...).Where(actCond, actArgs...).
 		Order("last_active_at DESC").Find(&candidates).Error; err != nil {
 		return 0
 	}
@@ -145,8 +147,10 @@ func RevokeExcessSessions(userID uint, keepSessionID string, maxKeep int) int64 
 // 代价是分不出是自动处置还是用户自己点的「登出其他设备」——所以 journal 那行必须写清是哪一种（P44）。
 func RevokedSince(userID uint, since time.Time) int64 {
 	var n int64
+	revCond, revArgs := SinceSQL("revoked_at", since)
 	if err := DB.Model(&models.AuthSession{}).
-		Where("user_id = ? AND revoked_at IS NOT NULL AND revoked_at >= ?", userID, since).
+		Where("user_id = ? AND revoked_at IS NOT NULL", userID).
+		Where(revCond, revArgs...).
 		Count(&n).Error; err != nil {
 		log.Printf("ERROR: 统计移出会话失败 user_id=%d: %v", userID, err)
 	}
@@ -156,7 +160,8 @@ func RevokedSince(userID uint, since time.Time) int64 {
 // ListActiveSessions 列出用户未吊销且未过期的会话
 func ListActiveSessions(userID uint) []models.AuthSession {
 	var sessions []models.AuthSession
-	if err := DB.Where("user_id = ? AND revoked_at IS NULL AND expires_at > ?", userID, time.Now()).
+	expCond, expArgs := AfterSQL("expires_at", time.Now())
+	if err := DB.Where("user_id = ? AND revoked_at IS NULL", userID).Where(expCond, expArgs...).
 		Order("last_active_at DESC").Find(&sessions).Error; err != nil {
 		LogReadFail("active_sessions:auth_sessions", err)
 	}
@@ -167,7 +172,9 @@ func ListActiveSessions(userID uint) []models.AuthSession {
 // 「设备与密钥」页的设备数 / IP 数 / 已吊销数按这条算：一次被吊销的登录照样留下它来自哪台设备哪个 IP，
 // 那正是借号要看的痕迹——把它们一起筛掉，页面就只剩「现在在线的人」，而这页要抓的是「曾经换过人」。
 func SessionWindowCond(windowStart time.Time) (string, []interface{}) {
-	return "created_at >= ?", []interface{}{windowStart}
+	// 走 SinceSQL 而不是自己写 `created_at >= ?`：SQLite 上时间列是文本，
+	// 跨偏移的文本序不等于时刻序（P129）
+	return SinceSQL("created_at", windowStart)
 }
 
 // ActiveSessionCond 窗口内的「活跃会话」= 在窗口内建立 + 未吊销 + 未过期。
@@ -175,7 +182,8 @@ func SessionWindowCond(windowStart time.Time) (string, []interface{}) {
 // ——两边口径不一致时，筛出来的人和页面上排出来的人会对不上，而那正是这页存在的意义。
 func ActiveSessionCond(windowStart time.Time) (string, []interface{}) {
 	cond, args := SessionWindowCond(windowStart)
-	return cond + " AND revoked_at IS NULL AND expires_at > ?", append(args, time.Now())
+	expCond, expArgs := AfterSQL("expires_at", time.Now())
+	return cond + " AND revoked_at IS NULL AND " + expCond, append(args, expArgs...)
 }
 
 // ActiveSessionCounts 按 ActiveSessionCond 一次算出多个用户的活跃会话数。

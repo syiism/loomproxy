@@ -113,10 +113,10 @@ func PurgeExpiredCallLogs() {
 		// 成功 = 2xx 且非带内失败（P22）。IS NOT TRUE 对 NULL 也成立：旧行没有这一列的值，
 		// 仍按纯 HTTP 口径计成功，不会因为列后加而被读成失败
 		if err := tx.Model(&models.ApiCallLog{}).
-			Select("source, action, COUNT(*) AS total, "+
-				"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success, "+
+			Select("source, action, COUNT(*) AS total, " +
+				"SUM(CASE WHEN status >= 200 AND status < 300 AND in_band_error IS NOT TRUE THEN 1 ELSE 0 END) AS success, " +
 				"COALESCE(SUM(latency_ms), 0) AS latency_sum, COALESCE(MAX(latency_ms), 0) AS max_latency").
-			Where("created_at < ?", cutoff).
+			Where(db.UntilCond("created_at", cutoff)).
 			Group("source, action").
 			Scan(&aggs).Error; err != nil {
 			return err
@@ -140,7 +140,7 @@ func PurgeExpiredCallLogs() {
 				return err
 			}
 		}
-		return tx.Where("created_at < ?", cutoff).Delete(&models.ApiCallLog{}).Error
+		return tx.Where(db.UntilCond("created_at", cutoff)).Delete(&models.ApiCallLog{}).Error
 	})
 	if err != nil {
 		// 整体回滚，等下一轮重跑；这条日志就是说"这一轮没清掉、数字没被污染"的地方

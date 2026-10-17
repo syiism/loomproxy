@@ -64,7 +64,7 @@ func RunSubjectBackfill(days int) (BackfillSummary, error) {
 	var rows []row
 	if err := db.DB.Model(&models.ApiCallLog{}).
 		Select("id, source, book_ident, chapter_ident").
-		Where("created_at >= ?", from).
+		Where(db.SinceCond("created_at", from)).
 		Where("(book_ident <> '' AND (book_name IS NULL OR book_name = '')) OR " +
 			"(chapter_ident <> '' AND (chapter_title IS NULL OR chapter_title = ''))").
 		Order("id DESC").Limit(BackfillScanCap).

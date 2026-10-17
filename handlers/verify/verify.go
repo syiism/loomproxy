@@ -136,7 +136,7 @@ var lastSweep atomic.Int64
 func CleanupExpired() {
 	// 清不掉的后果是过期行一直留着（表只会涨），而下一次清理要等 1 小时后——所以必须出声，
 	// 否则「这张表为什么比去年大」没有答案。
-	if err := db.DB.Where("expires_at < ?", time.Now()).Delete(&models.VerificationCode{}).Error; err != nil {
+	if err := db.DB.Where(db.UntilCond("expires_at", time.Now())).Delete(&models.VerificationCode{}).Error; err != nil {
 		log.Printf("ERROR: 过期验证码清理失败（1 小时后才会再试一次）：%v", err)
 	}
 	lastSweep.Store(time.Now().Unix())
@@ -193,12 +193,12 @@ func Issue(ip, scene, target string) (time.Time, error) {
 	}
 	var targetCount, ipCount int64
 	if err := db.DB.Model(&models.VerificationCode{}).
-		Where("target = ? AND created_at >= ?", target, dayStart).Count(&targetCount).Error; err != nil {
+		Where("target = ?", target).Where(db.SinceCond("created_at", dayStart)).Count(&targetCount).Error; err != nil {
 		log.Printf("ERROR: 同目标当日发码数查询失败，本次拒绝发码（失败关闭）：%v", err)
 		return time.Time{}, ErrStorageUnavailable
 	}
 	if err := db.DB.Model(&models.VerificationCode{}).
-		Where("ip = ? AND created_at >= ?", ip, dayStart).Count(&ipCount).Error; err != nil {
+		Where("ip = ?", ip).Where(db.SinceCond("created_at", dayStart)).Count(&ipCount).Error; err != nil {
 		log.Printf("ERROR: 同 IP 当日发码数查询失败，本次拒绝发码（失败关闭）：%v", err)
 		return time.Time{}, ErrStorageUnavailable
 	}
@@ -236,7 +236,8 @@ func Issue(ip, scene, target string) (time.Time, error) {
 	}
 
 	// 顺带清理：同目标过期行 + 节流的全表过期清理
-	db.DB.Where("scene = ? AND target = ? AND expires_at < ?", scene, target, now).
+	db.DB.Where("scene = ? AND target = ?", scene, target).
+		Where(db.UntilCond("expires_at", now)).
 		Delete(&models.VerificationCode{})
 	maybeSweep()
 	return expires, nil

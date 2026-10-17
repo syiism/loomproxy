@@ -159,6 +159,10 @@
   丢 err 就是收下它，负 offset 会被 GORM 整段丢掉（P86）。
 - 手写 SQL 的别名/列名必须避开 MySQL 8.0 保留字（SQLite 容忍、只有生产暴露；**已由 `make vet` 扫**），
   条件里的列名一律用 GORM map 形式让它按方言加引号——**不要在 SQL 里写死反引号**（PostgreSQL 只认双引号）。
+- **时间列与参数比较一律走 `db.SinceCond`/`UntilCond`/`AfterCond`（拼串处用 `…SQL` 片段形式）**：SQLite 把 `time.Time`
+  存成文本、`>=` 走逐字符序，而写入侧与边界侧带的偏移常常不同 → 文本序 ≠ 时刻序；+08 主机上"一直对"是巧合，
+  UTC 主机在北京 00:00–07:59 把当日额度读成 0（待办清单 P129）。`.UTC()` **不是**修法（只统一日期不统一基准）。
+  新增裸比较由 `check-sql-reserved.sh` 规则 6 拦，行为不变式由 `test/window_zone_guard_test.go` 钉。
 - **Makefile 的 recipe 要声明跑它的 shell**（本仓写死 `SHELL := /bin/bash`）：不声明时 make 用 `/bin/sh`，
   而 `/bin/sh` 指向谁是**发行版的事**——bash 专有的 `<(...)` 在 Ubuntu 的 dash 上让整段 `make vet` 退出 2，
   而开发机的 `/bin/sh` 是 bash，所以这条本地从未红过（待办清单 P128；声明位与 recipe 语法由 `script-syntax-check` 扫）。

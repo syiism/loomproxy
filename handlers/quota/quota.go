@@ -320,7 +320,7 @@ func Dashboard(c *gin.Context) {
 // 今日已落库明细 + 内存环形缓冲中今日的调用记录
 func monitorCallsToday() int64 {
 	var persisted int64
-	if err := db.DB.Model(&models.ApiCallLog{}).Where("created_at >= ?", gate.StartOfDay()).Count(&persisted).Error; err != nil {
+	if err := db.DB.Model(&models.ApiCallLog{}).Where(db.SinceCond("created_at", gate.StartOfDay())).Count(&persisted).Error; err != nil {
 		db.LogReadFail("monitor_calls_today:api_call_logs", err)
 	}
 	return persisted + base.CallsRecordedSince(gate.StartOfDay())

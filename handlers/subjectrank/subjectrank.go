@@ -348,8 +348,7 @@ func Query(dimKey string, days int, sourceFilter, mediaFilter string, limit int,
 // dimCondition 组装维度过滤条件（主聚合与「已落库身份」回查共用，保证两侧口径一致）。
 // 返回的 cond 为空串表示范围被钉成空集，调用方直接返回空榜。
 func dimCondition(dim Dim, from time.Time, sourceFilter, mediaFilter string, allowSources []string) (string, []interface{}) {
-	cond := "created_at >= ?"
-	args := []interface{}{from}
+	cond, args := db.SinceSQL("created_at", from)
 	if dim.OnlyPresent {
 		cond += " AND " + dim.Column + " <> ''"
 	}
@@ -519,8 +518,7 @@ var CoverageActionOrder = []string{"search", "explore", "detail", "chapter", "co
 // sourceFilter 非空时只看那一个源；allowSources 语义与 Query 一致（钉死可见范围）。
 func Coverage(days int, sourceFilter string, allowSources []string) ([]CoverageRow, error) {
 	from := WindowStart(days)
-	cond := "created_at >= ?"
-	args := []interface{}{from}
+	cond, args := db.SinceSQL("created_at", from)
 	if sourceFilter != "" {
 		cond += " AND source = ?"
 		args = append(args, sourceFilter)

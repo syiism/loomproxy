@@ -11,7 +11,7 @@
 # 两个位置，取「至少一处报错」的词。所以 TEXT / DATE / TIME / TIMESTAMP 不在表里
 # （它们是 unreserved keyword，实测能当别名），而 MAX / MIN / COUNT 也不在（函数名，可当别名）。
 #
-# 五条检查，都只在**含 SQL 关键字的行**上跑，避免误伤普通 Go 代码：
+# 六条检查，前五条都只在**含 SQL 关键字的行**上跑，避免误伤普通 Go 代码：
 #   1) `AS <ident>` 命中保留字
 #   2) `) <ident>`  派生表别名命中保留字
 #   3) `<ident>`    反引号引用的标识符——反引号是 MySQL/SQLite 方言，PostgreSQL 只认双引号
@@ -89,5 +89,25 @@ done < <(if [ "$#" -gt 0 ]; then printf '%s\n' "$@"
 
 if [ "$status" -ne 0 ]; then
   echo "SQL 别名检查未通过（判据：docs/规范/开发约定.md「手写 SQL 的别名必须避开 MySQL 保留字」）"
+  exit 1
+fi
+
+# 规则 6：**时间列与参数直接比较**必须走 db 层的窗口谓词 helper（SinceCond/UntilCond/AfterCond/…SQL 片段形式）。
+# 触发它的经验是待办清单 P129：SQLite 把 time.Time 存成文本，而写入侧带的偏移与边界侧带的偏移常常不同，
+# 逐字符序不等于时刻序——同一条 `created_at >= ?` 在 +08 主机上靠巧合判对，在 UTC 主机上把当日额度读成 0。
+# 这一条**拦的是回归**（新增一处裸比较就红），不是复现那次红：那次是 CI 在 dash 机器上实跑才暴露的。
+# 不扫 _test.go 与 helper 自身：用例里的形状由断言自己负责（与 ledger-write-check 同口径），
+# 而 db/window.go 就是那条比较的定义处。
+# 文件清单与前五条同一条来源（给了参数就只扫参数，`precheck-branch.sh` 与变异验证都靠这个）。
+if [ "$#" -gt 0 ]; then
+  tfiles=$(printf '%s\n' "$@" | grep -vE '^db/window\.go$|_test\.go|^test/')
+else
+  tfiles=$(git ls-files '*.go' | grep -vE '^web/|^db/window\.go$|_test\.go|^test/')
+fi
+tbad=$(printf '%s\n' "$tfiles" | xargs -r grep -nE '"[^"]*_at +(>=|<=|>|<) +\?' 2>/dev/null || true)
+if [ -n "$tbad" ]; then
+  echo "$tbad"
+  echo "时间列比较未走 helper（判据：SQLite 上文本序 ≠ 时刻序，见待办清单 P129）——"
+  echo "  改用 db.SinceCond/UntilCond/AfterCond，拼串的地方用 db.SinceSQL/UntilSQL/AfterSQL/AtOrBeforeSQL"
   exit 1
 fi

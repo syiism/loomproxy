@@ -246,7 +246,7 @@ func MonitorTrend() (*TrendData, error) {
 	var details []detail
 	if err := db.DB.Model(&models.ApiCallLog{}).
 		Select("created_at", "source", "action", "status", "in_band_error").
-		Where("created_at >= ?", firstDay).
+		Where(db.SinceCond("created_at", firstDay)).
 		Scan(&details).Error; err != nil {
 		return nil, err
 	}

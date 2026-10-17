@@ -274,7 +274,8 @@ func loadCallIPCounts(names []string, windowStart time.Time) map[string]int64 {
 	}
 	if err := db.DB.Model(&models.ApiCallLog{}).
 		Select("username, COUNT(DISTINCT ip) AS n").
-		Where("username IN ? AND created_at >= ?", names, windowStart).
+		Where("username IN ?", names).
+		Where(db.SinceCond("created_at", windowStart)).
 		Group("username").Scan(&rows).Error; err != nil {
 		return out
 	}

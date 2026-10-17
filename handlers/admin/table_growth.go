@@ -92,7 +92,7 @@ func TableGrowth() gin.H {
 			continue
 		}
 		if err := countRows(s.model, func(q *gorm.DB) *gorm.DB {
-			return q.Where("created_at >= ?", since)
+			return q.Where(db.SinceCond("created_at", since))
 		}, &recent); err != nil {
 			log.Printf("ERROR: 表增长读数失败（table=%s 窗口计数）：%v", s.table, err)
 			out = append(out, row)

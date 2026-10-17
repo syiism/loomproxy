@@ -141,7 +141,7 @@ func Stats(c *gin.Context) {
 	}
 
 	startOfDay := utils.DayStart(1)
-	if err := db.DB.Model(&models.User{}).Where("created_at >= ?", startOfDay).Count(&todayNew).Error; err != nil {
+	if err := db.DB.Model(&models.User{}).Where(db.SinceCond("created_at", startOfDay)).Count(&todayNew).Error; err != nil {
 		todayNew = -1
 		db.LogReadFail("admin_stats:users_today", err)
 	}
@@ -244,12 +244,15 @@ func ListUsers(c *gin.Context) {
 	case "expiring":
 		days := expireWithinDays(c.Query("expire_days"))
 		now := time.Now()
-		q = q.Where("users.plan_expire_at IS NOT NULL AND users.plan_expire_at > ? AND users.plan_expire_at <= ?",
-			now, now.AddDate(0, 0, days))
+		c1, a1 := db.AfterSQL("users.plan_expire_at", now)
+		c2, a2 := db.AtOrBeforeSQL("users.plan_expire_at", now.AddDate(0, 0, days))
+		q = q.Where("users.plan_expire_at IS NOT NULL").Where(c1, a1...).Where(c2, a2...)
 	case "active":
-		q = q.Where("users.plan_expire_at IS NOT NULL AND users.plan_expire_at > ?", time.Now())
+		q = q.Where("users.plan_expire_at IS NOT NULL").
+			Where(db.AfterCond("users.plan_expire_at", time.Now()))
 	case "expired":
-		q = q.Where("users.plan_expire_at IS NOT NULL AND users.plan_expire_at <= ?", time.Now())
+		q = q.Where("users.plan_expire_at IS NOT NULL").
+			Where(db.AtOrBeforeCond("users.plan_expire_at", time.Now()))
 	}
 
 	// 活跃度：never 是真实形态（现网 32 个账号从未登录），不是脏数据
@@ -259,11 +262,11 @@ func ListUsers(c *gin.Context) {
 		q = q.Where("users.last_login_at IS NULL")
 	case "7d", "30d", "90d":
 		days, _ := strconv.Atoi(strings.TrimSuffix(act, "d"))
-		q = q.Where("users.last_login_at IS NOT NULL AND users.last_login_at >= ?",
-			time.Now().AddDate(0, 0, -days))
+		q = q.Where("users.last_login_at IS NOT NULL").
+			Where(db.SinceCond("users.last_login_at", time.Now().AddDate(0, 0, -days)))
 	case "stale":
-		q = q.Where("users.last_login_at IS NOT NULL AND users.last_login_at < ?",
-			time.Now().AddDate(0, 0, -90))
+		q = q.Where("users.last_login_at IS NOT NULL").
+			Where(db.UntilCond("users.last_login_at", time.Now().AddDate(0, 0, -90)))
 	}
 
 	// 留存同意位（P37）：NULL=未表态=同意，与 true 是同义但**是两种来源**，要能分开看
@@ -284,7 +287,7 @@ func ListUsers(c *gin.Context) {
 		q = q.Where("users.quota_reset_at IS NOT NULL")
 	case "recent":
 		// 窗口与「设备与密钥」页同一个起点（auth.WatchWindowStart），两处别说两种"最近"
-		q = q.Where("users.quota_reset_at >= ?", auth.WatchWindowStart())
+		q = q.Where(db.SinceCond("users.quota_reset_at", auth.WatchWindowStart()))
 	}
 
 	// 密钥数分档：借号排查的常见形态是"一把 key 给一群人"或"一堆 key 各给一人"

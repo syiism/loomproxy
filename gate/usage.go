@@ -52,7 +52,8 @@ func UsedToday(user *models.User, sourceCode string) int64 {
 	}
 	var used int64
 	if err := db.DB.Model(&models.QuotaUsageLog{}).
-		Where("user_id = ? AND group_code = ? AND created_at >= ?", user.ID, sourceCode, UsageSince(user)).
+		Where("user_id = ? AND group_code = ?", user.ID, sourceCode).
+		Where(db.SinceCond("created_at", UsageSince(user))).
 		Select("COALESCE(SUM(cost), 0)").Scan(&used).Error; err != nil {
 		log.Printf("ERROR: usedToday query failed: %v", err)
 	}
@@ -68,7 +69,8 @@ func UsedTodayAllSources(user *models.User) int64 {
 	}
 	var used int64
 	if err := db.DB.Model(&models.QuotaUsageLog{}).
-		Where("user_id = ? AND created_at >= ?", user.ID, UsageSince(user)).
+		Where("user_id = ?", user.ID).
+		Where(db.SinceCond("created_at", UsageSince(user))).
 		Select("COALESCE(SUM(cost), 0)").Scan(&used).Error; err != nil {
 		log.Printf("ERROR: UsedTodayAllSources query failed: %v", err)
 	}
@@ -79,7 +81,8 @@ func UsedTodayAllSources(user *models.User) int64 {
 func UsedTodayAll(sourceCode string) int64 {
 	var used int64
 	if err := db.DB.Model(&models.QuotaUsageLog{}).
-		Where("group_code = ? AND created_at >= ?", sourceCode, StartOfDay()).
+		Where("group_code = ?", sourceCode).
+		Where(db.SinceCond("created_at", StartOfDay())).
 		Select("COALESCE(SUM(cost), 0)").Scan(&used).Error; err != nil {
 		log.Printf("ERROR: UsedTodayAll query failed: %v", err)
 	}
@@ -89,7 +92,7 @@ func UsedTodayAll(sourceCode string) int64 {
 // ActiveUsersToday 当日有消耗的去重用户数；sourceCode 为空时统计全部数据源
 func ActiveUsersToday(sourceCode string) int64 {
 	var n int64
-	q := db.DB.Model(&models.QuotaUsageLog{}).Where("created_at >= ?", StartOfDay())
+	q := db.DB.Model(&models.QuotaUsageLog{}).Where(db.SinceCond("created_at", StartOfDay()))
 	if sourceCode != "" {
 		q = q.Where("group_code = ?", sourceCode)
 	}
@@ -102,7 +105,7 @@ func ActiveUsersToday(sourceCode string) int64 {
 // callsToday 当日调用次数（流水行数）；sourceCode 为空时统计全部数据源
 func callsToday(sourceCode string) int64 {
 	var n int64
-	q := db.DB.Model(&models.QuotaUsageLog{}).Where("created_at >= ?", StartOfDay())
+	q := db.DB.Model(&models.QuotaUsageLog{}).Where(db.SinceCond("created_at", StartOfDay()))
 	if sourceCode != "" {
 		q = q.Where("group_code = ?", sourceCode)
 	}
