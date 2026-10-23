@@ -1,0 +1,19 @@
+# dependabot 只跟 github-actions 生态（待办清单 P128④ 拍板：开，仅此一个 ecosystem）。
+# 为什么不开 npm/go：AGENTS.md §11 规定「引入新依赖前先确认许可证兼容」，
+# dependabot 的 npm/go 自动升级 PR 不做许可证核查，会把不兼容依赖悄悄带进来，与仓规打架。
+# github-actions 生态只升级 workflow 引用的 action，不引入新依赖，故放行。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "ci(deps)"
+    # 所有 action 升级合并成单个 PR，减少噪音；action 升级无许可证风险，可放心合并。
+    groups:
+      github-actions:
+        patterns:
+          - "*"
