@@ -1,0 +1,84 @@
+name: viewport-check
+
+# 待办清单 P128③ 的落地：把 `make viewport-check` 这支探针做成独立、手动触发的工作流。
+# 探针要浏览器与一份临时实例（临时 SQLite + 随机端口 + 一次性口令），是分钟级的东西，
+# 所以刻意不进 `make build`（挂进门禁会把门禁变成等待，见待办清单 P128③），也不做 PR 必过项。
+# 需要时在 Actions 页面手动点一次 workflow_dispatch，跑完即走。
+#
+# 本工作流不是门禁：AGENTS.md §3「加检查请改 Makefile 的 vet 块，不要在工作流里添新的 run:」
+# 那条仓规管的是 ci.yml 那支门禁（检查清单的正本在 Makefile 的 vet 块），不适用于这支独立探针。
+# 探针的清单正本在 scripts/run-viewport-probe.sh 与 Makefile 的 viewport-check 目标里，
+# 这里只负责「装工具链 + 装浏览器 + 把探针跑起来」，不在本文件里另立检查。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  viewport-check:
+    runs-on: ubuntu-latest
+    # 要现装 chromium 与系统依赖，比普通构建慢，显式给上限而不是拖到默认的 6h
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 探针只读工作树（web/src/main.js 的路由表、go:embed 的前端产物），浅克隆够用
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        # pnpm 版本唯一准在 web/package.json 的 packageManager（P128① 已收口），
+        # action 读 package_json_file 取它。必须在 setup-node 之前：那步的 cache: pnpm 要调 pnpm 取 store 路径。
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          # 跟着模块声明走而不是抄开发机那颗更新的 go，与 ci.yml 同口径
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install frontend deps (locked)
+        working-directory: web
+        # 锁文件口径与 ci.yml 一致：先钉一次，锁与 package.json 漂了就当场红
+        run: pnpm install --frozen-lockfile
+
+      - name: make web
+        # 前端产物是 go:embed 的输入，必须先于 go-build（Makefile 的 build 依赖链就是这个顺序）。
+        # 本工作流不是门禁，不需要 tee 回显，日志天然可读。
+        run: make web
+
+      - name: make go-build
+        # 产出 ./loomproxy-go（run-viewport-probe.sh 的前置检查就是它）
+        run: make go-build
+
+      - name: Install playwright-core
+        # 探针脚本的前置条件原文（run-viewport-probe.sh）：驱动库装在 /tmp，不进仓库依赖
+        run: npm --prefix /tmp i playwright-core
+
+      - name: Install chromium system deps
+        # 只装 apt 依赖，这一步必须 sudo；但下一步 install chromium 不能 sudo：
+        # sudo 会把 HOME 变 /root，浏览器装进 /root/.cache，探针在 runner 用户的 ~/.cache 里找不到
+        run: sudo node /tmp/node_modules/playwright-core/cli.js install-deps chromium
+
+      - name: Install chromium
+        # 不带 sudo：让浏览器落进 runner 用户主目录的 ~/.cache/ms-playwright
+        # （viewport-probe.mjs 的 chromePath() 默认就找 os.homedir()/.cache/ms-playwright）
+        run: node /tmp/node_modules/playwright-core/cli.js install chromium
+
+      - name: make viewport-check
+        # 起临时实例（临时 SQLite + 随机端口 + 一次性口令），按两档视口量面板各路由是否溢出。
+        # 临时实例用完即删；退出码：0=两档视口下不溢出、1=有未达标项（上面逐行点名）、2=起不来。
+        env:
+          WIDTHS: "390,1280"
+          SEED_USERS: "6"
+        run: make viewport-check
