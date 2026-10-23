@@ -57,12 +57,12 @@ jobs:
           (awk --version 2>/dev/null || awk -W version 2>&1) | head -1
 
       - name: Setup pnpm
-        # 与开发机同版本（10.33.0 认 web/pnpm-workspace.yaml 的 allowBuilds.esbuild）。
+        # pnpm 版本唯一准在 web/package.json 的 packageManager（10.33.0），action 读 package_json_file 取它，
+        # 与 Dockerfile 的 corepack 同源；P128 已收口。10.33.0 认 web/pnpm-workspace.yaml 的 allowBuilds.esbuild。
         # 必须在 setup-node 之前：那一步的 cache: pnpm 要调 pnpm 取 store 路径。
-        # Dockerfile 里另钉着 10.28.1，两处暂未收成一处——登记在待办清单 P128。
         uses: pnpm/action-setup@v4
         with:
-          version: 10.33.0
+          package_json_file: web/package.json
 
       - uses: actions/setup-node@v4
         with:

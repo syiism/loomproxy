@@ -6,10 +6,10 @@
 # ===== 阶段 1：前端构建（产物供 go:embed 打包） =====
 FROM node:24-alpine AS web
 WORKDIR /build/web
-# 固定 pnpm 版本与开发机一致：pnpm 10.28+ 对未批准的构建脚本（esbuild）
-# 会报 ERR_PNPM_IGNORED_BUILDS 导致安装失败，不固定版本易随 latest 漂移
-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+# pnpm 版本唯一准在 web/package.json 的 packageManager，corepack 从该字段读，不另钉。
+# 10.33.0 满足 allowBuilds.esbuild 与 ERR_PNPM_IGNORED_BUILDS 的规避。
 COPY web/package.json web/pnpm-lock.yaml ./
+RUN corepack enable && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
