@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # 探针只读工作树（web/src/main.js 的路由表、go:embed 的前端产物），浅克隆够用
           fetch-depth: 1
@@ -31,17 +31,17 @@ jobs:
       - name: Setup pnpm
         # pnpm 版本唯一准在 web/package.json 的 packageManager（P128① 已收口），
         # action 读 package_json_file 取它。必须在 setup-node 之前：那步的 cache: pnpm 要调 pnpm 取 store 路径。
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # 跟着模块声明走而不是抄开发机那颗更新的 go，与 ci.yml 同口径
           go-version-file: go.mod
