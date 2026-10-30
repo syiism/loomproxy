@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # 扫描器只读 `git ls-files`（读 index 不读历史），浅克隆够用。
           fetch-depth: 1
@@ -60,17 +60,17 @@ jobs:
         # pnpm 版本唯一准在 web/package.json 的 packageManager（10.33.0），action 读 package_json_file 取它，
         # 与 Dockerfile 的 corepack 同源；P128 已收口。10.33.0 认 web/pnpm-workspace.yaml 的 allowBuilds.esbuild。
         # 必须在 setup-node 之前：那一步的 cache: pnpm 要调 pnpm 取 store 路径。
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # 跟着模块声明走而不是抄开发机那颗更新的 go：gofmt/vet 的判定随版本走，
           # Makefile 里的 GOFMT_EXEMPT_RE 就是这一族留下来的存量包袱。
